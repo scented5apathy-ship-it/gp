@@ -34,17 +34,17 @@
   - Tạo synthetic datasets 10K/100K/1M person và workload model.
   - Chốt latency, availability, RPO/RTO, retention và data residency theo plan.
 
-- [ ] E0.4 Hoàn tất privacy/legal gate
+- [x] E0.4 Hoàn tất privacy/legal gate
   - Thực hiện DPIA và threat model cho tenant isolation, public sharing, parser media/GEDCOM và DNA.
   - Chốt jurisdiction, lawful basis, consent purpose/version, legal hold và deletion evidence.
   - Xác định feature phải tắt bằng Flagsmith nếu legal gate chưa đạt.
 
-- [ ] E0.5 Duyệt ADR còn mở tại Design §16
+- [x] E0.5 Duyệt ADR còn mở tại Design §16
   - So sánh option theo license/TCO, HA/DR, lock-in, security, air-gap và kỹ năng vận hành.
   - Ghi owner, version policy, review date, migration và rollback path.
   - Không triển khai component chưa được chốt phiên bản/distribution.
 
-- [ ] E0.6 Lập ownership catalog
+- [x] E0.6 Lập ownership catalog
   - Ghi owner, data, API/event, SLO, on-call, dependency và runbook cho từng service/platform.
   - Chốt synchronous dependency budget, compatibility và deprecation window.
   - Lập RACI cho product, domain, platform, security, privacy và operations.
