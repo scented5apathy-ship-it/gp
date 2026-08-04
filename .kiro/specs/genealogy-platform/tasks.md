@@ -29,7 +29,7 @@
   - Chốt living inference, redaction, guardian, merge, uncertainty và direct-edit/approval.
   - Tạo decision table `PRIVATE/UNLISTED/PUBLIC` theo role, resource và trạng thái người sống.
 
-- [ ] E0.3 Chốt scale và SLO
+- [x] E0.3 Chốt scale và SLO
   - Xác nhận tenant, person/tree, media, DNA kit, request rate và concurrent job cho mốc 1/3/5 năm.
   - Tạo synthetic datasets 10K/100K/1M person và workload model.
   - Chốt latency, availability, RPO/RTO, retention và data residency theo plan.
