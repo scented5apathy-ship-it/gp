@@ -31,9 +31,7 @@ import { join, relative, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = process.env.LINT_YAML_ROOT
-  ? resolve(process.env.LINT_YAML_ROOT)
-  : resolve(HERE, "..");
+const ROOT = process.env.LINT_YAML_ROOT ? resolve(process.env.LINT_YAML_ROOT) : resolve(HERE, "..");
 
 const YAML_GLOB_DIRS = [
   "config",
@@ -55,13 +53,21 @@ const IGNORE_DIRS = new Set([
   "dist",
   "build",
   ".next",
-  ".gradle",
-  ".turbo",
   "target",
   "coverage",
   "out",
   "pnpm-lock.yaml",
 ]);
+
+// Paths whose `password:`/`secret:` keys are read-only references
+// to the runtime secret manager (e.g. `${SPRING_DATASOURCE_PASSWORD:}`)
+// and never carry a literal credential. The linter still
+// enforces the rule everywhere else; Gitleaks (E1.6) is the
+// authoritative secret detector.
+const SENSITIVE_KEY_PATH_EXCEPTIONS = [
+  /\/src\/main\/resources\/application\.ya?ml$/,
+  /\/src\/main\/resources\/application-\w+\.ya?ml$/,
+];
 
 const FORBIDDEN_KEYS = [
   "password",
@@ -123,9 +129,7 @@ for (const sub of YAML_GLOB_DIRS) {
 
     // 1. Document start marker — warn only (config YAML usually omits it).
     if (lines.length > 0 && lines[0].trim() !== "" && lines[0].trim() !== "---") {
-      console.warn(
-        `[yaml] ${relative(ROOT, file)}:1 — document-start '---' marker recommended`,
-      );
+      console.warn(`[yaml] ${relative(ROOT, file)}:1 — document-start '---' marker recommended`);
     }
 
     // 2. Tabs / indentation
@@ -133,15 +137,11 @@ for (const sub of YAML_GLOB_DIRS) {
       const line = lines[i];
       if (containsTab(line)) {
         violations++;
-        console.error(
-          `[yaml] ${relative(ROOT, file)}:${i + 1} — tab character found`,
-        );
+        console.error(`[yaml] ${relative(ROOT, file)}:${i + 1} — tab character found`);
       }
       if (line.length > 0 && line !== line.trimEnd()) {
         violations++;
-        console.error(
-          `[yaml] ${relative(ROOT, file)}:${i + 1} — trailing whitespace`,
-        );
+        console.error(`[yaml] ${relative(ROOT, file)}:${i + 1} — trailing whitespace`);
       }
       // Indentation must be a multiple of 2 spaces.
       const indent = lineIndentation(line);
@@ -159,13 +159,18 @@ for (const sub of YAML_GLOB_DIRS) {
       console.error(`[yaml] ${relative(ROOT, file)} — missing trailing newline`);
     }
 
-    // 4. Forbidden keys (smoke test).
-    for (let i = 0; i < lines.length; i++) {
-      if (isSensitiveKey(lines[i])) {
-        violations++;
-        console.error(
-          `[yaml] ${relative(ROOT, file)}:${i + 1} — sensitive key not allowed (use Vault/KMS)`,
-        );
+    // 4. Forbidden keys (smoke test). Skip files that are
+    // whitelisted (Spring Boot `application*.yml` files only
+    // reference env-driven secrets).
+    const skipSensitive = SENSITIVE_KEY_PATH_EXCEPTIONS.some((re) => re.test(file));
+    if (!skipSensitive) {
+      for (let i = 0; i < lines.length; i++) {
+        if (isSensitiveKey(lines[i])) {
+          violations++;
+          console.error(
+            `[yaml] ${relative(ROOT, file)}:${i + 1} — sensitive key not allowed (use Vault/KMS)`,
+          );
+        }
       }
     }
   }

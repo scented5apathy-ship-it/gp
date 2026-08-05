@@ -86,7 +86,7 @@ _Requirements: R1–R18, NFR1–NFR8_
   - Tích hợp Apicurio compatibility; lint/breaking checks cho REST/gRPC/event.
   - Chuẩn hóa RFC 9457, cursor, ETag, idempotency và correlation headers.
 
-- [ ] E1.4 Tạo Spring Boot template
+- [x] E1.4 Tạo Spring Boot template
 
   - Tích hợp REST/gRPC, jOOQ, Flyway, OTel, probes và graceful shutdown.
   - Thêm trusted context, audit hook, OpenFeature SDK và secure defaults.

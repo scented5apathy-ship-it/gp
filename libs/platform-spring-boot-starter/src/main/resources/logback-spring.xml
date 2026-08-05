@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logback configuration for the Spring Boot services. Inherits the
+  Spring Boot defaults; only the structured pattern is overridden
+  so every log line carries the tenant + correlation MDC keys set
+  by `TrustedContextFilter`. The pattern is duplicated in the
+  service-level `application.yml` (`logging.pattern.console`) so
+  console output stays consistent if the service is launched
+  outside Spring Boot (e.g. CLI tooling in E14).
+-->
+<configuration>
+  <include resource="org/springframework/boot/logging/logback/defaults.xml" />
+
+  <property name="LOG_PATTERN"
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{tenant_id:-},%X{correlation_id:-}] %logger{36} - %msg%n" />
+
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>${LOG_PATTERN}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE" />
+  </root>
+</configuration>

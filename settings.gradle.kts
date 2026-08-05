@@ -32,6 +32,7 @@ include(
     ":libs:platform-testing",
     ":libs:platform-security",
     ":libs:platform-feature-flags",
+    ":libs:platform-spring-boot-starter",
     // edge / BFF / public API
     ":apps:web-bff",
     ":apps:public-api",

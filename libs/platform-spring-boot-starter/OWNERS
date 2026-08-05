@@ -1,0 +1,8 @@
+# Per-service OWNERS file — CODEOWNERS-compatible.
+# Generated from config/teams.yaml by tools/scripts/sync-team-map.ts.
+# DO NOT EDIT — change config/teams.yaml and re-run the sync.
+Shared Spring Boot auto-configuration consumed by every Java service.
+service: platform
+primary: platform
+secondary: "@genealogy/platform"
+oncall: platform-primary

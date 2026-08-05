@@ -1,0 +1,4 @@
+com.genealogy.platform.spring.autoconfigure.PlatformSpringBootAutoConfiguration
+com.genealogy.platform.spring.autoconfigure.AuditAutoConfiguration
+com.genealogy.platform.spring.autoconfigure.OpenFeatureAutoConfiguration
+com.genealogy.platform.spring.autoconfigure.TrustedContextAutoConfiguration

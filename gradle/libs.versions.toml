@@ -8,7 +8,7 @@
 agp = "8.5.2"
 assertj = "3.26.3"
 archunit = "1.3.0"
-apicurio = "2.6.5"
+apicurio = "2.6.13.Final"
 awaitility = "4.2.2"
 flyway = "10.20.0"
 grpc = "1.66.0"
@@ -25,15 +25,21 @@ mockito = "5.13.0"
 opentelemetry = "1.42.1"
 openapi-generator = "7.9.0"
 openfeature = "1.9.0"
+openfga = "0.7.0"
 postgres = "42.7.4"
 protobuf = "3.25.5"
+protobuf-plugin = "0.9.4"
 s3 = "2.28.20"
 slf4j = "2.0.16"
 spring-boot = "3.3.4"
 spring-dependency-management = "1.1.6"
+spring-grpc = "1.0.3"
 testcontainers = "1.20.2"
 temporal = "1.26.0"
 vavr = "1.0.0-alpha.3"
+valkey = "5.5.0"
+wiremock = "3.9.1"
+micrometer-tracing = "1.3.5"
 
 [libraries]
 spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot" }
@@ -42,7 +48,7 @@ spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-
 spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security", version.ref = "spring-boot" }
 spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version.ref = "spring-boot" }
 spring-boot-starter-oauth2-resource-server = { module = "org.springframework.boot:spring-boot-starter-oauth2-resource-server", version.ref = "spring-boot" }
-spring-boot-starter-grpc = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version.ref = "grpc" }
+spring-boot-starter-grpc = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version.ref = "spring-grpc" }
 spring-boot-starter-jooq = { module = "org.springframework.boot:spring-boot-starter-jooq", version.ref = "spring-boot" }
 
 jooq = { module = "org.jooq:jooq", version.ref = "jooq" }
@@ -66,12 +72,12 @@ opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref = "opentelemetry" }
 opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version.ref = "opentelemetry" }
 opentelemetry-spring-boot-starter = { module = "io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter", version = "2.9.0" }
-micrometer-tracing-bridge-otel = { module = "io.micrometer:micrometer-tracing-bridge-otel", version.ref = "micrometer" }
+micrometer-tracing-bridge-otel = { module = "io.micrometer:micrometer-tracing-bridge-otel", version.ref = "micrometer-tracing" }
 
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 
-apicurio-registry-client = { module = "io.apicurio:apicurio-registry-java-client", version.ref = "apicurio" }
+apicurio-registry-client = { module = "io.apicurio:apicurio-registry-client", version.ref = "apicurio" }
 
 temporal-sdk = { module = "io.temporal:temporal-sdk", version.ref = "temporal" }
 keycloak-admin-client = { module = "org.keycloak:keycloak-admin-client", version.ref = "keycloak-admin" }
@@ -82,6 +88,15 @@ openfeature-flagsmith-provider = { module = "dev.openfeature:flagsmith-provider"
 aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "s3" }
 vavr = { module = "io.vavr:vavr", version.ref = "vavr" }
 lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+
+# openfga SDK (ADR-E0.5-06)
+openfga-sdk = { module = "dev.openfga:openfga-sdk", version.ref = "openfga" }
+
+# valkey / lettuce (cache + idempotency state, ADR-E0.5-08)
+valkey-java = { module = "io.valkey:valkey-java", version.ref = "valkey" }
+
+# wiremock (Testcontainers HTTP stubs for Keycloak / OpenFGA)
+wiremock-standalone = { module = "org.wiremock:wiremock-standalone", version.ref = "wiremock" }
 
 # testing
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
@@ -99,15 +114,17 @@ testcontainers-localstack = { module = "org.testcontainers:localstack", version.
 
 [bundles]
 spring-runtime = ["spring-boot-starter-web", "spring-boot-starter-actuator", "spring-boot-starter-validation", "spring-boot-starter-oauth2-resource-server", "spring-boot-starter-security"]
-observability = ["opentelemetry-api", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "micrometer-tracing-bridge-otel"]
+spring-data = ["spring-boot-starter-jooq", "spring-boot-starter-grpc"]
+observability = ["opentelemetry-api", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "micrometer-tracing-bridge-otel", "opentelemetry-spring-boot-starter"]
 testing-unit = ["junit-jupiter", "assertj-core", "mockito-core", "mockito-junit-jupiter", "awaitility"]
 testing-archunit = ["archunit-junit5"]
 testing-testcontainers = ["testcontainers-junit-jupiter", "testcontainers-postgresql", "testcontainers-kafka", "testcontainers-localstack"]
+testing-spring = ["spring-boot-starter-test", "wiremock-standalone"]
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }
-protobuf = { id = "com.google.protobuf", version.ref = "protobuf" }
+protobuf = { id = "com.google.protobuf", version.ref = "protobuf-plugin" }
 jooq-codegen = { id = "org.jooq.codegen", version.ref = "jooq" }
 flyway = { id = "org.flywaydb.flyway", version.ref = "flyway" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

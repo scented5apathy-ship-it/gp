@@ -1,0 +1,17 @@
+---
+platform:
+  tenant:
+    header-required: true
+    max-id-length: 64
+  security:
+    require-bearer-token: true
+  audit:
+    enabled: true
+    metric-name: "platform.audit.events"
+  openfeature:
+    provider: "noop"
+    cache-ttl-millis: 30000
+  shutdown:
+    timeout-seconds: 30
+  otel:
+    always-sample: false
