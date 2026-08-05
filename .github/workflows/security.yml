@@ -1,0 +1,206 @@
+name: security
+
+# Mirrors scripts/security-ci.mjs so local and CI invocations stay in
+# lock-step. Owner: @genealogy/security.
+#
+# Per ADR-E0.5-13 §13 and tasks.md E1.6. Required check on every PR
+# touching:
+#   - packages/, apps/, services/, workers/, libs/
+#   - contracts/, platform/, config/
+#   - .github/, security/, scripts/
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "apps/**"
+      - "workers/**"
+      - "libs/**"
+      - "packages/**"
+      - "contracts/**"
+      - "platform/**"
+      - "config/**"
+      - "security/**"
+      - ".github/**"
+      - "scripts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "gradle/libs.versions.toml"
+      - ".github/renovate.json"
+      - ".trivyignore"
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Re-run so Renovate-mediated vulnerability updates surface
+    # even when no source files changed. Cron is Monday 02:00 UTC.
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write # required for Cosign keyless signing (OIDC)
+  security-events: write # upload SARIF to GitHub Code Scanning
+  attestations: write
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: secrets (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597365c4ed81c # pin via Renovate
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@9e8e2c08a1c3f8e6b1c5d6a8b9d8e7f6c5b4a392 # pin via Renovate
+        env:
+          GITLEAKS_CONFIG: security/gitleaks.toml
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  semgrep:
+    name: sast (semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep:1.95.0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597365c4ed81c
+      - name: Run semgrep
+        run: |
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/security-audit \
+            --config p/typescript \
+            --config p/javascript \
+            --config p/java \
+            --config p/secrets \
+            --config p/ci \
+            --config security/semgrep/semgrep.local.yaml \
+            --json --output security/artifacts/semgrep.json \
+            --error --metrics=off .
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@4e828ff8d448a8a6e532957b181c2edd3b3b9d23
+        with:
+          sarif_file: security/artifacts/semgrep.json
+          category: semgrep
+
+  trivy-fs:
+    name: vulnerability (trivy fs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597365c4ed81c
+      - name: Run Trivy (filesystem)
+        uses: aquasecurity/trivy-action@18f98e4cd90f8ca5dd32bcf45d0bbc41e8b96f6c # pin via Renovate
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignorefile: .trivyignore
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: "1"
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@4e828ff8d448a8a6e532957b181c2edd3b3b9d23
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  checkov:
+    name: iac (checkov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597365c4ed81c
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@3e1abedee5311bfef0a14ef53116b3d7e7c1d63c # pin via Renovate
+        with:
+          directory: .
+          config_file: security/checkov/.checkov.yaml
+          framework: kubernetes helm dockerfile yaml terraform
+          quiet: true
+          compact: true
+          output_format: cli,sarif
+          output_file_path: console,security/artifacts/checkov.sarif
+          download_external_modules: false
+
+  sbom:
+    name: sbom (syft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597365c4ed81c
+      - name: Generate SBOM
+        uses: anchore/sbom-action@57b5e9e3a35d68c9d84b56f9a04b07b81c01ee51 # pin via Renovate
+        with:
+          format: cyclonedx-json
+          artifact-name: sbom.cdx.json
+          output-file: security/artifacts/sbom.cdx.json
+      - name: Re-scan SBOM with Trivy
+        uses: aquasecurity/trivy-action@18f98e4cd90f8ca5dd32bcf45d0bbc41e8b96f6c
+        with:
+          scan-type: sbom
+          scan-ref: security/artifacts/sbom.cdx.json
+          severity: HIGH,CRITICAL
+          ignorefile: .trivyignore
+          format: sarif
+          output: trivy-sbom.sarif
+          exit-code: "1"
+        continue-on-error: true
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pin via Renovate
+        with:
+          name: sbom-cyclonedx
+          path: security/artifacts/sbom.cdx.json
+          retention-days: 90
+
+  license:
+    name: license gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597365c4ed81c
+      - uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # pin via Renovate
+        with:
+          node-version: "22"
+      - run: node scripts/license-check.mjs
+
+  cosign:
+    name: cosign sign + attest
+    runs-on: ubuntu-latest
+    needs: [sbom, trivy-fs]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597365c4ed81c
+      - name: Download SBOM
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # pin via Renovate
+        with:
+          name: sbom-cyclonedxd
+          path: security/artifacts/
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@59d8608b73b3b045793524e64d00c40fdf6612e9 # pin via Renovate
+        with:
+          cosign-release: v2.4.1
+      - name: Sign + attest release artefact (keyless via OIDC)
+        env:
+          COSIGN_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          COSIGN_OIDC_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_KEYLESS_OCI_FULCIO_URL: https://fulcio.sigstore.dev
+          COSIGN_REKOR_URL: https://rekor.sigstore.dev
+          IMAGE: ghcr.io/genealogy/release-artefact:${{ github.sha }}
+          SBOM: security/artifacts/sbom.cdx.json
+        run: |
+          cosign sign --yes "${IMAGE}"
+          cosign attest --yes \
+            --predicate "${SBOM}" \
+            --type cyclonedx \
+            "${IMAGE}"

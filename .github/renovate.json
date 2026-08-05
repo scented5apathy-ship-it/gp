@@ -1,46 +1,146 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":dependencyDashboard"],
+  "description": "Renovate policy for the Genealogy Platform monorepo. Owned by @genealogy/platform; security rules co-owned by @genealogy/security. See ADR-E0.5-01 (version matrix) and ADR-E0.5-13 (CI / registry / Cosign) for upstream context.",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":automergeDisabled"
+  ],
+  "minimumReleaseAge": "7 days",
+  "timezone": "UTC",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 20,
+  "prHourlyLimit": 5,
+  "branchPrefix": "renovate/",
+  "commitMessagePrefix": "chore(deps)",
+  "commitMessageTopic": "{{depName}}",
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["before 6am on monday"]
+    "schedule": ["before 6am on monday"],
+    "automerge": false,
+    "reviewers": ["@genealogy/platform"]
   },
   "vulnerabilityAlerts": {
     "enabled": true,
-    "labels": ["security"]
+    "labels": ["security"],
+    "assignees": ["@genealogy/security"],
+    "reviewers": ["@genealogy/security", "@genealogy/platform"],
+    "automerge": false
   },
   "osvVulnerabilityAlerts": {
-    "enabled": true
+    "enabled": true,
+    "labels": ["security"]
   },
   "packageRules": [
+    {
+      "description": "Critical / security-sensitive runtime — always manual review, never auto-merge.",
+      "matchManagers": ["gradle", "npm", "nvm"],
+      "matchPackageNames": [
+        "org.springframework.boot",
+        "org.springframework.cloud",
+        "org.springframework.security",
+        "com.google.protobuf",
+        "io.grpc",
+        "com.auth0:java-jwt",
+        "io.jsonwebtoken:jjwt-*",
+        "org.bouncycastle:*",
+        "org.apache.tika:*",
+        "next",
+        "react",
+        "react-dom",
+        "typescript",
+        "@types/node",
+        "pnpm",
+        "node",
+        "eslint",
+        "prettier",
+        "turbo"
+      ],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "enabled": true,
+      "automerge": false,
+      "minimumReleaseAge": "7 days",
+      "labels": ["security-sensitive", "review-required"],
+      "assignees": ["@genealogy/security"],
+      "reviewers": ["@genealogy/security", "@genealogy/platform"],
+      "dependencyDashboardApproval": true
+    },
     {
       "description": "Spring Boot / Spring Cloud: quarterly minor bump + immediate security",
       "matchManagers": ["gradle"],
       "matchPackagePatterns": ["^org\\.springframework", "^org\\.springframework\\.boot$"],
       "schedule": ["every weekend"],
       "groupName": "spring-bom",
-      "automerge": false
+      "automerge": false,
+      "minimumReleaseAge": "7 days",
+      "labels": ["runtime"],
+      "reviewers": ["@genealogy/platform"]
     },
     {
-      "description": "Auto-merge patch-level security fixes (Gradle, pnpm)",
+      "description": "Auto-merge patch-level security fixes for non-runtime packages.",
       "matchDepTypes": ["dependencies", "devDependencies"],
       "matchUpdateTypes": ["patch"],
-      "matchPackagePatterns": ["*"],
+      "matchPackageNames": [
+        "@stoplight/spectral-cli",
+        "@eslint/js",
+        "eslint-config-prettier",
+        "markdownlint-cli2",
+        "rimraf",
+        "typescript-eslint",
+        "@types/node"
+      ],
       "enabled": true,
       "automerge": true,
       "automergeType": "pr",
       "filterMatchPaths": ["**/*"],
-      "platformAutomerge": true
+      "platformAutomerge": true,
+      "minimumReleaseAge": "7 days",
+      "labels": ["security", "auto-merged"]
     },
     {
-      "description": "Major and minor updates require manual review per ADR-E0.5-01",
+      "description": "Major and minor updates require manual review per ADR-E0.5-01 / E0.5-13.",
       "matchUpdateTypes": ["major", "minor"],
       "enabled": true,
       "automerge": false,
+      "minimumReleaseAge": "7 days",
       "labels": ["review-required"],
       "assignees": ["@genealogy/platform"],
-      "reviewers": ["@genealogy/platform"]
+      "reviewers": ["@genealogy/platform"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "GitHub Actions: pin to immutable SHA, manual review on bump.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "enabled": true,
+      "automerge": false,
+      "pinDigests": true,
+      "minimumReleaseAge": "7 days",
+      "labels": ["github-actions"],
+      "reviewers": ["@genealogy/platform", "@genealogy/security"]
+    },
+    {
+      "description": "Docker images used in security CI: pin digest, manual review.",
+      "matchManagers": ["regex"],
+      "matchPackagePatterns": ["^docker://.*(gitleaks|semgrep|trivy|syft|grype|checkov|cosign).*"],
+      "enabled": true,
+      "automerge": false,
+      "pinDigests": true,
+      "minimumReleaseAge": "7 days",
+      "labels": ["security-ci"],
+      "reviewers": ["@genealogy/security"]
     }
   ],
-  "reviewers": ["@genealogy/platform"]
+  "reviewers": ["@genealogy/platform"],
+  "labels": ["dependencies"],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/target/**",
+    "**/coverage/**",
+    "**/.gradle/**"
+  ]
 }

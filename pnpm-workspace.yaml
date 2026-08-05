@@ -4,3 +4,19 @@ packages:
   - "services/*/web"
   - "tools/*"
   - "contracts/web"
+
+# Supply-chain hardening (per tasks.md E1.6 / privacy-and-legal-gate.md
+# TM-08).
+#
+# `trustPolicy: no-downgrade` — prevents an attacker from downgrading
+# a previously vetted lockfile entry to a malicious older version.
+#
+# `minimumReleaseAge: 10080` — 7-day cool-off (in minutes) before pnpm
+# resolves a freshly published package version. Mirrors the Renovate
+# `minimumReleaseAge: "7 days"` policy.
+#
+# `blockExoticSubdeps: true` — forbids transitive git / http / file
+# dependencies (they cannot be attested through Cosign/SBOM).
+trustPolicy: no-downgrade
+minimumReleaseAge: 10080
+blockExoticSubdeps: true

@@ -41,3 +41,11 @@
 # Privacy-sensitive areas.
 /services/dna-service/         @genealogy/dna @genealogy/security @genealogy/privacy
 /services/audit-service/       @genealogy/identity @genealogy/security
+
+# Security CI toolchain (added in E1.6).
+/security/                     @genealogy/security
+/.trivyignore                  @genealogy/security
+/scripts/security-ci.mjs       @genealogy/security
+/scripts/license-check.mjs     @genealogy/security
+/scripts/cosign-sign.mjs       @genealogy/security
+/.github/workflows/security.yml @genealogy/security

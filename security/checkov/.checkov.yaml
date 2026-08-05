@@ -1,0 +1,50 @@
+# Checkov config — Genealogy Platform
+#
+# Checkov is the primary IaC / Kubernetes / Helm / Dockerfile scanner
+# (ADR-E0.5-13 §13). Trivy runs in advisory mode only for IaC; Checkov
+# is blocking.
+#
+# Consumed by:
+#   - scripts/security-ci.mjs        (local invocation via Docker)
+#   - .github/workflows/security.yml (CI invocation)
+#
+# Owner: @genealogy/security.
+
+# Repository-wide scan scope. The orchestrator passes --framework per
+# invocation; this block is the default for ad-hoc runs.
+directory:
+  - platform/
+  - apps/
+  - services/
+  - workers/
+
+download-external-modules: false
+
+# Skip checks that we know are noisy on this codebase.
+skip-check:
+  # GitOps owns the manifests; we don't need Checkov to enforce
+  # branch protection rules on a PR.
+  - CKV_GIT_1
+  - CKV_GIT_2
+  - CKV_GIT_3
+  - CKV_GIT_4
+  - CKV_GIT_5
+  - CKV_GIT_6
+  - CKV_GIT_7
+  - CKV_GIT_8
+
+# Default frameworks. The orchestrator overrides this list at runtime.
+framework:
+  - kubernetes
+  - helm
+  - dockerfile
+  - yaml
+  - terraform
+
+# Allow fine-grained exceptions per-check. Exceptions MUST reference an
+# ADR or a runbook id and have an expiry date.
+external-checks-dir: security/checkov/exceptions
+
+# Suppress upload of results to the Bridgecrew platform. CI runs are
+# self-contained.
+skip-results-upload: true

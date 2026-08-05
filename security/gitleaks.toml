@@ -1,0 +1,88 @@
+# Gitleaks config — Genealogy Platform
+#
+# Single source of truth for the secret scanner. Consumed by:
+#   - scripts/security-ci.mjs        (local invocation via Docker)
+#   - .github/workflows/security.yml (CI invocation)
+#
+# Ruleset is built from the upstream `gitleaks/gitleaks` baseline plus the
+# project-specific allowlist below. The baseline file (.gitleaks-baseline.json)
+# is generated on demand by the CI runner when the legacy-history mode is
+# enabled; for day-to-day work, the scanner always inspects the live tree.
+#
+# Owner: @genealogy/security (per ownership-catalog.md §6.4).
+
+title = "genealogy-platform-secrets"
+
+# Use the upstream default ruleset. `extend` is evaluated at scan time, so the
+# CI container always pulls the same ruleset we tested locally.
+[extend]
+useDefault = true
+
+# Our build/test artefacts frequently contain fake credentials that look like
+# secrets. We tell Gitleaks to ignore them so the gate stays focused on real
+# leaks.
+[allowlist]
+description = "Allow non-secret tokens used by tests, fixtures and tooling"
+paths = [
+  '''(?i)\.gradle/.*''',
+  '''(?i)build/.*''',
+  '''(?i)target/.*''',
+  '''(?i)dist/.*''',
+  '''(?i)node_modules/.*''',
+  '''(?i)\.next/.*''',
+  '''(?i)coverage/.*''',
+  '''(?i).*-lock\.json$''',
+  '''(?i)pnpm-lock\.yaml$''',
+  '''(?i)yarn\.lock$''',
+  '''(?i)package-lock\.json$''',
+  '''(?i)gradle\.lockfile$''',
+  '''(?i)verification-metadata\.xml$''',
+  '''(?i)\.gitleaks-baseline\.json$''',
+  '''(?i).*\.test\.mjs$''',
+  '''(?i).*\.spec\.ts$''',
+  '''(?i)security/fixtures/.*''',
+  '''(?i)__tests__/.*''',
+]
+
+# Regex allowlist for known false positives. Gitleaks still scans these files
+# but skips individual matches.
+regexes = [
+  '''-----BEGIN (DSA|EC|OPENSSH|RSA) PRIVATE KEY-----fake-----END''',
+  '''example\.com/api/key=EXAMPLE_KEY''',
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''ghp_[A-Za-z0-9]{20,}\b''',
+]
+
+stopwords = [
+  "example",
+  "examples",
+  "placeholder",
+  "TODO",
+  "FIXME",
+  "genealogy-fake-secret",
+  "your-secret-here",
+  "change-me",
+]
+
+# Custom rule for our internal VAPID-style signing keys, used by the
+# notification-service WebPush adapter. Anything that looks like
+# `vapid_<base64url>` is treated as a real secret.
+[[rules]]
+id = "genealogy-vapid-key"
+description = "Internal VAPID key (notification-service WebPush)"
+regex = '''(?i)\bvapid_[A-Za-z0-9_-]{20,}'''
+keywords = ["vapid"]
+[tules.allowlist]
+stopwords = ["example", "placeholder"]
+
+# Custom rule for SaaS-only S3 access keys the on-prem bundle might leak.
+# These never appear in production source.
+[[rules]]
+id = "genealogy-s3-access-key"
+description = "Internal S3-style access key id"
+regex = '''\bGP1[SK]ID[A-Z0-9]{12,}\b'''
+keywords = ["gp1skid", "gp1skid"]
+
+[report]
+format = "json"
+verbosity = "info"

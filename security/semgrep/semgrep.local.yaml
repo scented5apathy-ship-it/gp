@@ -1,0 +1,138 @@
+# Semgrep project-specific rules — Genealogy Platform.
+#
+# Combined with upstream registry configs via the `--config` flag in
+# scripts/security-ci.mjs. Loaded standalone (without registry rules)
+# to lint this file itself:
+#   semgrep scan --config security/semgrep/semgrep.local.yaml security/
+
+rules:
+  - id: no-client-supplied-tenant-id
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Tenant id must come from the trusted context (X-Tenant-Id header or
+      gRPC Context), never from the request body or query string.
+    pattern-either:
+      - pattern: |
+          $REQ.body.tenantId
+      - pattern: |
+          $REQ.query.tenantId
+      - pattern: |
+          $REQ.params.tenantId
+      - pattern: |
+          new URLSearchParams($X).get("tenantId")
+    paths:
+      exclude:
+        - "**/*.test.*"
+        - "**/__tests__/**"
+
+  - id: no-raw-dna-in-logs
+    languages: [typescript, javascript, java]
+    severity: ERROR
+    message: >-
+      Raw DNA / genotype / sequencing data must never be logged. Use the
+      redaction helper from `platform-telemetry` (TS) or `PiiSafeMarker`
+      (Java) before logging any payload that might contain DNA markers.
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: console.log($X)
+              - pattern: logger.info($X)
+              - pattern: log.info($X)
+              - pattern: System.out.println($X)
+              - pattern: log.error($X)
+              - pattern: logger.error($X)
+              - pattern: logger.debug($X)
+              - pattern: log.debug($X)
+          - metavariable-pattern:
+              metavariable: $X
+              patterns:
+                - pattern-either:
+                    - pattern: $RAW.dna
+                    - pattern: $RAW.genotype
+                    - pattern: $RAW.rawBytes
+                    - pattern: $RAW.kitPayload
+                    - pattern: $RAW.sequence
+    paths:
+      exclude:
+        - "**/*.test.*"
+        - "**/test/**"
+        - "**/integrationTest/**"
+
+  - id: no-agpl-imports
+    languages: [typescript, javascript, java]
+    severity: ERROR
+    message: >-
+      AGPL-licensed dependencies are forbidden on the SaaS control plane
+      (per architecture-decisions.md cross-cutting rules). Pin a non-AGPL
+      alternative or escalate via ADR.
+    pattern-regex: '\b(agpl|affero|sspl|server-side-public-license|commons-clause)\b'
+    paths:
+      include:
+        - "package.json"
+        - "pnpm-lock.yaml"
+        - "build.gradle.kts"
+        - "settings.gradle.kts"
+        - "gradle/libs.versions.toml"
+
+  - id: no-openfga-allow-without-abac
+    languages: [typescript, javascript, java]
+    severity: WARNING
+    message: >-
+      OpenFGA `Check` must be combined with the ABAC overlay
+      (`PiiAbacGuard` in TS, `AbacPolicyEngine` in Java) before domain
+      logic proceeds.
+    pattern-either:
+      - pattern: |
+          if (await openfga.check($X)) { ... }
+      - pattern: |
+          if (openfga.check($X).allowed) { ... }
+    paths:
+      exclude:
+        - "**/*.test.*"
+
+  - id: no-println-in-prod
+    languages: [java]
+    severity: WARNING
+    message: >-
+      System.out.println leaks to stdout in container runtimes and
+      bypasses the structured logging contract. Use SLF4J.
+    pattern: System.out.println(...)
+    paths:
+      include:
+        - "services/**/*.java"
+        - "libs/**/*.java"
+      exclude:
+        - "**/test/**/*.java"
+        - "**/integrationTest/**/*.java"
+
+  - id: no-console-log-in-services
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      console.log bypasses the structured logging contract. Use the
+      shared logger from `platform-telemetry`.
+    pattern-either:
+      - pattern: console.log(...)
+      - pattern: console.warn(...)
+      - pattern: console.error(...)
+    paths:
+      include:
+        - "apps/**/*.ts"
+        - "apps/**/*.tsx"
+        - "services/**/*.ts"
+      exclude:
+        - "**/*.test.*"
+        - "**/__tests__/**"
+        # Next.js App Router error / loading / not-found boundaries are
+        # intentionally Client Components; they render before the rest
+        # of the React tree is mounted and cannot import our logger
+        # before telemetry is initialised. The console.error here is
+        # captured by the browser-side OTel auto-instrumentation
+        # (E13.1) and re-shipped to the platform log pipeline.
+        - "apps/web/src/app/error.tsx"
+        - "apps/web/src/app/[locale]/error.tsx"
+        - "apps/web/src/app/loading.tsx"
+        - "apps/web/src/app/[locale]/loading.tsx"
+        - "apps/web/src/app/not-found.tsx"
+        - "apps/web/src/app/[locale]/not-found.tsx"

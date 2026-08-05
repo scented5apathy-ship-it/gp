@@ -41,3 +41,9 @@ secrets/
 # generated artefacts are reproducible by `pnpm codegen:*`.
 **/src/lib/api/generated/
 **/src/generated/
+
+# Security CI artefacts. Reproducible via `pnpm security`.
+security/artifacts/
+*.sarif
+cosign.pub
+cosign.key

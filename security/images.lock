@@ -1,0 +1,49 @@
+{
+  "$comment": "Pinned image digests for the security CI toolchain. Consumed by scripts/security-ci.mjs and the GitHub Actions security workflow. Renovate keeps the digests up to date per .github/renovate.json packageRules[5].",
+  "version": 1,
+  "updated_at": "2026-08-05",
+  "images": {
+    "gitleaks": {
+      "image": "ghcr.io/gitleaks/gitleaks",
+      "tag": "v8.21.2",
+      "digest": "sha256:0e99e8821643ea5b235718642b93bb32486af9c8162c8b8731f7cbdc951a7f46",
+      "use": "secret scanner"
+    },
+    "semgrep": {
+      "image": "semgrep/semgrep",
+      "tag": "1.95.0",
+      "digest": "sha256:30e6afa99ebd8e7b4115d4904898108eb4bf77025819e9263f09cf14e6f6e549",
+      "use": "static analysis (SAST)"
+    },
+    "trivy": {
+      "image": "aquasec/trivy",
+      "tag": "0.58.1",
+      "digest": "sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
+      "use": "vulnerability + IaC + secret scanner"
+    },
+    "syft": {
+      "image": "anchore/syft",
+      "tag": "v1.27.0",
+      "digest": "sha256:d755e38b255045ebec12acacdb0f50b8b8781979116bbf2b9fa3bd5fb4a355af",
+      "use": "SBOM generator (CycloneDX JSON)"
+    },
+    "grype": {
+      "image": "anchore/grype",
+      "tag": "v0.81.0",
+      "digest": "sha256:69e79c4acd753a881312eb671da7996968a6097366c493538d993dbca70a56b7",
+      "use": "vulnerability scanner (operates on Syft SBOM)"
+    },
+    "checkov": {
+      "image": "bridgecrew/checkov",
+      "tag": "3.2.533",
+      "digest": "sha256:358df41e087155acf9651134d3a2f4909420a662df6d3c52e39ba55bc10e139d",
+      "use": "IaC / Kubernetes / Helm / Dockerfile scanner"
+    },
+    "cosign": {
+      "image": "gcr.io/projectsigstore/cosign",
+      "tag": "v2.4.1",
+      "digest": "sha256:b03690aa52bfe94054187142fba24dc54137650682810633901767d8a3e15b31",
+      "use": "image / artefact signing + provenance attestation"
+    }
+  }
+}

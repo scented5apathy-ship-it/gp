@@ -1,0 +1,53 @@
+# Trivy configuration — Genealogy Platform
+#
+# Single source of truth for the vulnerability scanner. Consumed by:
+#   - scripts/security-ci.mjs        (local invocation via Docker)
+#   - .github/workflows/security.yml (CI invocation)
+#
+# Severity gate:
+#   - HIGH/CRITICAL  → fail CI on every scan
+#   - MEDIUM         → fail CI on the dependency / image scan
+#   - LOW/UNKNOWN    → report only
+#
+# Owner: @genealogy/security.
+
+severity:
+  - HIGH
+  - CRITICAL
+
+# Run-time options.
+scan:
+  # Scan SBOM artefacts we publish ourselves (CycloneDX JSON). When we
+  # produce an SBOM with Syft we re-scan it with Trivy to catch CVEs that
+  # were missed during the original image build.
+  skip-update: false
+  scanners:
+    - vuln
+    - misconfig
+    - secret
+
+vulnerability:
+  type:
+    - os
+    - library
+  ignore-unfixed: true
+  # Exceptions live in the repo-root `.trivyignore` (one CVE / GHSA per
+  # line, with owner + expiry + rationale as comment columns). Every
+  # exception has a maximum lifetime of 90 days; after expiry the gate
+  # fails again so the entry must be renewed by the security team.
+  ignore-file: .trivyignore
+
+misconfiguration:
+  # Checkov is the primary IaC scanner; Trivy runs in advisory mode only.
+  trace: false
+
+secret:
+  config: trivy-secret.yaml
+
+# Repo-wide ignore list. Every entry is documented with the upstream
+# advisory id, the affected path and the rationale (patch ETA, mitigated
+# by network policy, etc.).
+vulnerability.ignore:
+  # Reserved for project-specific exceptions. Patches are tracked in the
+  # Jira security queue and reviewed quarterly by @genealogy/security.
+  []

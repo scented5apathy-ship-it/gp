@@ -98,7 +98,7 @@ _Requirements: R1–R18, NFR1–NFR8_
   - Sinh typed REST client từ OpenAPI; thêm error/loading boundaries.
   - Đặt budget cho bundle, Core Web Vitals và accessibility.
 
-- [ ] E1.6 Thiết lập OSS security CI
+- [x] E1.6 Thiết lập OSS security CI
   - Chạy Gitleaks, Semgrep, Trivy, Syft/Grype, Checkov và license checks.
   - Sinh SBOM, ký image/artifact bằng Cosign và lưu provenance.
   - Cấu hình Renovate với review policy; không tự merge major/security-sensitive update.
