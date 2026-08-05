@@ -1,0 +1,46 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  },
+  "osvVulnerabilityAlerts": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "Spring Boot / Spring Cloud: quarterly minor bump + immediate security",
+      "matchManagers": ["gradle"],
+      "matchPackagePatterns": ["^org\\.springframework", "^org\\.springframework\\.boot$"],
+      "schedule": ["every weekend"],
+      "groupName": "spring-bom",
+      "automerge": false
+    },
+    {
+      "description": "Auto-merge patch-level security fixes (Gradle, pnpm)",
+      "matchDepTypes": ["dependencies", "devDependencies"],
+      "matchUpdateTypes": ["patch"],
+      "matchPackagePatterns": ["*"],
+      "enabled": true,
+      "automerge": true,
+      "automergeType": "pr",
+      "filterMatchPaths": ["**/*"],
+      "platformAutomerge": true
+    },
+    {
+      "description": "Major and minor updates require manual review per ADR-E0.5-01",
+      "matchUpdateTypes": ["major", "minor"],
+      "enabled": true,
+      "automerge": false,
+      "labels": ["review-required"],
+      "assignees": ["@genealogy/platform"],
+      "reviewers": ["@genealogy/platform"]
+    }
+  ],
+  "reviewers": ["@genealogy/platform"]
+}

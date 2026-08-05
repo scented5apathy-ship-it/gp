@@ -1,0 +1,8 @@
+# Per-service OWNERS file — CODEOWNERS-compatible.
+# Generated from config/teams.yaml by tools/scripts/sync-team-map.ts.
+# DO NOT EDIT — change config/teams.yaml and re-run the sync.
+Preference, template, in-app/email/push adapters.
+service: notification
+primary: notification
+secondary: "@genealogy/platform"
+oncall: notification

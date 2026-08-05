@@ -1,0 +1,113 @@
+# Pinned versions for the Genealogy Platform monorepo.
+# This file is the SINGLE source of truth for Gradle dependency versions.
+# Subprojects must declare versions via `libs.<alias>` and never pin a
+# literal version inside a build.gradle.kts.
+# Review cadence per ADR-E0.5-01: 2026-11-01 (quarterly minor bump,
+# security-critical same-week).
+[versions]
+agp = "8.5.2"
+assertj = "3.26.3"
+archunit = "1.3.0"
+apicurio = "2.6.5"
+awaitility = "4.2.2"
+flyway = "10.20.0"
+grpc = "1.66.0"
+jackson = "2.17.2"
+java = "21"
+junit = "5.10.3"
+jooq = "3.19.13"
+keycloak-admin = "26.0.0"
+kotlin = "2.0.20"
+logback = "1.5.8"
+lombok = "1.18.34"
+micrometer = "1.13.6"
+mockito = "5.13.0"
+opentelemetry = "1.42.1"
+openapi-generator = "7.9.0"
+openfeature = "1.9.0"
+postgres = "42.7.4"
+protobuf = "3.25.5"
+s3 = "2.28.20"
+slf4j = "2.0.16"
+spring-boot = "3.3.4"
+spring-dependency-management = "1.1.6"
+testcontainers = "1.20.2"
+temporal = "1.26.0"
+vavr = "1.0.0-alpha.3"
+
+[libraries]
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator", version.ref = "spring-boot" }
+spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa", version.ref = "spring-boot" }
+spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security", version.ref = "spring-boot" }
+spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version.ref = "spring-boot" }
+spring-boot-starter-oauth2-resource-server = { module = "org.springframework.boot:spring-boot-starter-oauth2-resource-server", version.ref = "spring-boot" }
+spring-boot-starter-grpc = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version.ref = "grpc" }
+spring-boot-starter-jooq = { module = "org.springframework.boot:spring-boot-starter-jooq", version.ref = "spring-boot" }
+
+jooq = { module = "org.jooq:jooq", version.ref = "jooq" }
+jooq-meta = { module = "org.jooq:jooq-meta", version.ref = "jooq" }
+jooq-codegen = { module = "org.jooq:jooq-codegen", version.ref = "jooq" }
+
+flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
+
+postgres = { module = "org.postgresql:postgresql", version.ref = "postgres" }
+
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
+
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+protobuf-protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
+opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref = "opentelemetry" }
+opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version.ref = "opentelemetry" }
+opentelemetry-spring-boot-starter = { module = "io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter", version = "2.9.0" }
+micrometer-tracing-bridge-otel = { module = "io.micrometer:micrometer-tracing-bridge-otel", version.ref = "micrometer" }
+
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+
+apicurio-registry-client = { module = "io.apicurio:apicurio-registry-java-client", version.ref = "apicurio" }
+
+temporal-sdk = { module = "io.temporal:temporal-sdk", version.ref = "temporal" }
+keycloak-admin-client = { module = "org.keycloak:keycloak-admin-client", version.ref = "keycloak-admin" }
+
+openfeature-sdk = { module = "dev.openfeature:sdk", version.ref = "openfeature" }
+openfeature-flagsmith-provider = { module = "dev.openfeature:flagsmith-provider", version.ref = "openfeature" }
+
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "s3" }
+vavr = { module = "io.vavr:vavr", version.ref = "vavr" }
+lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+
+# testing
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }
+assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
+mockito-junit-jupiter = { module = "org.mockito:mockito-junit-jupiter", version.ref = "mockito" }
+awaitility = { module = "org.awaitility:awaitility", version.ref = "awaitility" }
+archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version.ref = "spring-boot" }
+testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
+testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+testcontainers-kafka = { module = "org.testcontainers:kafka", version.ref = "testcontainers" }
+testcontainers-localstack = { module = "org.testcontainers:localstack", version.ref = "testcontainers" }
+
+[bundles]
+spring-runtime = ["spring-boot-starter-web", "spring-boot-starter-actuator", "spring-boot-starter-validation", "spring-boot-starter-oauth2-resource-server", "spring-boot-starter-security"]
+observability = ["opentelemetry-api", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "micrometer-tracing-bridge-otel"]
+testing-unit = ["junit-jupiter", "assertj-core", "mockito-core", "mockito-junit-jupiter", "awaitility"]
+testing-archunit = ["archunit-junit5"]
+testing-testcontainers = ["testcontainers-junit-jupiter", "testcontainers-postgresql", "testcontainers-kafka", "testcontainers-localstack"]
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }
+protobuf = { id = "com.google.protobuf", version.ref = "protobuf" }
+jooq-codegen = { id = "org.jooq.codegen", version.ref = "jooq" }
+flyway = { id = "org.flywaydb.flyway", version.ref = "flyway" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

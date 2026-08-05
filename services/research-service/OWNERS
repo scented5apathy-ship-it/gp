@@ -1,0 +1,8 @@
+# Per-service OWNERS file — CODEOWNERS-compatible.
+# Generated from config/teams.yaml by tools/scripts/sync-team-map.ts.
+# DO NOT EDIT — change config/teams.yaml and re-run the sync.
+Source, citation, repository, research log, task, hypothesis.
+service: research
+primary: research
+secondary: "@genealogy/platform"
+oncall: research

@@ -1,0 +1,8 @@
+# Per-service OWNERS file — CODEOWNERS-compatible.
+# Generated from config/teams.yaml by tools/scripts/sync-team-map.ts.
+# DO NOT EDIT — change config/teams.yaml and re-run the sync.
+Append-only security/business audit, export and retention.
+service: audit
+primary: identity
+secondary: "@genealogy/platform"
+oncall: identity

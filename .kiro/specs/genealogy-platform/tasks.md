@@ -63,7 +63,7 @@ _Requirements: R1–R18, NFR1–NFR8_
 
 ### Subtasks
 
-- [ ] E1.1 Khởi tạo workspace
+- [x] E1.1 Khởi tạo workspace
   - Tạo pnpm/Turborepo cho web/packages và Gradle multi-project cho Java.
   - Bật TypeScript strict, Java 21 toolchain, dependency locking và reproducible build.
   - Chặn service import domain model/database module của service khác.

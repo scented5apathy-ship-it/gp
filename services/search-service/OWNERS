@@ -1,0 +1,8 @@
+# Per-service OWNERS file — CODEOWNERS-compatible.
+# Generated from config/teams.yaml by tools/scripts/sync-team-map.ts.
+# DO NOT EDIT — change config/teams.yaml and re-run the sync.
+Authorized search projection, public index projection, saved search.
+service: search
+primary: search
+secondary: "@genealogy/platform"
+oncall: search

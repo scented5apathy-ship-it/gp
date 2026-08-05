@@ -1,0 +1,143 @@
+# Platform teams
+#
+# Ratified as part of E1.1 to replace the placeholder team IDs used in
+# .kiro/specs/genealogy-platform/ownership-catalog.md §6 RACI and §8 #1.
+# The YAML file is consumed by:
+#   - CODEOWNERS / OWNERS files under services/, apps/, workers/,
+#     libs/, packages/, contracts/, platform/
+#   - Renovate reviewer policy (.github/renovate.json)
+#   - Alert routing in Grafana / OnCall (E2.1)
+#   - Argo CD notification targets
+#
+# Schema:
+#   teams.<id>.github      GitHub team slug used in CODEOWNERS
+#   teams.<id>.name        Human-readable team name
+#   teams.<id>.primary     Primary contact (handle / @-mention)
+#   teams.<id>.oncall      On-call rotation slug
+#   teams.<id>.scope       Short narrative about what the team owns
+#
+# Owner of this file: platform-em. Update via PR; notify #gen-eng 48h
+# ahead per ownership-catalog.md §9 sign-off rule.
+version: 1
+updated_at: 2026-08-04
+teams:
+  platform-primary:
+    github: "@genealogy/platform"
+    name: Platform team
+    primary: "@platform-em"
+    oncall: platform-primary
+    scope: >
+      Monorepo, build/CI, Kubernetes baseline, GitOps/Argo CD, shared
+      libraries, observability stack and Renovate policy. Owns E1, E2
+      and E13.
+  identity-primary:
+    github: "@genealogy/identity"
+    name: Identity & access
+    primary: "@identity-em"
+    oncall: identity-primary
+    scope: >
+      Keycloak realms, OIDC, MFA, federation, tenant-service and
+      audit-service. Owns E3 and E11.
+  dna-primary:
+    github: "@genealogy/dna"
+    name: DNA service
+    primary: "@dna-em"
+    oncall: dna-primary
+    scope: >
+      DNA ingest, consent ledger, match/segment workers and the
+      privacy-first DNA pipeline. Owns E10 and E5 #dna.
+  genealogy-primary:
+    github: "@genealogy/genealogy"
+    name: Genealogy core
+    primary: "@genealogy-em"
+    oncall: genealogy-primary
+    scope: >
+      Person, Tree, Relationship, LifeEvent, Claim and merge
+      workflows. Owns E4 and E6.
+  research-primary:
+    github: "@genealogy/research"
+    name: Research & sources
+    primary: "@research-em"
+    oncall: research-primary
+    scope: >
+      Source/Citation/Repository, research log and hypothesis. Owns
+      E7.
+  collaboration-primary:
+    github: "@genealogy/collaboration"
+    name: Collaboration
+    primary: "@collaboration-em"
+    oncall: collaboration-primary
+    scope: >
+      Change proposals, reviews, comments, mentions, watch and
+      activity feed. Owns E8.
+  media-primary:
+    github: "@genealogy/media"
+    name: Media
+    primary: "@media-em"
+    oncall: media-primary
+    scope: >
+      Upload sessions, asset metadata, albums, processing workers
+      and delivery. Owns E9.
+  search-primary:
+    github: "@genealogy/search"
+    name: Search
+    primary: "@search-em"
+    oncall: search-primary
+    scope: >
+      Authorized search projection, public index and saved search.
+      Owns E12.
+  importexport-primary:
+    github: "@genealogy/import-export"
+    name: Import / export
+    primary: "@import-em"
+    oncall: importexport-primary
+    scope: >
+      GEDCOM, CSV, JSON, PDF jobs, mapping profiles and bundles.
+      Owns E15.
+  notification-primary:
+    github: "@genealogy/notification"
+    name: Notification
+    primary: "@notification-em"
+    oncall: notification-primary
+    scope: >
+      Preferences, templates, in-app/email/push adapters. Owns E11
+      non-identity parts.
+  reporting-primary:
+    github: "@genealogy/reporting"
+    name: Reporting
+    primary: "@reporting-em"
+    oncall: reporting-primary
+    scope: >
+      Dashboards, read models and publication/report jobs. Owns E14.
+  web-primary:
+    github: "@genealogy/web"
+    name: Web
+    primary: "@web-em"
+    oncall: web-primary
+    scope: >
+      Next.js PWA shell, web BFF, public API application and design
+      system. Owns E1.5, E6 UI parts and E15 partner surface.
+  security-primary:
+    github: "@genealogy/security"
+    name: Security & AppSec
+    primary: "@security-em"
+    oncall: security-primary
+    scope: >
+      Threat model, secret/PII/DNA scans, Kong/WAF policy, SBOM and
+      vulnerability triage. Owns E16.
+  privacy-primary:
+    github: "@genealogy/privacy"
+    name: Privacy & DPO
+    primary: "@dpo"
+    oncall: privacy-primary
+    scope: >
+      DPIA per data class, lawful basis/consent, retention, breach
+      SLA, jurisdiction sign-off (E10.1, ADR-E0.5-03). Owns E5.
+  sre-primary:
+    github: "@genealogy/sre"
+    name: SRE
+    primary: "@sre-em"
+    oncall: sre-primary
+    scope: >
+      SLO definitions, alert routing, error budget, incident command,
+      capacity plan, DR drill (E13.4, E14.2). Owns E13.

@@ -1,0 +1,16 @@
+{
+  "name": "@genealogy/codegen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync:teams": "node --experimental-strip-types scripts/sync-team-map.mts",
+    "lint": "echo 'lint placeholder'",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'test placeholder'",
+    "build": "echo 'codegen build placeholder'"
+  },
+  "devDependencies": {
+    "typescript": "5.6.2"
+  }
+}
