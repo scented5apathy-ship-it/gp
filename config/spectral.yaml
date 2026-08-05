@@ -1,0 +1,26 @@
+extends: ["spectral:oas"]
+rules:
+  operation-operationId: error
+  operation-summary: warn
+  operation-tags: off
+  oas3-api-servers: warn
+  info-contact: off
+  info-license: off
+  tag-description: off
+  oas3-valid-media-example: off
+  oas3-valid-schema-example: off
+  # Genealogy-specific: forbid raw DNA fields in public API surface.
+  forbidden-properties:
+    description: >
+      Reject `dnaRaw`, `rawGenotype`, `dna` and `kit` fields at the
+      schema level. These must never appear in the BFF / public API;
+      the dedicated dna-service is the only consumer.
+    severity: error
+    recommended: true
+    given: "$..properties"
+    then:
+      field: "@key"
+      function: pattern
+      functionOptions:
+        not:
+          match: "^(dnaRaw|rawGenotype|dna|kit|rawDna|raw_dna)$"

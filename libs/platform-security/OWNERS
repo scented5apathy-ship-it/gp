@@ -1,0 +1,9 @@
+# platform-security — trusted-context, audit hook, Vault client,
+# tenant-context propagation. Cross-cutting library; security team
+# is the secondary owner because changes affect every service.
+#
+# primary:   @genealogy/platform
+# secondary: @genealogy/security
+# on-call:   platform-oncall@genealogy.local
+
+@genealogy/platform @genealogy/security

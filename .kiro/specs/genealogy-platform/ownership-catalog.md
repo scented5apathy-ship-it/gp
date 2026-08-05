@@ -5,7 +5,8 @@
 > budget, compatibility/deprecation policy and RACI for product, domain,
 > platform, security, privacy and operations. Treat every value marked
 > `DRAFT → E0.6 sign-off` as binding only after Product + Engineering + Security
-> + Privacy + Operations have ratified it.
+>
+> - Privacy + Operations have ratified it.
 
 ## 1. Owner taxonomy
 
@@ -46,230 +47,230 @@ budget beyond its cap must reopen §5.
 
 ### 2.1 tenant-service (E3.2)
 
-| Field | Value |
-|---|---|
-| Domain owner | Identity & Tenant team (lead placeholder: EM-Identity) |
-| Product owner | Onboarding journey (Product-IC-01) |
-| Privacy owner | DPO delegate (Consents & Tenancy) |
-| Security owner | AppSec partner (Identity) |
-| SRE / on-call lead | sre-primary |
-| Owns aggregate/data | `Tenant`, `Membership`, `Invitation`, `Entitlement` (per `design.md` §4) |
-| Public REST | `services/tenant-service/openapi.yaml` (provisionally `…/v1/tenants`, `…/v1/memberships`) |
-| gRPC | `gp.tenant.v1.{TenantService, MembershipService}` |
-| Events published | `gp.tenant.v1.{TenantCreated, MembershipInvited, MembershipActivated, MembershipRevoked, EntitlementChanged}` (Apicurio) |
-| Events consumed | `gp.identity.v1.SubjectProvisioned` (Keycloak mirror) |
-| Sync dependencies (S2S) | Keycloak `/admin/realms/{r}/users` (≤ 200 ms p95, ≤ 1 hop); PostgreSQL primary (≤ 50 ms p95) |
-| Sync dep budget | **max 2 downstream synchronous calls per request** (`n_sync ≤ 2`), see §5 |
-| SLO class | API read path — 99.95 % / month per `scale-and-slo.md` §5.2; p95 read 300 ms, write 600 ms |
-| On-call tier | Tier-1 business hours, Tier-2 24×7 |
-| Capacity skeleton | in `runbook/tenant-service.md` §Capacity, per `scale-and-slo.md` §8 (`scale_and_slo.yml::tenant`) |
-| Runbook | `runbook/tenant-service.md`, dashboard `grafana/dashboards/tenant-service.json`, alert rules `alerts/tenant-service.yaml` |
-| Backup/restore owner | platform-primary (PostgreSQL PITR per ADR-E0.5-02) |
-| Deprecation contract | REST envelope pinned for **12 months** after a breaking change is announced in CHANGELOG.md; gRPC API pinned for **9 months** after a stage transition |
-| Compatible with | ADR-E0.5-01 pinned baseline (Spring Boot, jOOQ, Flyway) |
+| Field                   | Value                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Domain owner            | Identity & Tenant team (lead placeholder: EM-Identity)                                                                                                 |
+| Product owner           | Onboarding journey (Product-IC-01)                                                                                                                     |
+| Privacy owner           | DPO delegate (Consents & Tenancy)                                                                                                                      |
+| Security owner          | AppSec partner (Identity)                                                                                                                              |
+| SRE / on-call lead      | sre-primary                                                                                                                                            |
+| Owns aggregate/data     | `Tenant`, `Membership`, `Invitation`, `Entitlement` (per `design.md` §4)                                                                               |
+| Public REST             | `services/tenant-service/openapi.yaml` (provisionally `…/v1/tenants`, `…/v1/memberships`)                                                              |
+| gRPC                    | `gp.tenant.v1.{TenantService, MembershipService}`                                                                                                      |
+| Events published        | `gp.tenant.v1.{TenantCreated, MembershipInvited, MembershipActivated, MembershipRevoked, EntitlementChanged}` (Apicurio)                               |
+| Events consumed         | `gp.identity.v1.SubjectProvisioned` (Keycloak mirror)                                                                                                  |
+| Sync dependencies (S2S) | Keycloak `/admin/realms/{r}/users` (≤ 200 ms p95, ≤ 1 hop); PostgreSQL primary (≤ 50 ms p95)                                                           |
+| Sync dep budget         | **max 2 downstream synchronous calls per request** (`n_sync ≤ 2`), see §5                                                                              |
+| SLO class               | API read path — 99.95 % / month per `scale-and-slo.md` §5.2; p95 read 300 ms, write 600 ms                                                             |
+| On-call tier            | Tier-1 business hours, Tier-2 24×7                                                                                                                     |
+| Capacity skeleton       | in `runbook/tenant-service.md` §Capacity, per `scale-and-slo.md` §8 (`scale_and_slo.yml::tenant`)                                                      |
+| Runbook                 | `runbook/tenant-service.md`, dashboard `grafana/dashboards/tenant-service.json`, alert rules `alerts/tenant-service.yaml`                              |
+| Backup/restore owner    | platform-primary (PostgreSQL PITR per ADR-E0.5-02)                                                                                                     |
+| Deprecation contract    | REST envelope pinned for **12 months** after a breaking change is announced in CHANGELOG.md; gRPC API pinned for **9 months** after a stage transition |
+| Compatible with         | ADR-E0.5-01 pinned baseline (Spring Boot, jOOQ, Flyway)                                                                                                |
 
 ### 2.2 genealogy-service (E4)
 
-| Field | Value |
-|---|---|
-| Domain owner | Core Genealogy team (lead placeholder: EM-Genealogy) |
-| Product owner | Editor + Researcher journeys |
-| Privacy owner | DPO delegate (Living/Minor redaction) |
-| Security owner | AppSec partner (Core domain) |
-| SRE / on-call lead | sre-primary |
-| Owns aggregate/data | `Tree`, `Person`, `Relationship`, `LifeEvent`, `Claim` (per `design.md` §4) |
-| Public REST | `services/genealogy-service/openapi.yaml` (CRUD + visibility + merge endpoints) |
-| gRPC | `gp.genealogy.v1.{TreeService, PersonService, RelationshipService, ClaimService}` |
-| Events published | `gp.genealogy.v1.{TreeVisibilityChanged, PersonRedacted, ClaimMerged, MergeReversed}` |
-| Events consumed | `gp.tenant.v1.MembershipRevoked` (cache invalidation), `gp.research.v1.ClaimVerified` |
-| Sync dependencies (S2S) | OpenFGA check (≤ 80 ms p95, ≤ 1 hop); ABAC overlay evaluated in-process |
-| Sync dep budget | **max 2 downstream synchronous calls per request** (`n_sync ≤ 2`); merges are async via Temporal (E9.1) |
-| SLO class | API read 99.95 %, write 99.9 %; p95 read 300 ms, write 600 ms; merge job 99 % |
-| On-call tier | Tier-1 24×7 (privacy critical) |
-| Capacity skeleton | `scale_and_slo.yml::genealogy` |
-| Runbook | `runbook/genealogy-service.md`, dashboard `grafana/dashboards/genealogy-service.json` |
-| Backup/restore owner | platform-primary (PITR + RPO ≤ 5 min) |
-| Deprecation contract | REST 12 months, gRPC 9 months, event `gp.genealogy.v1.*` 6 months with consumer opt-in window |
-| Compatible with | ADR-E0.5-01 baseline; Apicurio BACKWARD evolution per ADR-E0.5-08 |
+| Field                   | Value                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- |
+| Domain owner            | Core Genealogy team (lead placeholder: EM-Genealogy)                                                    |
+| Product owner           | Editor + Researcher journeys                                                                            |
+| Privacy owner           | DPO delegate (Living/Minor redaction)                                                                   |
+| Security owner          | AppSec partner (Core domain)                                                                            |
+| SRE / on-call lead      | sre-primary                                                                                             |
+| Owns aggregate/data     | `Tree`, `Person`, `Relationship`, `LifeEvent`, `Claim` (per `design.md` §4)                             |
+| Public REST             | `services/genealogy-service/openapi.yaml` (CRUD + visibility + merge endpoints)                         |
+| gRPC                    | `gp.genealogy.v1.{TreeService, PersonService, RelationshipService, ClaimService}`                       |
+| Events published        | `gp.genealogy.v1.{TreeVisibilityChanged, PersonRedacted, ClaimMerged, MergeReversed}`                   |
+| Events consumed         | `gp.tenant.v1.MembershipRevoked` (cache invalidation), `gp.research.v1.ClaimVerified`                   |
+| Sync dependencies (S2S) | OpenFGA check (≤ 80 ms p95, ≤ 1 hop); ABAC overlay evaluated in-process                                 |
+| Sync dep budget         | **max 2 downstream synchronous calls per request** (`n_sync ≤ 2`); merges are async via Temporal (E9.1) |
+| SLO class               | API read 99.95 %, write 99.9 %; p95 read 300 ms, write 600 ms; merge job 99 %                           |
+| On-call tier            | Tier-1 24×7 (privacy critical)                                                                          |
+| Capacity skeleton       | `scale_and_slo.yml::genealogy`                                                                          |
+| Runbook                 | `runbook/genealogy-service.md`, dashboard `grafana/dashboards/genealogy-service.json`                   |
+| Backup/restore owner    | platform-primary (PITR + RPO ≤ 5 min)                                                                   |
+| Deprecation contract    | REST 12 months, gRPC 9 months, event `gp.genealogy.v1.*` 6 months with consumer opt-in window           |
+| Compatible with         | ADR-E0.5-01 baseline; Apicurio BACKWARD evolution per ADR-E0.5-08                                       |
 
 ### 2.3 research-service (E6.1)
 
-| Field | Value |
-|---|---|
-| Domain owner | Research & Evidence team |
-| Product owner | Genealogist journey |
-| Privacy owner | DPO delegate (Citation metadata) |
-| Security owner | AppSec partner (Evidence) |
-| SRE / on-call lead | sre-secondary |
-| Owns aggregate/data | `Source`, `Citation`, `ResearchTask`, `Hypothesis` |
-| Public REST | `services/research-service/openapi.yaml` |
-| gRPC | `gp.research.v1.{RepositoryService, CitationService, ResearchTaskService}` |
-| Events published | `gp.research.v1.{CitationCreated, ClaimVerified, ConflictDetected}` |
-| Events consumed | `gp.genealogy.v1.{TreeVisibilityChanged, PersonRedacted}` |
-| Sync dependencies | None cross-domain synchronous; all reads served from own Postgres |
-| Sync dep budget | `n_sync = 0` (read path), `n_sync ≤ 1` (composite write through genealogy-service via Temporal) |
-| SLO class | API read 99.95 %, write 99.9 % |
-| On-call tier | Tier-2 24×7 |
-| Capacity skeleton | `scale_and_slo.yml::research` |
-| Runbook | `runbook/research-service.md` |
+| Field               | Value                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
+| Domain owner        | Research & Evidence team                                                                        |
+| Product owner       | Genealogist journey                                                                             |
+| Privacy owner       | DPO delegate (Citation metadata)                                                                |
+| Security owner      | AppSec partner (Evidence)                                                                       |
+| SRE / on-call lead  | sre-secondary                                                                                   |
+| Owns aggregate/data | `Source`, `Citation`, `ResearchTask`, `Hypothesis`                                              |
+| Public REST         | `services/research-service/openapi.yaml`                                                        |
+| gRPC                | `gp.research.v1.{RepositoryService, CitationService, ResearchTaskService}`                      |
+| Events published    | `gp.research.v1.{CitationCreated, ClaimVerified, ConflictDetected}`                             |
+| Events consumed     | `gp.genealogy.v1.{TreeVisibilityChanged, PersonRedacted}`                                       |
+| Sync dependencies   | None cross-domain synchronous; all reads served from own Postgres                               |
+| Sync dep budget     | `n_sync = 0` (read path), `n_sync ≤ 1` (composite write through genealogy-service via Temporal) |
+| SLO class           | API read 99.95 %, write 99.9 %                                                                  |
+| On-call tier        | Tier-2 24×7                                                                                     |
+| Capacity skeleton   | `scale_and_slo.yml::research`                                                                   |
+| Runbook             | `runbook/research-service.md`                                                                   |
 
 ### 2.4 collaboration-service (E6.2, E6.4)
 
-| Field | Value |
-|---|---|
-| Domain owner | Collaboration team |
-| Product owner | Reviewer journey |
-| Privacy owner | DPO delegate (Comments/metadata) |
-| Security owner | AppSec partner (Comments) |
-| SRE / on-call lead | sre-secondary |
-| Owns aggregate/data | `ChangeProposal`, `Review`, `Comment`, `ActivityFeed` |
-| Public REST | `services/collaboration-service/openapi.yaml` |
-| gRPC | `gp.collab.v1.{ProposalService, CommentService}` |
-| Events published | `gp.collab.v1.{ProposalSubmitted, ProposalApproved, ProposalRejected, PartialMerged}` |
-| Events consumed | All domain events for activity aggregation; ABAC redacted at projection |
-| Sync dependencies | None mandatory; OpenFGA check when reply.comment authorises thread |
-| Sync dep budget | `n_sync ≤ 1` |
-| SLO class | API read 99.95 %, best-effort activity feed 99.5 % |
-| On-call tier | Tier-2 business hours |
+| Field               | Value                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------- |
+| Domain owner        | Collaboration team                                                                    |
+| Product owner       | Reviewer journey                                                                      |
+| Privacy owner       | DPO delegate (Comments/metadata)                                                      |
+| Security owner      | AppSec partner (Comments)                                                             |
+| SRE / on-call lead  | sre-secondary                                                                         |
+| Owns aggregate/data | `ChangeProposal`, `Review`, `Comment`, `ActivityFeed`                                 |
+| Public REST         | `services/collaboration-service/openapi.yaml`                                         |
+| gRPC                | `gp.collab.v1.{ProposalService, CommentService}`                                      |
+| Events published    | `gp.collab.v1.{ProposalSubmitted, ProposalApproved, ProposalRejected, PartialMerged}` |
+| Events consumed     | All domain events for activity aggregation; ABAC redacted at projection               |
+| Sync dependencies   | None mandatory; OpenFGA check when reply.comment authorises thread                    |
+| Sync dep budget     | `n_sync ≤ 1`                                                                          |
+| SLO class           | API read 99.95 %, best-effort activity feed 99.5 %                                    |
+| On-call tier        | Tier-2 business hours                                                                 |
 
 ### 2.5 media-service (E7)
 
-| Field | Value |
-|---|---|
-| Domain owner | Media team |
-| Product owner | Editor + Album journeys |
-| Privacy owner | DPO delegate (Quarantine/DNA prefix) |
-| Security owner | AppSec partner (Uploads) |
-| SRE / on-call lead | sre-primary |
-| Owns aggregate/data | `MediaAsset`, `MediaVariant`, `Album` |
-| Public REST | `services/media-service/openapi.yaml` (signed URL issuance, album CRUD) |
-| gRPC | `gp.media.v1.{AssetService, AlbumService}` |
-| Events published | `gp.media.v1.{AssetUploaded, AssetScanned, AssetReady, AssetRevoked, DerivativeProduced}` |
-| Events consumed | `gp.tenant.v1.{MembershipRevoked, TenantDeleted}` (revoke delivery) |
-| Sync dependencies | S3/MinIO `HeadObject` (≤ 100 ms p95); Valkey quota check (≤ 5 ms p95) |
-| Sync dep budget | `n_sync ≤ 2` (S3 HEAD + Valkey GET). Processing is async via Temporal + ClamAV/FFmpeg/libvips/Tika/Tesseract/Gotenberg sandbox |
-| SLO class | Upload finalize 99.9 %, derivative pipeline 99.0 %, scan success 99.5 % |
-| On-call tier | Tier-1 24×7 |
-| Quarantine | Mandatory — `READY` only after ClamAV clean + Tika metadata per ADR-E0.5-11 |
-| Capacity skeleton | `scale_and_slo.yml::media` |
+| Field               | Value                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Domain owner        | Media team                                                                                                                     |
+| Product owner       | Editor + Album journeys                                                                                                        |
+| Privacy owner       | DPO delegate (Quarantine/DNA prefix)                                                                                           |
+| Security owner      | AppSec partner (Uploads)                                                                                                       |
+| SRE / on-call lead  | sre-primary                                                                                                                    |
+| Owns aggregate/data | `MediaAsset`, `MediaVariant`, `Album`                                                                                          |
+| Public REST         | `services/media-service/openapi.yaml` (signed URL issuance, album CRUD)                                                        |
+| gRPC                | `gp.media.v1.{AssetService, AlbumService}`                                                                                     |
+| Events published    | `gp.media.v1.{AssetUploaded, AssetScanned, AssetReady, AssetRevoked, DerivativeProduced}`                                      |
+| Events consumed     | `gp.tenant.v1.{MembershipRevoked, TenantDeleted}` (revoke delivery)                                                            |
+| Sync dependencies   | S3/MinIO `HeadObject` (≤ 100 ms p95); Valkey quota check (≤ 5 ms p95)                                                          |
+| Sync dep budget     | `n_sync ≤ 2` (S3 HEAD + Valkey GET). Processing is async via Temporal + ClamAV/FFmpeg/libvips/Tika/Tesseract/Gotenberg sandbox |
+| SLO class           | Upload finalize 99.9 %, derivative pipeline 99.0 %, scan success 99.5 %                                                        |
+| On-call tier        | Tier-1 24×7                                                                                                                    |
+| Quarantine          | Mandatory — `READY` only after ClamAV clean + Tika metadata per ADR-E0.5-11                                                    |
+| Capacity skeleton   | `scale_and_slo.yml::media`                                                                                                     |
 
 ### 2.6 search-service (E8)
 
-| Field | Value |
-|---|---|
-| Domain owner | Search team |
-| Product owner | Researcher + Public discovery journeys |
-| Privacy owner | DPO delegate (Public projection, redaction) |
-| Security owner | AppSec partner (Projection poisoning) |
-| SRE / on-call lead | sre-primary |
-| Owns aggregate/data | `SearchDocument`, `SavedSearch`, `PublicProjection` |
-| Public REST | `services/search-service/openapi.yaml` (authorised search only; public read goes via public-api + Kong) |
-| gRPC | `gp.search.v1.{AuthorizedSearchService, SavedSearchService}` |
-| Events published | `gp.search.v1.{ProjectionRebuilt, SavedSearchEvaluated}` |
-| Events consumed | `gp.genealogy.v1.*`, `gp.research.v1.*`, `gp.collab.v1.*`, `gp.media.v1.{AssetReady, AssetRevoked}` (idempotent inbox) |
-| Sync dependencies | PostgreSQL FTS projection (≤ 100 ms p95); optional Valkey cache (≤ 5 ms p95, tenant-aware key) |
-| Sync dep budget | `n_sync ≤ 2` (DB + cache); no synchronous OpenFGA call (membership filter is precomputed into projection under a refresh SLA) |
-| SLO class | Authorised search 99.95 %, p95 < 1 s; public projection 99.5 % best effort; cache hit ratio ≥ 85 % |
-| On-call tier | Tier-1 24×7 |
-| Privacy gate | `UNLISTED` returns `noindex` per `requirements.md` R11; projection rebuild is a Temporal workflow |
+| Field               | Value                                                                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Domain owner        | Search team                                                                                                                   |
+| Product owner       | Researcher + Public discovery journeys                                                                                        |
+| Privacy owner       | DPO delegate (Public projection, redaction)                                                                                   |
+| Security owner      | AppSec partner (Projection poisoning)                                                                                         |
+| SRE / on-call lead  | sre-primary                                                                                                                   |
+| Owns aggregate/data | `SearchDocument`, `SavedSearch`, `PublicProjection`                                                                           |
+| Public REST         | `services/search-service/openapi.yaml` (authorised search only; public read goes via public-api + Kong)                       |
+| gRPC                | `gp.search.v1.{AuthorizedSearchService, SavedSearchService}`                                                                  |
+| Events published    | `gp.search.v1.{ProjectionRebuilt, SavedSearchEvaluated}`                                                                      |
+| Events consumed     | `gp.genealogy.v1.*`, `gp.research.v1.*`, `gp.collab.v1.*`, `gp.media.v1.{AssetReady, AssetRevoked}` (idempotent inbox)        |
+| Sync dependencies   | PostgreSQL FTS projection (≤ 100 ms p95); optional Valkey cache (≤ 5 ms p95, tenant-aware key)                                |
+| Sync dep budget     | `n_sync ≤ 2` (DB + cache); no synchronous OpenFGA call (membership filter is precomputed into projection under a refresh SLA) |
+| SLO class           | Authorised search 99.95 %, p95 < 1 s; public projection 99.5 % best effort; cache hit ratio ≥ 85 %                            |
+| On-call tier        | Tier-1 24×7                                                                                                                   |
+| Privacy gate        | `UNLISTED` returns `noindex` per `requirements.md` R11; projection rebuild is a Temporal workflow                             |
 
 ### 2.7 import-export-service (E9)
 
-| Field | Value |
-|---|---|
-| Domain owner | Interop team |
-| Product owner | Power-user + Partner journeys |
-| Privacy owner | DPO delegate (Export redaction, DNA opt-out) |
-| Security owner | AppSec partner (Parser sandbox, SSRF) |
-| SRE / on-call lead | sre-primary |
-| Owns aggregate/data | `TransferJob`, `MappingProfile`, `ExportManifest` |
-| Public REST | `services/import-export-service/openapi.yaml` (job lifecycle + signed URL) |
-| gRPC | `gp.interop.v1.{TransferService, MappingProfileService}` |
-| Events published | `gp.interop.v1.{TransferStarted, TransferProgressed, TransferCompleted, TransferFailed, MappingSaved, ExportDelivered}` |
-| Events consumed | `gp.tenant.v1.MembershipRevoked` |
-| Sync dependencies | Object storage GET for streaming inputs (≤ 200 ms p95 to fetch manifest metadata) |
-| Sync dep budget | `n_sync ≤ 1`; all heavy work in Temporal workflow, idempotent activities (per ADR-E0.5-07) |
-| SLO class | Job success 99.0 %; download URL availability 99.9 % during TTL window |
-| On-call tier | Tier-2 24×7 |
-| Privacy gate | GEDCOM/CSV dry-run writes no domain data; export must strip DNA by default and require consent receipt |
+| Field               | Value                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Domain owner        | Interop team                                                                                                            |
+| Product owner       | Power-user + Partner journeys                                                                                           |
+| Privacy owner       | DPO delegate (Export redaction, DNA opt-out)                                                                            |
+| Security owner      | AppSec partner (Parser sandbox, SSRF)                                                                                   |
+| SRE / on-call lead  | sre-primary                                                                                                             |
+| Owns aggregate/data | `TransferJob`, `MappingProfile`, `ExportManifest`                                                                       |
+| Public REST         | `services/import-export-service/openapi.yaml` (job lifecycle + signed URL)                                              |
+| gRPC                | `gp.interop.v1.{TransferService, MappingProfileService}`                                                                |
+| Events published    | `gp.interop.v1.{TransferStarted, TransferProgressed, TransferCompleted, TransferFailed, MappingSaved, ExportDelivered}` |
+| Events consumed     | `gp.tenant.v1.MembershipRevoked`                                                                                        |
+| Sync dependencies   | Object storage GET for streaming inputs (≤ 200 ms p95 to fetch manifest metadata)                                       |
+| Sync dep budget     | `n_sync ≤ 1`; all heavy work in Temporal workflow, idempotent activities (per ADR-E0.5-07)                              |
+| SLO class           | Job success 99.0 %; download URL availability 99.9 % during TTL window                                                  |
+| On-call tier        | Tier-2 24×7                                                                                                             |
+| Privacy gate        | GEDCOM/CSV dry-run writes no domain data; export must strip DNA by default and require consent receipt                  |
 
 ### 2.8 dna-service (E10)
 
-| Field | Value |
-|---|---|
-| Domain owner | DNA team |
-| Product owner | DNA owner + Guardian journeys |
-| Privacy owner | DPO delegate (DNA module) |
-| Security owner | AppSec partner (DNA isolation); Security on-call lead during incidents |
-| SRE / on-call lead | sre-primary + privacy-secondary (dual on-call) |
-| Owns aggregate/data | `DnaKit`, `Consent`, `DnaMatch`, `Segment` in dedicated schema/bucket/KMS key per ADR-E0.5-15 |
-| Public REST | `services/dna-service/openapi.yaml` (consent + upload session + match query) |
-| gRPC | `gp.dna.v1.{ConsentService, KitService, MatchService}` |
-| Events published | `gp.dna.v1.{ConsentGranted, ConsentRevoked, KitUploaded, MatchProduced, KitDeleted}` |
-| Events consumed | `gp.tenant.v1.MembershipRevoked` (mandatory revocation across all DNA flows) |
-| Sync dependencies | None cross-service; OpenFGA namespace `dna.*` evaluated locally |
-| Sync dep budget | `n_sync = 0`; all DNA workflows live inside its worker pool with strict Istio/NetworkPolicy egress |
-| SLO class | Privacy-critical: 99.9 %; consent revocation propagation ≤ 60 s; revoke/export job 99.0 % |
-| On-call tier | Tier-0 24×7 (any DNA privacy finding freezes release per `scale-and-slo.md` §5.4) |
-| Default state | **Feature flag `legal.dna.enabled = false` per ADR-E0.5-15** until E10.1 architecture gate signs off |
-| Privacy gate | Raw genotype MUST NEVER enter Kafka, log, trace, search index, media preview, public API or notification payload; consent re-evaluated at activity time per `privacy-and-legal-gate.md` §9 |
+| Field               | Value                                                                                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Domain owner        | DNA team                                                                                                                                                                                   |
+| Product owner       | DNA owner + Guardian journeys                                                                                                                                                              |
+| Privacy owner       | DPO delegate (DNA module)                                                                                                                                                                  |
+| Security owner      | AppSec partner (DNA isolation); Security on-call lead during incidents                                                                                                                     |
+| SRE / on-call lead  | sre-primary + privacy-secondary (dual on-call)                                                                                                                                             |
+| Owns aggregate/data | `DnaKit`, `Consent`, `DnaMatch`, `Segment` in dedicated schema/bucket/KMS key per ADR-E0.5-15                                                                                              |
+| Public REST         | `services/dna-service/openapi.yaml` (consent + upload session + match query)                                                                                                               |
+| gRPC                | `gp.dna.v1.{ConsentService, KitService, MatchService}`                                                                                                                                     |
+| Events published    | `gp.dna.v1.{ConsentGranted, ConsentRevoked, KitUploaded, MatchProduced, KitDeleted}`                                                                                                       |
+| Events consumed     | `gp.tenant.v1.MembershipRevoked` (mandatory revocation across all DNA flows)                                                                                                               |
+| Sync dependencies   | None cross-service; OpenFGA namespace `dna.*` evaluated locally                                                                                                                            |
+| Sync dep budget     | `n_sync = 0`; all DNA workflows live inside its worker pool with strict Istio/NetworkPolicy egress                                                                                         |
+| SLO class           | Privacy-critical: 99.9 %; consent revocation propagation ≤ 60 s; revoke/export job 99.0 %                                                                                                  |
+| On-call tier        | Tier-0 24×7 (any DNA privacy finding freezes release per `scale-and-slo.md` §5.4)                                                                                                          |
+| Default state       | **Feature flag `legal.dna.enabled = false` per ADR-E0.5-15** until E10.1 architecture gate signs off                                                                                       |
+| Privacy gate        | Raw genotype MUST NEVER enter Kafka, log, trace, search index, media preview, public API or notification payload; consent re-evaluated at activity time per `privacy-and-legal-gate.md` §9 |
 
 ### 2.9 notification-service (E11.1, E11.2)
 
-| Field | Value |
-|---|---|
-| Domain owner | Comms & Delivery team |
-| Product owner | Cross-journey (admin, editor, guardian) |
-| Privacy owner | DPO delegate (Notification payload) |
-| Security owner | AppSec partner (Provider adapters) |
-| SRE / on-call lead | sre-secondary |
-| Owns aggregate/data | `Notification`, `Preference`, `Template` |
-| Public REST | `services/notification-service/openapi.yaml` (preferences, inbox) |
-| gRPC | `gp.notify.v1.{PreferenceService, NotificationService}` |
-| Events published | `gp.notify.v1.{NotificationDispatched, NotificationFailed, SubscriptionUnsubscribe}` |
-| Events consumed | All domain events (idempotent inbox); ABAC re-check before render per `design.md` §11.2 |
-| Sync dependencies | Valkey rate-limit bucket (≤ 5 ms p95); provider adapter via Temporal activity |
-| Sync dep budget | `n_sync ≤ 2` (rate-limit + preference fetch); provider send is async |
-| SLO class | Dispatch 99.5 %, p95 dispatch decision ≤ 200 ms |
-| On-call tier | Tier-2 business hours |
-| Privacy gate | No DNA / no sensitive living payload sent to third-party providers without explicit ADR exception |
+| Field               | Value                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
+| Domain owner        | Comms & Delivery team                                                                             |
+| Product owner       | Cross-journey (admin, editor, guardian)                                                           |
+| Privacy owner       | DPO delegate (Notification payload)                                                               |
+| Security owner      | AppSec partner (Provider adapters)                                                                |
+| SRE / on-call lead  | sre-secondary                                                                                     |
+| Owns aggregate/data | `Notification`, `Preference`, `Template`                                                          |
+| Public REST         | `services/notification-service/openapi.yaml` (preferences, inbox)                                 |
+| gRPC                | `gp.notify.v1.{PreferenceService, NotificationService}`                                           |
+| Events published    | `gp.notify.v1.{NotificationDispatched, NotificationFailed, SubscriptionUnsubscribe}`              |
+| Events consumed     | All domain events (idempotent inbox); ABAC re-check before render per `design.md` §11.2           |
+| Sync dependencies   | Valkey rate-limit bucket (≤ 5 ms p95); provider adapter via Temporal activity                     |
+| Sync dep budget     | `n_sync ≤ 2` (rate-limit + preference fetch); provider send is async                              |
+| SLO class           | Dispatch 99.5 %, p95 dispatch decision ≤ 200 ms                                                   |
+| On-call tier        | Tier-2 business hours                                                                             |
+| Privacy gate        | No DNA / no sensitive living payload sent to third-party providers without explicit ADR exception |
 
 ### 2.10 reporting-service (E11.3)
 
-| Field | Value |
-|---|---|
-| Domain owner | Reporting team |
-| Product owner | Power-user + Operator dashboards |
-| Privacy owner | DPO delegate (Report redaction) |
-| Security owner | AppSec partner (Generated PDFs) |
-| SRE / on-call lead | sre-secondary |
-| Owns aggregate/data | `ReportJob`, `ReportTemplate`, `AnalyticsProjection` |
-| Public REST | `services/reporting-service/openapi.yaml` (job status + signed download URL) |
-| gRPC | `gp.report.v1.{ReportService, AnalyticsService}` |
-| Events published | `gp.report.v1.{ReportRequested, ReportCompleted, ReportFailed, AnalyticsRefreshed}` |
-| Events consumed | Domain events for projection rebuild |
-| Sync dependencies | Gotenberg (HTTP, ≤ 300 ms p95) for PDF preview; never synchronous on the request path — all jobs are Temporal |
-| Sync dep budget | `n_sync ≤ 1` (job submission only) |
-| SLO class | Job success 99.0 %, deterministic report version pin per `design.md` §11.3 |
+| Field               | Value                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Domain owner        | Reporting team                                                                                                |
+| Product owner       | Power-user + Operator dashboards                                                                              |
+| Privacy owner       | DPO delegate (Report redaction)                                                                               |
+| Security owner      | AppSec partner (Generated PDFs)                                                                               |
+| SRE / on-call lead  | sre-secondary                                                                                                 |
+| Owns aggregate/data | `ReportJob`, `ReportTemplate`, `AnalyticsProjection`                                                          |
+| Public REST         | `services/reporting-service/openapi.yaml` (job status + signed download URL)                                  |
+| gRPC                | `gp.report.v1.{ReportService, AnalyticsService}`                                                              |
+| Events published    | `gp.report.v1.{ReportRequested, ReportCompleted, ReportFailed, AnalyticsRefreshed}`                           |
+| Events consumed     | Domain events for projection rebuild                                                                          |
+| Sync dependencies   | Gotenberg (HTTP, ≤ 300 ms p95) for PDF preview; never synchronous on the request path — all jobs are Temporal |
+| Sync dep budget     | `n_sync ≤ 1` (job submission only)                                                                            |
+| SLO class           | Job success 99.0 %, deterministic report version pin per `design.md` §11.3                                    |
 
 ### 2.11 audit-service (E3.6)
 
-| Field | Value |
-|---|---|
-| Domain owner | Security Engineering team |
-| Product owner | Compliance & Operator journeys |
-| Privacy owner | DPO delegate (Retention evidence) |
-| Security owner | Security Engineering (separation of duties) |
-| SRE / on-call lead | sre-primary |
+| Field               | Value                                                                             |
+| ------------------- | --------------------------------------------------------------------------------- |
+| Domain owner        | Security Engineering team                                                         |
+| Product owner       | Compliance & Operator journeys                                                    |
+| Privacy owner       | DPO delegate (Retention evidence)                                                 |
+| Security owner      | Security Engineering (separation of duties)                                       |
+| SRE / on-call lead  | sre-primary                                                                       |
 | Owns aggregate/data | `AuditEntry`, `AuditExport` (append-only WORM bucket) per `scale-and-slo.md` §5.3 |
-| Public REST | internal only via BFF / admin shell; external audit export via Kong-signed URL |
-| gRPC | `gp.audit.v1.{AuditService}` |
-| Events published | none (audit is a sink, never a source of business events) |
-| Events consumed | none — every service writes via gateway API or Kafka audit topic |
-| Sync dependencies | Kafka audit topic; append hash chain verified on read |
-| Sync dep budget | `n_sync ≤ 1` (Kafka produce, fire-and-forget) |
-| SLO class | Durability = none-lost; availability 99.9 %; integrity check 100 % |
-| On-call tier | Tier-0 24×7 (privacy/security) |
+| Public REST         | internal only via BFF / admin shell; external audit export via Kong-signed URL    |
+| gRPC                | `gp.audit.v1.{AuditService}`                                                      |
+| Events published    | none (audit is a sink, never a source of business events)                         |
+| Events consumed     | none — every service writes via gateway API or Kafka audit topic                  |
+| Sync dependencies   | Kafka audit topic; append hash chain verified on read                             |
+| Sync dep budget     | `n_sync ≤ 1` (Kafka produce, fire-and-forget)                                     |
+| SLO class           | Durability = none-lost; availability 99.9 %; integrity check 100 %                |
+| On-call tier        | Tier-0 24×7 (privacy/security)                                                    |
 
 ## 3. Edge, identity and shared platform ownership
 
@@ -277,27 +278,27 @@ These components are not domain services but appear in every interaction;
 they are listed once here so that the SLO, runbook and on-call tier can be
 discovered from a single document.
 
-| Component | Owner | Privacy owner | Security owner | SRE / on-call lead | SLO slice | Sync budget | Runbook |
-|---|---|---|---|---|---|---|---|
-| Kong Gateway (E2.2) | platform-primary | AppSec partner | AppSec partner | sre-primary | 99.99 %; per-tenant rate limit decision < 5 ms | `n_sync ≤ 0` (edge policy evaluated in-process) | `runbook/kong.md` |
-| CDN / WAF / Ingress (ADR-E0.5-04) | platform-primary | AppSec partner | AppSec partner | sre-primary | 99.99 % | `n_sync ≤ 0` | `runbook/edge.md` |
-| Keycloak (E3.1) | platform-secondary | DPO delegate | AppSec partner | sre-primary | 99.95 %; OIDC token p95 < 150 ms | `n_sync ≤ 1` (DB lookup inside Keycloak) | `runbook/keycloak.md` |
-| OpenFGA (E3.3, ADR-E0.5-06) | platform-primary + identity team | DPO delegate | AppSec partner | sre-primary | 99.95 %; check p95 < 80 ms | `n_sync ≤ 1` per request | `runbook/openfga.md` |
-| Strimzi Kafka + Apicurio (E2.3, ADR-E0.5-08) | platform-primary | AppSec partner | AppSec partner | sre-primary | 99.9 %; producer ack p95 < 50 ms | `n_sync ≤ 1` (produce) | `runbook/strimzi.md`, `runbook/apicurio.md` |
-| Temporal (E2.4, ADR-E0.5-07) | platform-secondary | DPO delegate | AppSec partner | sre-primary | 99.9 %; workflow start p95 < 400 ms | `n_sync ≤ 1` (start) | `runbook/temporal.md` |
-| Istio service mesh (E2.5) | platform-primary | AppSec partner | AppSec partner | sre-primary | 99.99 % control plane, 99.9 % data plane | `n_sync ≤ 0` (transparent mTLS) | `runbook/istio.md` |
-| Vault / cloud KMS (E2.6) | platform-secondary | AppSec partner | AppSec partner | sre-primary | 99.99 %; secret retrieval p95 < 100 ms | `n_sync ≤ 1` (read at startup, cached via Kubernetes service account token) | `runbook/vault.md`, `runbook/kms.md` |
-| S3/MinIO (E2.7) | platform-primary | DPO delegate | AppSec partner | sre-primary | 99.9 %; HEAD p95 < 100 ms | `n_sync ≤ 1` (signed URL issuance, object metadata) | `runbook/s3.md`, `runbook/minio.md` |
-| Valkey (Redis-compatible, E2.7) | platform-secondary | AppSec partner | AppSec partner | sre-secondary | 99.9 %; GET p95 < 5 ms | `n_sync ≤ 1` per request | `runbook/valkey.md` |
-| Flagsmith / OpenFeature (E2.8) | platform-secondary | AppSec partner | AppSec partner | sre-secondary | 99.9 %; flag fetch p95 < 30 ms (with safe fallback) | `n_sync ≤ 1` | `runbook/flagsmith.md` |
-| Argo CD + Rollouts (E2.9) | platform-primary | N/A | AppSec partner | sre-primary | 99.9 %; rollout decision < 60 s | `n_sync ≤ 0` (controller-only) | `runbook/argo.md` |
-| Grafana OSS + OTel Collector (E2.10) | platform-secondary | AppSec partner | AppSec partner | sre-primary | 99.9 %; dashboard load < 5 s | `n_sync ≤ 0` (read-only) | `runbook/observability.md` |
-| CI pipeline (ADR-E0.5-13) | platform-primary | AppSec partner | AppSec partner | sre-primary | 99.5 %; mean run < 12 min | `n_sync ≤ 0` | `runbook/ci.md` |
-| Container registry + Cosign | platform-primary | AppSec partner | AppSec partner | sre-primary | 99.9 %; image pull p95 < 5 s | `n_sync ≤ 0` | `runbook/registry.md` |
-| web-app (Next.js, E1.5, E5) | web-app team | DPO delegate | AppSec partner | sre-secondary | 99.9 %; LCP p75 < 2.5 s | `n_sync ≤ 0` (client) | `runbook/web-app.md` |
-| web-bff (Spring Boot, E1.4, E5) | web-bff team | DPO delegate | AppSec partner | sre-secondary | 99.95 %; p95 compose < 800 ms | `n_sync ≤ 3` (see §5) | `runbook/web-bff.md` |
-| public-api (Spring Boot, E9.5) | public-api team | DPO delegate | AppSec partner | sre-secondary | 99.95 %; p95 < 600 ms | `n_sync ≤ 2` | `runbook/public-api.md` |
-| ClamAV / Tika / libvips / FFmpeg / Tesseract / Gotenberg (E7, ADR-E0.5-11) | media team | AppSec partner | AppSec partner | sre-primary | 99.5 % each | `n_sync ≤ 0` (worker pool only) | `runbook/media-pipeline.md` |
+| Component                                                                  | Owner                            | Privacy owner  | Security owner | SRE / on-call lead | SLO slice                                           | Sync budget                                                                 | Runbook                                     |
+| -------------------------------------------------------------------------- | -------------------------------- | -------------- | -------------- | ------------------ | --------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------- |
+| Kong Gateway (E2.2)                                                        | platform-primary                 | AppSec partner | AppSec partner | sre-primary        | 99.99 %; per-tenant rate limit decision < 5 ms      | `n_sync ≤ 0` (edge policy evaluated in-process)                             | `runbook/kong.md`                           |
+| CDN / WAF / Ingress (ADR-E0.5-04)                                          | platform-primary                 | AppSec partner | AppSec partner | sre-primary        | 99.99 %                                             | `n_sync ≤ 0`                                                                | `runbook/edge.md`                           |
+| Keycloak (E3.1)                                                            | platform-secondary               | DPO delegate   | AppSec partner | sre-primary        | 99.95 %; OIDC token p95 < 150 ms                    | `n_sync ≤ 1` (DB lookup inside Keycloak)                                    | `runbook/keycloak.md`                       |
+| OpenFGA (E3.3, ADR-E0.5-06)                                                | platform-primary + identity team | DPO delegate   | AppSec partner | sre-primary        | 99.95 %; check p95 < 80 ms                          | `n_sync ≤ 1` per request                                                    | `runbook/openfga.md`                        |
+| Strimzi Kafka + Apicurio (E2.3, ADR-E0.5-08)                               | platform-primary                 | AppSec partner | AppSec partner | sre-primary        | 99.9 %; producer ack p95 < 50 ms                    | `n_sync ≤ 1` (produce)                                                      | `runbook/strimzi.md`, `runbook/apicurio.md` |
+| Temporal (E2.4, ADR-E0.5-07)                                               | platform-secondary               | DPO delegate   | AppSec partner | sre-primary        | 99.9 %; workflow start p95 < 400 ms                 | `n_sync ≤ 1` (start)                                                        | `runbook/temporal.md`                       |
+| Istio service mesh (E2.5)                                                  | platform-primary                 | AppSec partner | AppSec partner | sre-primary        | 99.99 % control plane, 99.9 % data plane            | `n_sync ≤ 0` (transparent mTLS)                                             | `runbook/istio.md`                          |
+| Vault / cloud KMS (E2.6)                                                   | platform-secondary               | AppSec partner | AppSec partner | sre-primary        | 99.99 %; secret retrieval p95 < 100 ms              | `n_sync ≤ 1` (read at startup, cached via Kubernetes service account token) | `runbook/vault.md`, `runbook/kms.md`        |
+| S3/MinIO (E2.7)                                                            | platform-primary                 | DPO delegate   | AppSec partner | sre-primary        | 99.9 %; HEAD p95 < 100 ms                           | `n_sync ≤ 1` (signed URL issuance, object metadata)                         | `runbook/s3.md`, `runbook/minio.md`         |
+| Valkey (Redis-compatible, E2.7)                                            | platform-secondary               | AppSec partner | AppSec partner | sre-secondary      | 99.9 %; GET p95 < 5 ms                              | `n_sync ≤ 1` per request                                                    | `runbook/valkey.md`                         |
+| Flagsmith / OpenFeature (E2.8)                                             | platform-secondary               | AppSec partner | AppSec partner | sre-secondary      | 99.9 %; flag fetch p95 < 30 ms (with safe fallback) | `n_sync ≤ 1`                                                                | `runbook/flagsmith.md`                      |
+| Argo CD + Rollouts (E2.9)                                                  | platform-primary                 | N/A            | AppSec partner | sre-primary        | 99.9 %; rollout decision < 60 s                     | `n_sync ≤ 0` (controller-only)                                              | `runbook/argo.md`                           |
+| Grafana OSS + OTel Collector (E2.10)                                       | platform-secondary               | AppSec partner | AppSec partner | sre-primary        | 99.9 %; dashboard load < 5 s                        | `n_sync ≤ 0` (read-only)                                                    | `runbook/observability.md`                  |
+| CI pipeline (ADR-E0.5-13)                                                  | platform-primary                 | AppSec partner | AppSec partner | sre-primary        | 99.5 %; mean run < 12 min                           | `n_sync ≤ 0`                                                                | `runbook/ci.md`                             |
+| Container registry + Cosign                                                | platform-primary                 | AppSec partner | AppSec partner | sre-primary        | 99.9 %; image pull p95 < 5 s                        | `n_sync ≤ 0`                                                                | `runbook/registry.md`                       |
+| web-app (Next.js, E1.5, E5)                                                | web-app team                     | DPO delegate   | AppSec partner | sre-secondary      | 99.9 %; LCP p75 < 2.5 s                             | `n_sync ≤ 0` (client)                                                       | `runbook/web-app.md`                        |
+| web-bff (Spring Boot, E1.4, E5)                                            | web-bff team                     | DPO delegate   | AppSec partner | sre-secondary      | 99.95 %; p95 compose < 800 ms                       | `n_sync ≤ 3` (see §5)                                                       | `runbook/web-bff.md`                        |
+| public-api (Spring Boot, E9.5)                                             | public-api team                  | DPO delegate   | AppSec partner | sre-secondary      | 99.95 %; p95 < 600 ms                               | `n_sync ≤ 2`                                                                | `runbook/public-api.md`                     |
+| ClamAV / Tika / libvips / FFmpeg / Tesseract / Gotenberg (E7, ADR-E0.5-11) | media team                       | AppSec partner | AppSec partner | sre-primary        | 99.5 % each                                         | `n_sync ≤ 0` (worker pool only)                                             | `runbook/media-pipeline.md`                 |
 
 ## 4. Synchronous dependency budget
 
@@ -316,16 +317,16 @@ rule quantitative so every service can fail PR review if it exceeds it.
 
 ### 4.2 Budget caps
 
-| Component | `n_sync` cap | `chain_depth` cap | Notes |
-|---|---|---|---|
-| Edge (Kong, CDN) | 0 | 1 (downstream only) | Edge MUST NOT call another service on hot path |
-| web-app | 0 | n/a | PWA — no cross-service calls |
-| web-bff | **3** | 4 (edge → BFF → 2 services) | BFF composition is the only place chains > 2 are allowed; longer compositions move to a Temporal read-model job |
-| public-api | 2 | 3 | Public API must not depend on `web-bff` |
-| Domain services (read path) | **2** | 3 | DB + cache + (optional) policy check; OpenFGA call counts as 1 |
-| Domain services (write path) | 2 | 3 | DB + audit/event publish; OpenFGA tuple write is async via Temporal |
-| DNA service | **0** | 1 | Any DNA request that requires a cross-service fetch MUST be reworked to async; on-call reviews every exception |
-| Async workers / Temporal activities | 4 | 5 | Higher limit only because failures are retried, never user-blocking |
+| Component                           | `n_sync` cap | `chain_depth` cap           | Notes                                                                                                           |
+| ----------------------------------- | ------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Edge (Kong, CDN)                    | 0            | 1 (downstream only)         | Edge MUST NOT call another service on hot path                                                                  |
+| web-app                             | 0            | n/a                         | PWA — no cross-service calls                                                                                    |
+| web-bff                             | **3**        | 4 (edge → BFF → 2 services) | BFF composition is the only place chains > 2 are allowed; longer compositions move to a Temporal read-model job |
+| public-api                          | 2            | 3                           | Public API must not depend on `web-bff`                                                                         |
+| Domain services (read path)         | **2**        | 3                           | DB + cache + (optional) policy check; OpenFGA call counts as 1                                                  |
+| Domain services (write path)        | 2            | 3                           | DB + audit/event publish; OpenFGA tuple write is async via Temporal                                             |
+| DNA service                         | **0**        | 1                           | Any DNA request that requires a cross-service fetch MUST be reworked to async; on-call reviews every exception  |
+| Async workers / Temporal activities | 4            | 5                           | Higher limit only because failures are retried, never user-blocking                                             |
 
 ### 4.3 Enforcement
 
@@ -429,71 +430,71 @@ are placeholders until Product + Engineering ratifies real team IDs in
 
 ### 6.1 Product
 
-| Activity | Product Mgr | Eng EM | Design | Privacy | Security | SRE | Platform |
-|---|---|---|---|---|---|---|---|
-| Roadmap / epic sign-off | **A** | R | C | C | C | C | I |
-| Feature flag scope | **A** | R | C | C | C | I | I |
-| Success metric definition | **A** | R | C | I | I | C | I |
-| User-visible change comms | **A** | I | R | I | I | I | I |
+| Activity                  | Product Mgr | Eng EM | Design | Privacy | Security | SRE | Platform |
+| ------------------------- | ----------- | ------ | ------ | ------- | -------- | --- | -------- |
+| Roadmap / epic sign-off   | **A**       | R      | C      | C       | C        | C   | I        |
+| Feature flag scope        | **A**       | R      | C      | C       | C        | I   | I        |
+| Success metric definition | **A**       | R      | C      | I       | I        | C   | I        |
+| User-visible change comms | **A**       | I      | R      | I       | I        | I   | I        |
 
 ### 6.2 Domain (per-service activities)
 
-| Activity | Domain EM | Domain team | Privacy | Security | SRE | Platform | Product |
-|---|---|---|---|---|---|---|---|
-| API/gRPC/event contract | **A** | R | C | C | C | I | C |
-| Aggregate/data model | **A** | R | C | C | C | I | I |
-| Migration (Flyway expand-contract) | A | R | C | C | C | R | I |
-| Authorization (OpenFGA + ABAC) | A | R | C | C | C | I | I |
-| Functional test suites | A | R | I | I | C | C | I |
-| Runbook & capacity table | A | R | C | C | C | C | I |
-| Service deprecation / sunset | A | R | C | C | C | C | C |
+| Activity                           | Domain EM | Domain team | Privacy | Security | SRE | Platform | Product |
+| ---------------------------------- | --------- | ----------- | ------- | -------- | --- | -------- | ------- |
+| API/gRPC/event contract            | **A**     | R           | C       | C        | C   | I        | C       |
+| Aggregate/data model               | **A**     | R           | C       | C        | C   | I        | I       |
+| Migration (Flyway expand-contract) | A         | R           | C       | C        | C   | R        | I       |
+| Authorization (OpenFGA + ABAC)     | A         | R           | C       | C        | C   | I        | I       |
+| Functional test suites             | A         | R           | I       | I        | C   | C        | I       |
+| Runbook & capacity table           | A         | R           | C       | C        | C   | C        | I       |
+| Service deprecation / sunset       | A         | R           | C       | C        | C   | C        | C       |
 
 ### 6.3 Platform
 
-| Activity | Platform EM | Platform team | SRE | Security | Privacy | Domain EM |
-|---|---|---|---|---|---|---|
-| Platform version policy | **A** | R | C | C | C | I |
-| Helm/config-as-code | A | R | C | C | I | I |
-| Backup / restore drill | A | R | **A** | C | C | I |
-| Upgrade & rollback runbook | A | R | C | C | I | I |
-| Tenant onboarding automation | A | R | C | C | C | C |
-| mTLS / NetworkPolicy baseline | A | R | C | **A** | C | I |
-| Observability baseline (OTel + Grafana) | A | R | **A** | C | C | I |
+| Activity                                | Platform EM | Platform team | SRE   | Security | Privacy | Domain EM |
+| --------------------------------------- | ----------- | ------------- | ----- | -------- | ------- | --------- |
+| Platform version policy                 | **A**       | R             | C     | C        | C       | I         |
+| Helm/config-as-code                     | A           | R             | C     | C        | I       | I         |
+| Backup / restore drill                  | A           | R             | **A** | C        | C       | I         |
+| Upgrade & rollback runbook              | A           | R             | C     | C        | I       | I         |
+| Tenant onboarding automation            | A           | R             | C     | C        | C       | C         |
+| mTLS / NetworkPolicy baseline           | A           | R             | C     | **A**    | C       | I         |
+| Observability baseline (OTel + Grafana) | A           | R             | **A** | C        | C       | I         |
 
 ### 6.4 Security
 
-| Activity | Security EM | AppSec | Domain EM | SRE | Privacy | Platform |
-|---|---|---|---|---|---|---|
-| Threat model | **A** | R | R | C | C | C |
-| Secret/PII/DNA scan | **A** | R | R | R | C | I |
-| Pen-test scope & remediation | **A** | R | R | C | C | C |
-| SBOM / Cosign verification | A | R | I | C | I | **A** |
-| Vulnerability triage & SLA | **A** | R | R | R | I | I |
-| Kong / WAF policy | C | R | I | C | I | **A** |
+| Activity                     | Security EM | AppSec | Domain EM | SRE | Privacy | Platform |
+| ---------------------------- | ----------- | ------ | --------- | --- | ------- | -------- |
+| Threat model                 | **A**       | R      | R         | C   | C       | C        |
+| Secret/PII/DNA scan          | **A**       | R      | R         | R   | C       | I        |
+| Pen-test scope & remediation | **A**       | R      | R         | C   | C       | C        |
+| SBOM / Cosign verification   | A           | R      | I         | C   | I       | **A**    |
+| Vulnerability triage & SLA   | **A**       | R      | R         | R   | I       | I        |
+| Kong / WAF policy            | C           | R      | I         | C   | I       | **A**    |
 
 ### 6.5 Privacy
 
-| Activity | DPO | Privacy delegate | Domain EM | Security | SRE | Product | Platform |
-|---|---|---|---|---|---|---|---|
-| DPIA per data class | **A** | R | R | C | I | C | C |
-| Lawful basis / consent purpose | **A** | R | R | C | I | C | I |
-| Retention & deletion evidence | **A** | R | R | C | C | I | C |
-| Data subject request (export/delete) | A | R | R | C | C | I | C |
-| Pseudonymous label & rotation | A | R | I | C | I | I | **A** |
-| Jurisdiction sign-off (E10.1, ADR-E0.5-03) | **A** | R | C | C | I | C | C |
-| Breach notification SLA per jurisdiction | **A** | R | C | R | C | C | C |
+| Activity                                   | DPO   | Privacy delegate | Domain EM | Security | SRE | Product | Platform |
+| ------------------------------------------ | ----- | ---------------- | --------- | -------- | --- | ------- | -------- |
+| DPIA per data class                        | **A** | R                | R         | C        | I   | C       | C        |
+| Lawful basis / consent purpose             | **A** | R                | R         | C        | I   | C       | I        |
+| Retention & deletion evidence              | **A** | R                | R         | C        | C   | I       | C        |
+| Data subject request (export/delete)       | A     | R                | R         | C        | C   | I       | C        |
+| Pseudonymous label & rotation              | A     | R                | I         | C        | I   | I       | **A**    |
+| Jurisdiction sign-off (E10.1, ADR-E0.5-03) | **A** | R                | C         | C        | I   | C       | C        |
+| Breach notification SLA per jurisdiction   | **A** | R                | C         | R        | C   | C       | C        |
 
 ### 6.6 Operations / SRE
 
-| Activity | SRE lead | SRE on-call | Platform | Security | Privacy | Product |
-|---|---|---|---|---|---|---|
-| SLO definition & review | **A** | R | C | C | C | C |
-| Alert routing & on-call | **A** | R | C | I | I | I |
-| Incident command | **A** | R | C | R | C | I |
-| Error budget & release freeze | **A** | R | C | C | C | C |
-| Chaos / DR drill (E13.4, E14.2) | **A** | R | R | C | C | I |
-| Capacity plan & HPA/KEDA | A | R | **A** | I | I | C |
-| Support bundle redaction | A | R | C | **A** | C | I |
+| Activity                        | SRE lead | SRE on-call | Platform | Security | Privacy | Product |
+| ------------------------------- | -------- | ----------- | -------- | -------- | ------- | ------- |
+| SLO definition & review         | **A**    | R           | C        | C        | C       | C       |
+| Alert routing & on-call         | **A**    | R           | C        | I        | I       | I       |
+| Incident command                | **A**    | R           | C        | R        | C       | I       |
+| Error budget & release freeze   | **A**    | R           | C        | C        | C       | C       |
+| Chaos / DR drill (E13.4, E14.2) | **A**    | R           | R        | C        | C       | I       |
+| Capacity plan & HPA/KEDA        | A        | R           | **A**    | I        | I       | C       |
+| Support bundle redaction        | A        | R           | C        | **A**    | C       | I       |
 
 ## 7. Cross-cutting operational rules
 

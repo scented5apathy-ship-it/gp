@@ -5,12 +5,24 @@
   "type": "module",
   "scripts": {
     "sync:teams": "node --experimental-strip-types scripts/sync-team-map.mts",
-    "lint": "echo 'lint placeholder'",
-    "typecheck": "tsc --noEmit",
-    "test": "echo 'test placeholder'",
-    "build": "echo 'codegen build placeholder'"
+    "lint": "eslint --max-warnings=0 --no-error-on-unmatched-pattern \"scripts/**/*.{ts,tsx,js,mjs,cjs,mts,cts}\"",
+    "lint:eslint": "eslint --max-warnings=0 --no-error-on-unmatched-pattern \"scripts/**/*.{ts,tsx,js,mjs,cjs,mts,cts}\"",
+    "lint:yaml": "node ../../scripts/lint-yaml.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test scripts/**/*.test.ts",
+    "test:unit": "node --test scripts/**/*.test.ts",
+    "test:integration": "echo 'no integration tests for codegen yet'",
+    "test:contract": "echo 'no contract tests for codegen yet'",
+    "test:e2e": "echo 'no e2e tests for codegen yet'",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "format": "prettier --write --log-level=warn --no-error-on-unmatched-pattern \"scripts/**/*.{ts,tsx,js,mjs,cjs,mts,cts,json}\" \"package.json\"",
+    "format:check": "prettier --check --log-level=warn --no-error-on-unmatched-pattern \"scripts/**/*.{ts,tsx,js,mjs,cjs,mts,cts,json}\" \"package.json\"",
+    "clean": "rimraf node_modules dist .turbo coverage"
   },
   "devDependencies": {
-    "typescript": "5.6.2"
+    "typescript": "5.6.2",
+    "eslint": "9.13.0",
+    "prettier": "3.3.3",
+    "rimraf": "6.0.1"
   }
 }

@@ -3,35 +3,19 @@
   "ui": "stream",
   "globalDependencies": [
     "tsconfig.base.json",
-    ".env",
-    "tsconfig.json"
+    "tsconfig.json",
+    "eslint.config.mjs",
+    ".prettierrc.json",
+    ".prettierignore",
+    ".markdownlint-cli2.jsonc"
   ],
-  "globalEnv": [
-    "NODE_ENV",
-    "CI",
-    "TURBO_TOKEN",
-    "TURBO_TEAM"
-  ],
+  "globalEnv": ["NODE_ENV", "CI", "TURBO_TOKEN", "TURBO_TEAM"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [
-        "dist/**",
-        ".next/**",
-        "!.next/cache/**",
-        "build/**",
-        "target/classes/**"
-      ],
-      "inputs": [
-        "src/**",
-        "tsconfig.json",
-        "package.json",
-        "next.config.*",
-        "vite.config.*"
-      ],
-      "env": [
-        "NODE_ENV"
-      ]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "build/**", "target/classes/**"],
+      "inputs": ["src/**", "tsconfig.json", "package.json", "next.config.*", "vite.config.*"],
+      "env": ["NODE_ENV"]
     },
     "dev": {
       "cache": false,
@@ -40,28 +24,16 @@
     "lint": {
       "dependsOn": ["^build"],
       "outputs": [],
-      "inputs": [
-        "src/**",
-        "tsconfig.json",
-        "package.json",
-        "eslint.config.*",
-        ".eslintrc*"
-      ]
+      "inputs": ["src/**", "tsconfig.json", "package.json", "eslint.config.*", ".eslintrc*"]
     },
     "typecheck": {
       "dependsOn": ["^build"],
       "outputs": [],
-      "inputs": [
-        "src/**",
-        "tsconfig.json",
-        "package.json"
-      ]
+      "inputs": ["src/**", "tsconfig.json", "package.json"]
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": [
-        "coverage/**"
-      ],
+      "outputs": ["coverage/**"],
       "inputs": [
         "src/**",
         "test/**",
@@ -71,21 +43,52 @@
         "vitest.config.*"
       ]
     },
+    "test:unit": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/unit/**"],
+      "inputs": [
+        "src/**",
+        "test/**",
+        "tests/**",
+        "tsconfig.json",
+        "package.json",
+        "vitest.config.*"
+      ]
+    },
+    "test:integration": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/integration/**"],
+      "inputs": ["src/**", "integration/**", "tsconfig.json", "package.json"]
+    },
+    "test:contract": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/contract/**"],
+      "inputs": ["src/**", "contract/**", "tsconfig.json", "package.json"]
+    },
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/e2e/**"],
+      "inputs": ["e2e/**", "tests/e2e/**", "playwright.config.*", "tsconfig.json", "package.json"]
+    },
     "format": {
       "cache": false,
       "outputs": []
+    },
+    "format:check": {
+      "outputs": [],
+      "inputs": [
+        "src/**",
+        "**/*.{ts,tsx,js,mjs,cjs,mts,cts,json,md,yaml,yml}",
+        ".prettierrc*",
+        ".prettierignore"
+      ]
     },
     "clean": {
       "cache": false
     },
     "contract:check": {
-      "outputs": [
-        "reports/contract/**"
-      ],
-      "inputs": [
-        "contracts/**",
-        "src/**"
-      ]
+      "outputs": ["reports/contract/**"],
+      "inputs": ["contracts/**", "src/**"]
     }
   }
 }

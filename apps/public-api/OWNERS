@@ -1,0 +1,9 @@
+# Public API application — partner integration surface. Cross-service
+# changes that touch the public API require sign-off from
+# @genealogy/web and from the affected service team.
+#
+# primary:   @genealogy/web
+# secondary: @genealogy/platform
+# on-call:   web-oncall@genealogy.local
+
+@genealogy/web @genealogy/platform

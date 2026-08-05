@@ -1,0 +1,9 @@
+# search-indexer — consumes Kafka events to maintain the search
+# projection. Owned by the search team; cross-team changes need
+# @genealogy/platform sign-off.
+#
+# primary:   @genealogy/search
+# secondary: @genealogy/platform
+# on-call:   search-oncall@genealogy.local
+
+@genealogy/search @genealogy/platform

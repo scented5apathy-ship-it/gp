@@ -14,6 +14,14 @@
  * ArchUnit-boundary dependency is added lazily in `afterEvaluate` so
  * it lands in the testCompileClasspath after the subproject has
  * registered its own `testImplementation` configurations.
+ *
+ * Spotless + Checkstyle configuration is staged for E1.6 (CI
+ * security + supply-chain task) because the `com.diffplug.spotless`
+ * plugin must come from the Gradle Plugin Portal which is not yet
+ * provisioned in every developer environment. The Gradle script
+ * plugin `gradle/conventions/java-conventions.gradle.kts` carries the
+ * `apply(plugin = "com.diffplug.spotless")` block — comment it back
+ * in after E1.6 provisions the plugin mirror.
  */
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.gradle.api.tasks.testing.logging.TestLogEvent
@@ -36,6 +44,14 @@ allprojects {
     // configuration eagerly so that subproject `java { }` blocks can
     // rely on the convention.
     apply(from = rootProject.file("gradle/conventions/java-conventions.gradle.kts"))
+
+    tasks.withType<Test>().configureEach {
+        testLogging {
+            events(TestLogEvent.FAILED, TestLogEvent.SKIPPED)
+            showStandardStreams = false
+            exceptionFormat = TestExceptionFormat.FULL
+        }
+    }
 }
 
 subprojects {
@@ -56,13 +72,5 @@ subprojects {
                 "com.tngtech.archunit:archunit-junit5:1.3.0",
             )
         }
-    }
-}
-
-tasks.withType<Test>().configureEach {
-    testLogging {
-        events(TestLogEvent.FAILED, TestLogEvent.SKIPPED)
-        showStandardStreams = false
-        exceptionFormat = TestExceptionFormat.FULL
     }
 }

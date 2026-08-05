@@ -1,0 +1,89 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+  "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+  "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!--
+  Google Java Style with project-specific suppressions for the
+  Genealogy Platform monorepo. Used by every Java/Kotlin subproject
+  via `gradle/conventions/java-conventions.gradle.kts`.
+
+  Suppressions:
+    - Lombok-generated methods (always begins with `$` or is named
+      `$$EnhancerBy...`).
+    - Service-boundary test classes that need to import internal
+      packages for ArchUnit (E1.1 acceptance criterion).
+
+  Keep this file in lockstep with `.editorconfig` and Spotless so the
+  three layers don't fight each other.
+-->
+<module name="Checker">
+  <property name="charset" value="UTF-8" />
+  <property name="severity" value="error" />
+  <property name="fileExtensions" value="java, properties, xml" />
+
+  <module name="LineLength">
+    <property name="max" value="120" />
+    <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://|ftp://" />
+  </module>
+
+  <module name="TreeWalker">
+    <module name="SuppressionCommentFilter" />
+
+    <!-- Google style baseline -->
+    <module name="AvoidStarImport" />
+    <module name="AvoidStaticImport">
+      <property name="excludes" value="
+        org.junit.jupiter.api.Assertions.*,
+        org.assertj.core.api.Assertions.*,
+        org.mockito.Mockito.*,
+        org.mockito.ArgumentMatchers.*,
+        org.hamcrest.Matchers.*,
+        org.hamcrest.CoreMatchers.*,
+        com.github.tomakehurst.wiremock.client.WireMock.*
+      " />
+    </module>
+    <module name="ConstantName" />
+    <module name="LocalFinalVariableName" />
+    <module name="LocalVariableName" />
+    <module name="MemberName" />
+    <module name="MethodName">
+      <!-- Test methods may use snake_case (JUnit 5 `@DisplayName`-free
+           naming) so skeleton tests can self-document without forcing
+           camelCase on every team. -->
+      <property name="format" value="^[a-z][a-zA-Z0-9_]*$" />
+    </module>
+    <module name="PackageName" />
+    <module name="ParameterName" />
+    <module name="TypeName" />
+
+    <module name="EmptyBlock">
+      <property name="option" value="text" />
+    </module>
+    <module name="EqualsHashCode" />
+    <module name="HiddenField">
+      <property name="ignoreConstructorParameter" value="true" />
+      <property name="ignoreSetter" value="true" />
+      <property name="setterCanReturnItsClass" value="true" />
+    </module>
+    <module name="IllegalInstantiation" />
+    <module name="InnerAssignment" />
+    <module name="MissingSwitchDefault" />
+    <module name="ModifiedControlVariable" />
+    <module name="RedundantImport" />
+    <module name="SimplifyBooleanExpression" />
+    <module name="SimplifyBooleanReturn" />
+    <module name="UpperEll" />
+
+    <!-- Project-specific -->
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="System\.out\.print" />
+      <property name="ignoreComments" value="true" />
+      <property name="message" value="Use a logger instead of System.out" />
+    </module>
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="@Autowired" />
+      <property name="ignoreComments" value="true" />
+      <property name="message" value="Constructor injection only; no field @Autowired" />
+    </module>
+  </module>
+</module>

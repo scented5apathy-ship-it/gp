@@ -26,7 +26,7 @@ import com.tngtech.archunit.lang.syntax.ArchRuleDefinition;
 class ServiceBoundaryTest {
 
     @ArchTest
-    static final ArchRule services_must_not_import_other_services_db =
+    static final ArchRule SERVICES_MUST_NOT_IMPORT_OTHER_SERVICES_DB =
         ArchRuleDefinition.noClasses()
             .that().resideInAPackage("com.genealogy.platform.services.tenant..")
             .should().dependOnClassesThat()
@@ -45,7 +45,7 @@ class ServiceBoundaryTest {
             .allowEmptyShould(true);
 
     @ArchTest
-    static final ArchRule services_must_not_import_other_services_domain =
+    static final ArchRule SERVICES_MUST_NOT_IMPORT_OTHER_SERVICES_DOMAIN =
         ArchRuleDefinition.noClasses()
             .that().resideInAPackage("com.genealogy.platform.services.tenant..")
             .should().dependOnClassesThat()

@@ -1,0 +1,8 @@
+# platform-telemetry — OpenTelemetry / Micrometer / structured-logging
+# helpers. Cross-cutting library owned by platform.
+#
+# primary:   @genealogy/platform
+# secondary: @genealogy/sre
+# on-call:   platform-oncall@genealogy.local
+
+@genealogy/platform @genealogy/sre

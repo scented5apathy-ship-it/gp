@@ -1,0 +1,10 @@
+# Web BFF — owns the Next.js / TS edge and authentication context for
+# authenticated users. Cross-service changes that touch the BFF
+# require sign-off from @genealogy/web in addition to the touched
+# service team.
+#
+# primary:   @genealogy/web
+# secondary: @genealogy/platform
+# on-call:   web-oncall@genealogy.local
+
+@genealogy/web @genealogy/platform

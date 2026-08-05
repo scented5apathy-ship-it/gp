@@ -1,0 +1,9 @@
+# export-worker — long-running export jobs (family book, GEDCOM
+# bundle, PDF). Owned by the import-export team; cross-team changes
+# need @genealogy/platform sign-off.
+#
+# primary:   @genealogy/import-export
+# secondary: @genealogy/platform
+# on-call:   import-export-oncall@genealogy.local
+
+@genealogy/import-export @genealogy/platform

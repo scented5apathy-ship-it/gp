@@ -1,0 +1,10 @@
+# platform-testing — shared Testcontainers fixtures, archunit
+# helpers, jOOQ test extensions. Cross-cutting library owned by
+# platform; SRE is the secondary owner because fixtures depend on
+# approved platform versions (PostgreSQL, Kafka, Temporal).
+#
+# primary:   @genealogy/platform
+# secondary: @genealogy/sre
+# on-call:   platform-oncall@genealogy.local
+
+@genealogy/platform @genealogy/sre

@@ -20,26 +20,31 @@
 ### Subtasks
 
 - [x] E0.1 Xác nhận persona và journey
+
   - Mô tả owner/admin/editor/contributor/viewer, genealogist, operator, auditor và DNA owner/guardian.
   - Bao phủ onboarding, tạo/import tree, cộng tác, public sharing, media, source, DNA và data-subject request.
   - Ghi quyền tối thiểu, dữ liệu nhìn thấy, failure path và success metric cho từng journey.
 
 - [x] E0.2 Chốt glossary và policy matrix
+
   - Chuẩn hóa Tree, Person, User, Relationship, Claim, Citation, Living, Minor, Consent và Tenant.
   - Chốt living inference, redaction, guardian, merge, uncertainty và direct-edit/approval.
   - Tạo decision table `PRIVATE/UNLISTED/PUBLIC` theo role, resource và trạng thái người sống.
 
 - [x] E0.3 Chốt scale và SLO
+
   - Xác nhận tenant, person/tree, media, DNA kit, request rate và concurrent job cho mốc 1/3/5 năm.
   - Tạo synthetic datasets 10K/100K/1M person và workload model.
   - Chốt latency, availability, RPO/RTO, retention và data residency theo plan.
 
 - [x] E0.4 Hoàn tất privacy/legal gate
+
   - Thực hiện DPIA và threat model cho tenant isolation, public sharing, parser media/GEDCOM và DNA.
   - Chốt jurisdiction, lawful basis, consent purpose/version, legal hold và deletion evidence.
   - Xác định feature phải tắt bằng Flagsmith nếu legal gate chưa đạt.
 
 - [x] E0.5 Duyệt ADR còn mở tại Design §16
+
   - So sánh option theo license/TCO, HA/DR, lock-in, security, air-gap và kỹ năng vận hành.
   - Ghi owner, version policy, review date, migration và rollback path.
   - Không triển khai component chưa được chốt phiên bản/distribution.
@@ -64,26 +69,31 @@ _Requirements: R1–R18, NFR1–NFR8_
 ### Subtasks
 
 - [x] E1.1 Khởi tạo workspace
+
   - Tạo pnpm/Turborepo cho web/packages và Gradle multi-project cho Java.
   - Bật TypeScript strict, Java 21 toolchain, dependency locking và reproducible build.
   - Chặn service import domain model/database module của service khác.
 
-- [ ] E1.2 Thiết lập quality commands
+- [x] E1.2 Thiết lập quality commands
+
   - Cấu hình format/lint/typecheck cho Java, TypeScript, OpenAPI, Protobuf, YAML và Helm.
   - Tạo root commands cho unit, integration, contract, E2E và build.
   - Thêm ownership/path rules và generated-code policy.
 
 - [ ] E1.3 Thiết lập contract-first
+
   - Tạo OpenAPI versioned, Protobuf packages, Kafka envelope và schema modules.
   - Tích hợp Apicurio compatibility; lint/breaking checks cho REST/gRPC/event.
   - Chuẩn hóa RFC 9457, cursor, ETag, idempotency và correlation headers.
 
 - [ ] E1.4 Tạo Spring Boot template
+
   - Tích hợp REST/gRPC, jOOQ, Flyway, OTel, probes và graceful shutdown.
   - Thêm trusted context, audit hook, OpenFeature SDK và secure defaults.
   - Tạo Testcontainers fixtures cho PostgreSQL, Kafka, Keycloak, OpenFGA, Temporal, S3 và Valkey.
 
 - [ ] E1.5 Tạo Next.js PWA shell
+
   - App Router, Tailwind, shadcn/ui, tokens, i18n/RTL và PWA manifest.
   - Sinh typed REST client từ OpenAPI; thêm error/loading boundaries.
   - Đặt budget cho bundle, Core Web Vitals và accessibility.
@@ -108,46 +118,55 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
 ### Subtasks
 
 - [ ] E2.1 Dựng local và cluster baseline
+
   - Tạo local profile và Helm values cho SaaS/on-premise.
   - Thiết lập namespace, quota, Pod Security, NetworkPolicy, probes và PDB.
   - Tạo preflight kiểm version, storage class, DNS, certificate và capacity.
 
 - [ ] E2.2 Cấu hình Kong Gateway runtime
+
   - Quản lý route/plugin declaratively: TLS, auth validation, CORS, request-size, rate limit và correlation ID.
   - Tách public, authenticated, partner và admin routes; không đặt domain authorization trong Kong.
   - Thêm config validation, smoke test, metrics và rollback.
 
 - [ ] E2.3 Cấu hình Strimzi và Apicurio
+
   - Khai báo Kafka cluster, users, ACL, topics, retention, replication và quotas.
   - Thiết lập schema compatibility, artifact naming và access control trong Apicurio.
   - Alert under-replicated partitions, disk, consumer lag và registry failures.
 
 - [ ] E2.4 Cấu hình Temporal
+
   - Triển khai namespace, retention, task queues, worker identity và visibility policy.
   - Định nghĩa timeout/retry/heartbeat mặc định; cấm PII trong search attributes.
   - Backup/restore và smoke workflow phải được kiểm chứng.
 
 - [ ] E2.5 Cấu hình Istio
+
   - Bật strict mTLS, ingress/egress policy, service authorization và telemetry.
   - Quy định nơi cấu hình timeout/retry để tránh retry amplification.
   - Kiểm thử deny-by-default và service identity giả mạo.
 
 - [ ] E2.6 Cấu hình Vault và cloud KMS abstraction
+
   - Thiết lập auth method, short-lived credentials, policy theo workload và rotation.
   - Cloud KMS bọc key SaaS; Vault/on-premise key provider dùng cùng application contract.
   - Không đưa secret vào Git, Helm values, image, log hoặc Temporal payload.
 
 - [ ] E2.7 Cấu hình S3/MinIO và Valkey
+
   - Chuẩn hóa bucket/prefix, encryption, lifecycle, versioning, CORS và signed URL behavior.
   - Dùng Valkey cho cache/session/rate state có TTL; không làm source of truth.
   - Chạy compatibility tests giữa cloud S3 và MinIO.
 
 - [ ] E2.8 Cấu hình Flagsmith/OpenFeature
+
   - Tạo environment, flag taxonomy, owner, expiry và audit.
   - SDK phải có safe default khi Flagsmith unavailable.
   - Cấm dùng flag để bỏ qua authorization hoặc consent.
 
 - [ ] E2.9 Cấu hình Argo CD/Rollouts
+
   - GitOps Helm manifests, drift detection và promotion theo môi trường.
   - Canary dựa trên error rate/latency; tự abort và rollback khi vượt threshold.
   - Tách quyền merge code, đổi config production và approve promotion.
@@ -172,26 +191,31 @@ _Requirements: NFR1–NFR8_
 ### Subtasks
 
 - [ ] E3.1 Cấu hình Keycloak
+
   - Quản lý realm/client/flow bằng config-as-code; Authorization Code + PKCE và secure BFF session.
   - Cấu hình verification, recovery, MFA, federation, key rotation và logout/revoke.
   - Hạn chế custom extension; mọi thay đổi flow có regression tests.
 
 - [ ] E3.2 Triển khai tenant-service
+
   - Model Tenant, Membership, Invitation, Entitlement, plan/quota và lifecycle bằng jOOQ/Flyway.
   - Đồng bộ Keycloak subject, nhưng giữ Person và User tách biệt.
   - Thiết lập `tenant_id`, repository guard, PostgreSQL RLS và audit.
 
 - [ ] E3.3 Thiết kế OpenFGA model
+
   - Mô hình user/group→tenant/tree/branch/resource và các role mặc định.
   - Version authorization model; có migration tuple và compatibility tests.
   - Đồng bộ tuple bằng idempotent workflow/event; xử lý revoke ưu tiên cao.
 
 - [ ] E3.4 Triển khai ABAC domain layer
+
   - Kiểm tra living/minor, privacy class, consent purpose, jurisdiction và contextual deny.
   - Kết hợp OpenFGA allow với ABAC obligations như redact, watermark và audit.
   - Cache quyết định ngắn hạn và invalidation khi role/policy/consent đổi.
 
 - [ ] E3.5 Trusted tenant context
+
   - BFF đối chiếu tenant selection với membership; truyền context qua gRPC trong Istio mTLS.
   - Service tự xác minh identity/context và luôn thêm tenant predicate.
   - Từ chối `tenant_id`, role hoặc subject do client tự khai báo.
@@ -216,31 +240,37 @@ _Requirements: R1, R2, R3, R13, R16, NFR1, NFR4, NFR8_
 ### Subtasks
 
 - [ ] E4.1 Tree aggregate và visibility
+
   - CRUD/archive/restore/transfer/delete; locale, timezone, calendar, branding và collaboration policy.
   - Thực thi `PRIVATE/UNLISTED/PUBLIC`; unlisted token được hash, hết hạn và thu hồi.
   - Phát event tái tạo/xóa public projection khi visibility đổi.
 
 - [ ] E4.2 Person aggregate
+
   - Nhiều tên/script/alias, pronoun, living status, biography, identifiers và field privacy.
   - Dùng optimistic version/ETag; ghi actor, reason và diff.
   - Không liên kết User↔Person nếu chưa qua verification workflow.
 
 - [ ] E4.3 Date/calendar/place model
+
   - Hỗ trợ exact/about/range/before/after/unknown và giữ original expression.
   - Lưu UTC, IANA timezone, calendar ID và normalized interval.
   - Place có hierarchy, historical names, coordinates và provider-neutral authority reference.
 
 - [ ] E4.4 Relationship graph và invariants
+
   - Biological/adoptive/foster/guardian/step/partner/custom, certainty và temporal validity.
   - Hỗ trợ nhiều phụ huynh/phối ngẫu, unknown participant và disputed alternatives.
   - Chặn self-link/cycle bất hợp lệ; cảnh báo chronological conflict.
 
 - [ ] E4.5 Event, claim và provenance
+
   - Event nhiều participant/role, recurring memorial, date/place và privacy.
   - Claim có hypothesis/asserted/verified/disputed, confidence và source references.
   - Không coi imported claim là verified mặc định.
 
 - [ ] E4.6 Merge và history
+
   - Candidate scoring, comparison, preview, merge command và source preservation.
   - Bảo toàn redirect/reference; hỗ trợ reversal theo domain rules.
   - Audit toàn bộ reviewer, reason, before/after version.
@@ -265,26 +295,31 @@ _Requirements: R3, R4, R5, R7, R8, R10, R18, NFR1, NFR4, NFR7_
 ### Subtasks
 
 - [ ] E5.1 Benchmark tree renderer
+
   - So sánh candidate với 10K/100K nodes, mobile memory, keyboard, print và bundle size.
   - Prototype SVG/canvas/hybrid và layout trong Web Worker.
   - Duyệt ADR trước khi đưa library vào production.
 
 - [ ] E5.2 Tree projection API
+
   - Query root/direction/depth/filter và incremental neighborhood theo viewport.
   - Projection có version/freshness; redaction trước serialization.
   - Cache Valkey có tenant-aware key, TTL và invalidation.
 
 - [ ] E5.3 Tree views
+
   - Pedigree, descendant, fan, hourglass và family view.
   - Pan/zoom/collapse/minimap/breadcrumb/search-root và stable node identity.
   - Không tải toàn graph vào browser.
 
 - [ ] E5.4 Profile/editor/timeline/map
+
   - Responsive forms, localized name/date/place, optimistic update và conflict UX.
   - Timeline cá nhân/gia đình; map adapter không khóa geocoding vendor.
   - Quyền field/action lấy từ BFF và vẫn được server thực thi.
 
 - [ ] E5.5 Accessibility/i18n
+
   - Semantic list/table alternative, keyboard navigation, focus management và screen-reader labels.
   - ICU messages, RTL, pseudolocale, name/address ordering và reduced motion.
   - Chạy axe tự động và manual critical-flow audit.
@@ -309,16 +344,19 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
 ### Subtasks
 
 - [ ] E6.1 Research service
+
   - Repository, Source, Citation, Transcript, locator, quality và attachment references.
   - Research log, task, hypothesis, conflict, assignment và status.
   - Provenance query từ claim đến citation/source/file.
 
 - [ ] E6.2 Proposal/review model
+
   - Lưu normalized domain command/diff, base version, source và reason.
   - Hỗ trợ approve/reject/request-change/partial merge.
   - Re-authorize bằng OpenFGA+ABAC tại thời điểm review.
 
 - [ ] E6.3 Mixed collaboration policy
+
   - Quy tắc direct edit/approval theo role, branch và resource type.
   - Conflict comparison và merge command mới; không apply arbitrary patch vào field cấm.
   - Đồng bộ policy changes với Flagsmith chỉ cho rollout, không thay policy source of truth.
@@ -343,21 +381,25 @@ _Requirements: R8, R10, R14, NFR1, NFR4_
 ### Subtasks
 
 - [ ] E7.1 Upload lifecycle
+
   - Tạo upload session, multipart signed URL, checksum, quota và MIME policy.
   - Object mới ở quarantine; metadata state machine là source of truth.
   - Finalize idempotent; dọn abandoned multipart bằng lifecycle/workflow.
 
 - [ ] E7.2 Malware/metadata pipeline
+
   - Temporal orchestration gọi ClamAV và Apache Tika trong network sandbox.
   - Chỉ asset `READY` mới được liên kết; timeout/error chuyển trạng thái rõ ràng.
   - Cập nhật signature, resource limit và malicious corpus tests.
 
 - [ ] E7.3 Derivative processing
+
   - libvips cho ảnh; ImageMagick fallback có policy; FFmpeg cho audio/video.
   - Tesseract OCR theo language packs; Gotenberg cho PDF/preview.
   - Output key deterministic, processor versioned và retry idempotent.
 
 - [ ] E7.4 Protected delivery
+
   - Kiểm OpenFGA+ABAC trước signed URL; TTL, range, disposition và watermark.
   - Bucket/prefix/key riêng cho DNA, không dùng media preview pipeline.
   - Audit sensitive downloads và revoke access khi policy đổi.
@@ -382,16 +424,19 @@ _Requirements: R7, R8, R9, R13, NFR1, NFR3, NFR8_
 ### Subtasks
 
 - [ ] E8.1 Search projection
+
   - Consume Kafka events idempotently; normalize multilingual names/aliases với FTS/trigram.
   - Lưu tenant/privacy classification và projection version.
   - Theo dõi lag, rebuild và reconciliation workflow bằng Temporal.
 
 - [ ] E8.2 Authorized search
+
   - Filter tenant/OpenFGA/ABAC trước response; cursor pagination và facets.
   - Saved search và alert chỉ lưu query an toàn.
   - Không cache kết quả vượt quá permission version.
 
 - [ ] E8.3 Public projection
+
   - Chỉ index `PUBLIC` sau redaction living/minor/sensitive.
   - `UNLISTED` trả `noindex`; token hash/expiry/rate limit ở Kong và app validation.
   - Purge projection/cache/sitemap khi visibility hoặc policy đổi.
@@ -416,26 +461,31 @@ _Requirements: R3, R11, R13, NFR1, NFR2, NFR4_
 ### Subtasks
 
 - [ ] E9.1 Temporal transfer framework
+
   - Workflow durable cho progress, signal, cancellation, checkpoint và compensation.
   - Activity idempotent với heartbeat; domain service vẫn là source of truth.
   - Không tự xây generic scheduler/retry database.
 
 - [ ] E9.2 GEDCOM parser/validator
+
   - Streaming GEDCOM 7 và mapping 5.5.1; giữ extension/provenance.
   - Enforce size/depth/count/encoding limits và sandbox parser.
   - Dry-run trả lỗi theo record/line mà không ghi domain data.
 
 - [ ] E9.3 Mapping/dedup/import saga
+
   - Preview mapping, duplicate candidates và user confirmation.
   - Chunk commands với checkpoint/compensation; không giữ transaction dài.
   - Reconcile events/search và tạo final report.
 
 - [ ] E9.4 Privacy-aware export
+
   - Full/branch GEDCOM/CSV/JSON/PDF, media bundle và checksum manifest.
   - Preview redaction; DNA bị loại mặc định và yêu cầu consent riêng.
   - Signed download, expiry, audit và cleanup theo retention.
 
 - [ ] E9.5 Public API trên Kong
+
   - Public API app định nghĩa resource/OpenAPI/idempotency; Kong xử lý routing/auth/rate limit.
   - OAuth scopes ánh xạ membership/OpenFGA; domain service kiểm quyền cuối.
   - Contract compatibility, quota metrics và abuse tests.
@@ -460,21 +510,25 @@ _Requirements: R4, R8, R12, R13, R16, NFR1, NFR3, NFR4, NFR8_
 ### Subtasks
 
 - [ ] E10.1 DNA architecture gate
+
   - Duyệt format/provider, matching algorithm/version, jurisdiction và guardian workflow.
   - Duyệt database/bucket/KMS/task queue/node pool isolation.
   - Flag DNA mặc định off cho mọi tenant/environment.
 
 - [ ] E10.2 DNA service isolation
+
   - Tạo database role/schema, S3 prefix/bucket, Vault policy và encryption key riêng.
   - OpenFGA permission namespace riêng; tree role không mặc nhiên cấp DNA access.
   - Istio/NetworkPolicy giới hạn egress và service callers.
 
 - [ ] E10.3 Consent engine
+
   - Model subject/guardian, purpose, action, policy version, effective/expiry/revoked time.
   - Sinh consent receipt; append-only audit cho grant/revoke/access/export.
   - Re-authorize và kiểm consent tại thời điểm activity chạy, không chỉ lúc submit.
 
 - [ ] E10.4 Raw upload và matching
+
   - Quarantine, format validation và envelope encryption qua Vault/cloud KMS.
   - Temporal worker cô lập tạo match/segment/estimate với algorithm version.
   - Không đưa raw genotype vào Kafka, log, trace, search, media preview hoặc public API.
@@ -499,21 +553,25 @@ _Requirements: R13, R16, NFR1, NFR3, NFR4, NFR7, NFR8_
 ### Subtasks
 
 - [ ] E11.1 Notification service
+
   - Preference, locale template, digest, quiet hours và in-app inbox.
   - Provider-neutral adapters: SaaS email provider, SMTP on-premise; push/SMS bổ sung qua ADR.
   - Retry/delivery workflow bằng Temporal; không tự xây generic queue scheduler.
 
 - [ ] E11.2 Privacy-safe delivery
+
   - Re-check authorization khi render/delivery; dùng generic text cho sensitive event.
   - Unsubscribe, bounce/suppression và tenant branding.
   - Không gửi DNA/person-sensitive payload cho third-party provider nếu không cần.
 
 - [ ] E11.3 Reporting service
+
   - Projection cho completeness, conflict, orphan, duplicate và demographics.
   - Family book/timeline/anniversary/PDF qua Temporal + Gotenberg.
   - Privacy preview và deterministic report version.
 
 - [ ] E11.4 Entitlement/quota/billing adapters
+
   - Usage events, plan enforcement và quota warning.
   - SaaS billing adapter và on-premise license/config không làm domain phụ thuộc vendor.
   - Kong rate metric không thay business entitlement source of truth.
@@ -538,16 +596,19 @@ _Requirements: R1, R14, R15, R16, R18, NFR1, NFR5, NFR6, NFR8_
 ### Subtasks
 
 - [ ] E12.1 Offline data classification
+
   - Xác định resource được cache, TTL, encryption capability và opt-in UI.
   - Không cache raw DNA/media hoặc sensitive living data mặc định.
   - Purge khi logout, revoke, tenant switch hoặc permission version đổi.
 
 - [ ] E12.2 Mutation queue
+
   - IndexedDB queue có operation ID, base version và state rõ ràng.
   - Resume sync, idempotent submit và conflict-resolution UX.
   - Không giả định Background Sync luôn tồn tại.
 
 - [ ] E12.3 Globalization tests
+
   - Pseudolocalization, RTL, long text, Unicode/script/transliteration và locale fallback.
   - DST, IANA timezone, non-Gregorian date và ambiguous/approximate date round-trip.
   - Email/report/PDF dùng cùng glossary và locale rules.
@@ -572,16 +633,19 @@ _Requirements: R6, R10, R17, R18, NFR1, NFR7_
 ### Subtasks
 
 - [ ] E13.1 Telemetry hoàn chỉnh
+
   - Trace xuyên Kong→BFF→gRPC→Kafka/Temporal và link workflow/event correlation.
   - RED metrics, outbox age, consumer lag, workflow failures và projection freshness.
   - Log redaction tests cho token, PII, DNA, secret và file content.
 
 - [ ] E13.2 SLO/alert/runbook
+
   - Định nghĩa SLI/error budget cho edge, domain API, Kafka, Temporal, OpenFGA và storage.
   - Alert actionable với owner, severity, dashboard và runbook link.
   - Giảm cardinality; tenant ID chỉ pseudonymous và không dùng raw user/person IDs.
 
 - [ ] E13.3 Performance/capacity
+
   - k6/Gatling cho API; benchmark tree, search, import, media, report và DNA.
   - Xác định HPA, connection pool, Kafka partition, Temporal worker và database thresholds.
   - Ghi capacity envelope và scale procedure cho SaaS/on-premise.
@@ -606,21 +670,25 @@ _Requirements: NFR2, NFR3, NFR4, NFR5, NFR8_
 ### Subtasks
 
 - [ ] E14.1 Backup matrix
+
   - Bao phủ PostgreSQL, Kafka, S3/MinIO, Keycloak, OpenFGA, Temporal, Vault và Flagsmith.
   - Mã hóa, retention, offsite copy, key custody và restore ordering.
   - Không coi snapshot chưa restore-test là backup hợp lệ.
 
 - [ ] E14.2 DR drill
+
   - Mô phỏng region/cluster loss và phục hồi platform theo dependency order.
   - Reconcile outbox, Kafka consumers, Temporal workflows và search projections.
   - Đo RPO/RTO và ghi remediation nếu vượt mục tiêu.
 
 - [ ] E14.3 On-premise bundle
+
   - Helm charts, pinned OCI images, SBOM/signatures, values schema và compatibility matrix.
   - Preflight cho Kubernetes/storage/DNS/certificate/resources và external dependencies.
   - Hỗ trợ registry mirror/air-gap theo ADR; không fork application code.
 
 - [ ] E14.4 Upgrade/rollback
+
   - Flyway expand-contract, API/event compatibility và platform version sequencing.
   - Argo-controlled upgrade, pre/post checks và rollback constraints.
   - Test nâng cấp từ từng supported version với production-like dataset.
@@ -645,16 +713,19 @@ _Requirements: R1, R16, NFR3, NFR6, NFR8_
 ### Subtasks
 
 - [ ] E15.1 Automated security verification
+
   - Chạy Semgrep, Trivy, Grype, Gitleaks, Checkov, ZAP và dependency/license gates.
   - Xác minh SBOM, Cosign signature và provenance cho mọi image/artifact.
   - Triage finding có owner, SLA và approved exception expiry.
 
 - [ ] E15.2 Tenant/privacy penetration test
+
   - Test IDOR, forged context, OpenFGA tuple race, Kong bypass, public token abuse và cache poisoning.
   - Test malicious GEDCOM/media, SSRF, parser sandbox escape và signed URL leak.
   - DNA boundary/consent/export/delete có test plan riêng.
 
 - [ ] E15.3 Operational readiness review
+
   - Review SLO, alerts, on-call, incident/privacy response, support access và vendor/platform failure plans.
   - Chạy game day cho Keycloak, Kong, Kafka, Temporal, OpenFGA, Vault và storage outage.
   - Xác nhận license notices, data residency và legal release gates.

@@ -4,39 +4,39 @@
 
 Thiết kế ban đầu dựa trên các quyết định đã được chốt:
 
-| Chủ đề | Quyết định |
-|---|---|
-| Sản phẩm | SaaS đa tenant + Enterprise on-premise |
-| Phạm vi | Bản đầy đủ, gồm DNA |
-| Client | Web responsive/PWA |
-| Frontend | Next.js + TypeScript, Tailwind CSS + shadcn/ui |
-| Backend | Java 21 + Spring Boot |
-| Kiến trúc | Microservices |
-| API ngoài | BFF REST + OpenAPI |
-| Nội bộ | gRPC + Kafka |
-| Dữ liệu | PostgreSQL trước, `tenant_id`, ownership theo service |
-| Media | S3-compatible + asynchronous workers |
-| Auth | Keycloak qua chuẩn OIDC |
-| Repository | Monorepo: pnpm + Turborepo + Gradle |
-| Runtime | Docker/OCI, Kubernetes + Helm |
-| Observability | OpenTelemetry, Prometheus/Grafana/Loki/Tempo |
-| Cộng tác | Direct edit hoặc approval, cấu hình theo policy |
-| Quốc tế hóa | Toàn cầu, đa ngôn ngữ/đa lịch/RTL |
-| API gateway | Kong Gateway, phạm vi gateway runtime |
-| Identity | Keycloak |
-| Workflow/Saga | Temporal |
-| Authorization | OpenFGA + ABAC trong ứng dụng |
-| Event platform | Kafka bằng Strimzi + Apicurio Registry |
-| Object storage | S3 managed cho SaaS + MinIO cho on-premise |
-| Secrets/KMS | HashiCorp Vault + cloud KMS |
-| Service mesh | Istio |
-| GitOps | Argo CD + Argo Rollouts |
-| Data access | jOOQ + Flyway |
-| Cache | Redis/Valkey-compatible |
-| Feature flags | OpenFeature + Flagsmith |
-| Media processing | ClamAV, FFmpeg, libvips/ImageMagick, Tika, Tesseract, Gotenberg |
-| Delivery adapters | Email/provider adapters; SMTP cho on-premise |
-| Security CI | Semgrep, Trivy, Syft/Grype, Gitleaks, ZAP, Checkov, Cosign, Renovate |
+| Chủ đề            | Quyết định                                                           |
+| ----------------- | -------------------------------------------------------------------- |
+| Sản phẩm          | SaaS đa tenant + Enterprise on-premise                               |
+| Phạm vi           | Bản đầy đủ, gồm DNA                                                  |
+| Client            | Web responsive/PWA                                                   |
+| Frontend          | Next.js + TypeScript, Tailwind CSS + shadcn/ui                       |
+| Backend           | Java 21 + Spring Boot                                                |
+| Kiến trúc         | Microservices                                                        |
+| API ngoài         | BFF REST + OpenAPI                                                   |
+| Nội bộ            | gRPC + Kafka                                                         |
+| Dữ liệu           | PostgreSQL trước, `tenant_id`, ownership theo service                |
+| Media             | S3-compatible + asynchronous workers                                 |
+| Auth              | Keycloak qua chuẩn OIDC                                              |
+| Repository        | Monorepo: pnpm + Turborepo + Gradle                                  |
+| Runtime           | Docker/OCI, Kubernetes + Helm                                        |
+| Observability     | OpenTelemetry, Prometheus/Grafana/Loki/Tempo                         |
+| Cộng tác          | Direct edit hoặc approval, cấu hình theo policy                      |
+| Quốc tế hóa       | Toàn cầu, đa ngôn ngữ/đa lịch/RTL                                    |
+| API gateway       | Kong Gateway, phạm vi gateway runtime                                |
+| Identity          | Keycloak                                                             |
+| Workflow/Saga     | Temporal                                                             |
+| Authorization     | OpenFGA + ABAC trong ứng dụng                                        |
+| Event platform    | Kafka bằng Strimzi + Apicurio Registry                               |
+| Object storage    | S3 managed cho SaaS + MinIO cho on-premise                           |
+| Secrets/KMS       | HashiCorp Vault + cloud KMS                                          |
+| Service mesh      | Istio                                                                |
+| GitOps            | Argo CD + Argo Rollouts                                              |
+| Data access       | jOOQ + Flyway                                                        |
+| Cache             | Redis/Valkey-compatible                                              |
+| Feature flags     | OpenFeature + Flagsmith                                              |
+| Media processing  | ClamAV, FFmpeg, libvips/ImageMagick, Tika, Tesseract, Gotenberg      |
+| Delivery adapters | Email/provider adapters; SMTP cho on-premise                         |
+| Security CI       | Semgrep, Trivy, Syft/Grype, Gitleaks, ZAP, Checkov, Cosign, Renovate |
 
 Các phiên bản và công nghệ còn mở không được coi là quyết định cuối. Mục 16 liệt kê các ADR còn lại.
 
@@ -82,20 +82,20 @@ flowchart LR
 
 Nền tảng chỉ tự xây domain service, BFF composition và public API resource model. Các capability phổ biến được giao cho công cụ chuẩn:
 
-| Capability | Công cụ chịu trách nhiệm | Phần ứng dụng còn phải làm |
-|---|---|---|
-| Edge API traffic | Kong Gateway | Khai báo route/plugin, domain authorization trong service |
-| Login/MFA/federation | Keycloak | Membership mapping, tenant policy, Person linking |
-| Relationship authorization | OpenFGA | Tuple lifecycle; ABAC cho living/DNA/consent |
-| Durable workflow/saga | Temporal | Workflow/activity nghiệp vụ và compensation |
-| Event runtime/schema | Strimzi Kafka + Apicurio | Event contract, outbox, consumer idempotency |
-| Service mTLS/traffic | Istio | Deadline và domain failure handling |
-| Object storage | S3/MinIO | Asset metadata, authorization và lifecycle nghiệp vụ |
-| Secret/key management | Vault/cloud KMS | Key classification và rotation workflow |
-| Feature rollout | OpenFeature/Flagsmith | Flag taxonomy và safe fallback |
-| GitOps/progressive delivery | Argo CD/Rollouts | Manifest/Helm, health metric và promotion policy |
-| Media tooling | ClamAV/FFmpeg/libvips/Tika/Tesseract/Gotenberg | Pipeline orchestration, sandbox và metadata |
-| Observability | Grafana OSS stack | Instrumentation, SLI/SLO và redaction |
+| Capability                  | Công cụ chịu trách nhiệm                       | Phần ứng dụng còn phải làm                                |
+| --------------------------- | ---------------------------------------------- | --------------------------------------------------------- |
+| Edge API traffic            | Kong Gateway                                   | Khai báo route/plugin, domain authorization trong service |
+| Login/MFA/federation        | Keycloak                                       | Membership mapping, tenant policy, Person linking         |
+| Relationship authorization  | OpenFGA                                        | Tuple lifecycle; ABAC cho living/DNA/consent              |
+| Durable workflow/saga       | Temporal                                       | Workflow/activity nghiệp vụ và compensation               |
+| Event runtime/schema        | Strimzi Kafka + Apicurio                       | Event contract, outbox, consumer idempotency              |
+| Service mTLS/traffic        | Istio                                          | Deadline và domain failure handling                       |
+| Object storage              | S3/MinIO                                       | Asset metadata, authorization và lifecycle nghiệp vụ      |
+| Secret/key management       | Vault/cloud KMS                                | Key classification và rotation workflow                   |
+| Feature rollout             | OpenFeature/Flagsmith                          | Flag taxonomy và safe fallback                            |
+| GitOps/progressive delivery | Argo CD/Rollouts                               | Manifest/Helm, health metric và promotion policy          |
+| Media tooling               | ClamAV/FFmpeg/libvips/Tika/Tesseract/Gotenberg | Pipeline orchestration, sandbox và metadata               |
+| Observability               | Grafana OSS stack                              | Instrumentation, SLI/SLO và redaction                     |
 
 Không xây API gateway service, identity credential store, generic workflow engine, relationship authorization database, schema registry, feature-flag system hoặc observability backend riêng.
 
@@ -103,19 +103,19 @@ Không xây API gateway service, identity credential store, generic workflow eng
 
 Khởi đầu với 11 deployable domain service và hạ tầng dùng chung. Chỉ tách thêm khi có nhu cầu scale, ownership hoặc isolation rõ ràng.
 
-| Service | Trách nhiệm | Aggregate/data sở hữu |
-|---|---|---|
-| `tenant-service` | Tenant, membership, invitations, role/policy, plan/quota, feature flag | Tenant, Membership, Invitation, Entitlement |
-| `genealogy-service` | Tree, Person, family relationship, event, claims, merge, version | Tree, Person, Relationship, LifeEvent, Claim |
-| `research-service` | Source, citation, repository, research log, task, hypothesis | Source, Citation, ResearchTask |
-| `collaboration-service` | Proposal, review, comment, mention, watch, activity | ChangeProposal, Review, Comment |
-| `media-service` | Upload session, object metadata, album, processing, delivery | MediaAsset, MediaVariant, Album |
-| `search-service` | Authorized search projection, public index projection, saved search | SearchDocument, SavedSearch |
-| `import-export-service` | GEDCOM/CSV/JSON/PDF jobs, mapping, validation, bundle | TransferJob, MappingProfile, ExportManifest |
-| `dna-service` | Kit, consent, encrypted raw object reference, match/segment | DnaKit, Consent, DnaMatch, Segment |
-| `notification-service` | Preference, template, in-app/email/push adapters | Notification, Preference, Template |
-| `reporting-service` | Dashboard/read models, publication and report jobs | ReportJob, ReportTemplate, AnalyticsProjection |
-| `audit-service` | Append-only security/business audit, export and retention | AuditEntry, AuditExport |
+| Service                 | Trách nhiệm                                                            | Aggregate/data sở hữu                          |
+| ----------------------- | ---------------------------------------------------------------------- | ---------------------------------------------- |
+| `tenant-service`        | Tenant, membership, invitations, role/policy, plan/quota, feature flag | Tenant, Membership, Invitation, Entitlement    |
+| `genealogy-service`     | Tree, Person, family relationship, event, claims, merge, version       | Tree, Person, Relationship, LifeEvent, Claim   |
+| `research-service`      | Source, citation, repository, research log, task, hypothesis           | Source, Citation, ResearchTask                 |
+| `collaboration-service` | Proposal, review, comment, mention, watch, activity                    | ChangeProposal, Review, Comment                |
+| `media-service`         | Upload session, object metadata, album, processing, delivery           | MediaAsset, MediaVariant, Album                |
+| `search-service`        | Authorized search projection, public index projection, saved search    | SearchDocument, SavedSearch                    |
+| `import-export-service` | GEDCOM/CSV/JSON/PDF jobs, mapping, validation, bundle                  | TransferJob, MappingProfile, ExportManifest    |
+| `dna-service`           | Kit, consent, encrypted raw object reference, match/segment            | DnaKit, Consent, DnaMatch, Segment             |
+| `notification-service`  | Preference, template, in-app/email/push adapters                       | Notification, Preference, Template             |
+| `reporting-service`     | Dashboard/read models, publication and report jobs                     | ReportJob, ReportTemplate, AnalyticsProjection |
+| `audit-service`         | Append-only security/business audit, export and retention              | AuditEntry, AuditExport                        |
 
 ### 4.1 Thành phần edge
 

@@ -8,24 +8,24 @@
 
 ## Index
 
-| ID | Title | Status |
-|---|---|---|
-| ADR-E0.5-01 | Pinned baseline versions (Spring Boot, Gradle, Next.js, platform components) | ACCEPTED (defaults ratified, see §1) |
-| ADR-E0.5-02 | Database topology: database-per-service vs schema-per-service on shared cluster | ACCEPTED (default = schema-per-service, opt-in DB-per-service) |
-| ADR-E0.5-03 | Cloud / region / residency provider selection | DEFERRED (depends on first-launch jurisdiction selection; see §3) |
-| ADR-E0.5-04 | Ingress / WAF in front of Kong and Kong OSS vs Enterprise edition | ACCEPTED (Kong OSS + cloud-managed WAF/CDN; Enterprise only if license delta justified) |
-| ADR-E0.5-05 | Keycloak topology, realm strategy and federation policy | ACCEPTED (realm-per-tenant-group, dedicated realm only for enterprise isolation) |
-| ADR-E0.5-06 | OpenFGA store / model lifecycle and consistency policy | ACCEPTED (store-per-tenant with shared model, eventual consistency ≤ 500 ms p95) |
-| ADR-E0.5-07 | Temporal distribution: self-host everywhere vs managed SaaS + on-prem | ACCEPTED (self-host mandatory; SaaS only if vendor offers on-prem parity) |
-| ADR-E0.5-08 | Kafka serialization (Apicurio) and topic / retention strategy | ACCEPTED (Avro + Apicurio, partition by aggregate id, retention by class) |
-| ADR-E0.5-09 | Frontend query / cache / state / form libraries | ACCEPTED (TanStack Query + Zustand + React Hook Form + Zod) |
-| ADR-E0.5-10 | Tree layout / render engine | DEFERRED (post-prototype benchmark, see §10) |
-| ADR-E0.5-11 | CDN, malware signature update, OCR language packs, media codec policy | ACCEPTED (managed CDN; ClamAV daily; Tesseract packs on-demand; FFmpeg pinned) |
-| ADR-E0.5-12 | Notification provider (email/push/SMS), billing provider, developer portal | ACCEPTED (SMTP for on-prem + SES/SendGrid adapter for SaaS; billing via adapter; no portal in v1) |
-| ADR-E0.5-13 | CI platform + Argo CD + container registry + artifact retention | ACCEPTED (Tekton or GitHub Actions self-hosted; registry per tenant-class) |
-| ADR-E0.5-14 | Calendar / geocoding / place authority providers | ACCEPTED (open data first; commercial adapter only for fallback) |
-| ADR-E0.5-15 | DNA file format / matching algorithm / jurisdiction for release | DEFERRED (depends on E10.1 architecture gate and E0.5-04 residency) |
-| ADR-E0.5-16 | Product analytics, consent manager, DR topology | ACCEPTED (analytics opt-in; consent ledger in `dna-service`; multi-region active-passive) |
+| ID          | Title                                                                           | Status                                                                                            |
+| ----------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| ADR-E0.5-01 | Pinned baseline versions (Spring Boot, Gradle, Next.js, platform components)    | ACCEPTED (defaults ratified, see §1)                                                              |
+| ADR-E0.5-02 | Database topology: database-per-service vs schema-per-service on shared cluster | ACCEPTED (default = schema-per-service, opt-in DB-per-service)                                    |
+| ADR-E0.5-03 | Cloud / region / residency provider selection                                   | DEFERRED (depends on first-launch jurisdiction selection; see §3)                                 |
+| ADR-E0.5-04 | Ingress / WAF in front of Kong and Kong OSS vs Enterprise edition               | ACCEPTED (Kong OSS + cloud-managed WAF/CDN; Enterprise only if license delta justified)           |
+| ADR-E0.5-05 | Keycloak topology, realm strategy and federation policy                         | ACCEPTED (realm-per-tenant-group, dedicated realm only for enterprise isolation)                  |
+| ADR-E0.5-06 | OpenFGA store / model lifecycle and consistency policy                          | ACCEPTED (store-per-tenant with shared model, eventual consistency ≤ 500 ms p95)                  |
+| ADR-E0.5-07 | Temporal distribution: self-host everywhere vs managed SaaS + on-prem           | ACCEPTED (self-host mandatory; SaaS only if vendor offers on-prem parity)                         |
+| ADR-E0.5-08 | Kafka serialization (Apicurio) and topic / retention strategy                   | ACCEPTED (Avro + Apicurio, partition by aggregate id, retention by class)                         |
+| ADR-E0.5-09 | Frontend query / cache / state / form libraries                                 | ACCEPTED (TanStack Query + Zustand + React Hook Form + Zod)                                       |
+| ADR-E0.5-10 | Tree layout / render engine                                                     | DEFERRED (post-prototype benchmark, see §10)                                                      |
+| ADR-E0.5-11 | CDN, malware signature update, OCR language packs, media codec policy           | ACCEPTED (managed CDN; ClamAV daily; Tesseract packs on-demand; FFmpeg pinned)                    |
+| ADR-E0.5-12 | Notification provider (email/push/SMS), billing provider, developer portal      | ACCEPTED (SMTP for on-prem + SES/SendGrid adapter for SaaS; billing via adapter; no portal in v1) |
+| ADR-E0.5-13 | CI platform + Argo CD + container registry + artifact retention                 | ACCEPTED (Tekton or GitHub Actions self-hosted; registry per tenant-class)                        |
+| ADR-E0.5-14 | Calendar / geocoding / place authority providers                                | ACCEPTED (open data first; commercial adapter only for fallback)                                  |
+| ADR-E0.5-15 | DNA file format / matching algorithm / jurisdiction for release                 | DEFERRED (depends on E10.1 architecture gate and E0.5-04 residency)                               |
+| ADR-E0.5-16 | Product analytics, consent manager, DR topology                                 | ACCEPTED (analytics opt-in; consent ledger in `dna-service`; multi-region active-passive)         |
 
 ## Cross-cutting rules
 
@@ -54,28 +54,28 @@
 
 Adopt option 3 with the following matrix. All versions are referenced as `MAJOR.MINOR` ranges in `renovate.json` and pinned to exact patch in the lockfile (Gradle `lockfile`, pnpm `lockfileVersion`, Helm chart `appVersion`):
 
-| Component | Pinned baseline | Version policy | Review date |
-|---|---|---|---|
-| Java | 21 LTS (latest patch) | Quarterly minor bump, security-critical same-week | 2026-11-01 |
-| Spring Boot | 3.3.x (latest patch) | Quarterly minor, security critical immediate | 2026-11-01 |
-| Gradle | 8.10.x | Minor bump per Spring Boot train | 2026-11-01 |
-| Node.js | 22 LTS | Quarterly bump | 2026-11-01 |
-| Next.js | 15.x | Quarterly minor bump | 2026-11-01 |
-| TypeScript | 5.6.x | Quarterly bump | 2026-11-01 |
-| PostgreSQL | 16.x (latest minor) | Annual major; security back-port quarterly | 2027-01-15 |
-| Kafka (Strimzi) | 3.8.x | Minor per Strimzi release train | 2026-12-01 |
-| Apicurio Registry | 2.6.x | Minor per Apicurio release train | 2026-12-01 |
-| Keycloak | 26.x | Minor per Keycloak release cadence | 2026-12-01 |
-| OpenFGA | 1.x (latest) | Minor per OpenFGA release | 2026-12-01 |
-| Temporal | 1.26.x (latest) | Minor per Temporal release | 2026-12-01 |
-| Istio | 1.23.x | Quarterly minor; security critical immediate | 2026-11-01 |
-| Kong | 3.8.x | Quarterly minor; security critical immediate | 2026-11-01 |
-| Vault | 1.17.x | Quarterly minor | 2026-11-01 |
-| Flagsmith | LTS | Quarterly minor | 2026-11-01 |
-| Argo CD | 2.13.x | Quarterly minor | 2026-11-01 |
-| Argo Rollouts | 1.7.x | Quarterly minor | 2026-11-01 |
-| OpenTelemetry SDK / Collector | latest stable | Quarterly minor | 2026-11-01 |
-| Prometheus / Grafana / Loki / Tempo | latest stable | Quarterly minor | 2026-11-01 |
+| Component                           | Pinned baseline       | Version policy                                    | Review date |
+| ----------------------------------- | --------------------- | ------------------------------------------------- | ----------- |
+| Java                                | 21 LTS (latest patch) | Quarterly minor bump, security-critical same-week | 2026-11-01  |
+| Spring Boot                         | 3.3.x (latest patch)  | Quarterly minor, security critical immediate      | 2026-11-01  |
+| Gradle                              | 8.10.x                | Minor bump per Spring Boot train                  | 2026-11-01  |
+| Node.js                             | 22 LTS                | Quarterly bump                                    | 2026-11-01  |
+| Next.js                             | 15.x                  | Quarterly minor bump                              | 2026-11-01  |
+| TypeScript                          | 5.6.x                 | Quarterly bump                                    | 2026-11-01  |
+| PostgreSQL                          | 16.x (latest minor)   | Annual major; security back-port quarterly        | 2027-01-15  |
+| Kafka (Strimzi)                     | 3.8.x                 | Minor per Strimzi release train                   | 2026-12-01  |
+| Apicurio Registry                   | 2.6.x                 | Minor per Apicurio release train                  | 2026-12-01  |
+| Keycloak                            | 26.x                  | Minor per Keycloak release cadence                | 2026-12-01  |
+| OpenFGA                             | 1.x (latest)          | Minor per OpenFGA release                         | 2026-12-01  |
+| Temporal                            | 1.26.x (latest)       | Minor per Temporal release                        | 2026-12-01  |
+| Istio                               | 1.23.x                | Quarterly minor; security critical immediate      | 2026-11-01  |
+| Kong                                | 3.8.x                 | Quarterly minor; security critical immediate      | 2026-11-01  |
+| Vault                               | 1.17.x                | Quarterly minor                                   | 2026-11-01  |
+| Flagsmith                           | LTS                   | Quarterly minor                                   | 2026-11-01  |
+| Argo CD                             | 2.13.x                | Quarterly minor                                   | 2026-11-01  |
+| Argo Rollouts                       | 1.7.x                 | Quarterly minor                                   | 2026-11-01  |
+| OpenTelemetry SDK / Collector       | latest stable         | Quarterly minor                                   | 2026-11-01  |
+| Prometheus / Grafana / Loki / Tempo | latest stable         | Quarterly minor                                   | 2026-11-01  |
 
 ### Consequences
 
@@ -173,11 +173,11 @@ Platform + DBA. On-call: platform-primary + dba-secondary.
 
 **DEFERRED**. Final choice depends on the first-launch jurisdiction and the customer pipeline. The candidate short-list is:
 
-| Candidate | Strength | Weakness |
-|---|---|---|
-| AWS (eu-central-1 / eu-west-2 / us-east-1 / ap-southeast-1) | broadest coverage, KMS integration, Kong/Strimzi/Istio validated | vendor lock, residency variance |
-| GCP (europe-west3 / asia-southeast1) | strong data-protection story | Kong/Istio maturity, on-prem story weaker |
-| Azure (westeurope / canadacentral) | enterprise federation story | Kong/Istio maturity on Azure Arc |
+| Candidate                                                   | Strength                                                         | Weakness                                  |
+| ----------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------- |
+| AWS (eu-central-1 / eu-west-2 / us-east-1 / ap-southeast-1) | broadest coverage, KMS integration, Kong/Strimzi/Istio validated | vendor lock, residency variance           |
+| GCP (europe-west3 / asia-southeast1)                        | strong data-protection story                                     | Kong/Istio maturity, on-prem story weaker |
+| Azure (westeurope / canadacentral)                          | enterprise federation story                                      | Kong/Istio maturity on Azure Arc          |
 
 The default for v1 launch is **single cloud, multi-region active-passive per jurisdiction**, with on-premise as the third tier. Cross-region transfer uses the mechanism selected in ADR-E0.5-07 (transfer mechanism).
 
@@ -227,11 +227,11 @@ Platform + DPO. On-call: platform-secondary. **Open** until launch jurisdiction 
 
 ### Options evaluation
 
-| Option | License | Features | TCO | Notes |
-|---|---|---|---|---|
-| 1 | Apache-2.0 (Kong OSS) | Routing, auth, rate limit, CORS, correlation | Low | No WAF; reliant on application-layer controls |
-| 2 | Apache-2.0 + cloud WAF/CDN | Adds DDoS / bot / OWASP rule set | Medium | Default choice |
-| 3 | Kong Enterprise (proprietary) | Adds WAF, RBAC for admin, dev portal | High | Reserved for enterprise tier |
+| Option | License                       | Features                                     | TCO    | Notes                                         |
+| ------ | ----------------------------- | -------------------------------------------- | ------ | --------------------------------------------- |
+| 1      | Apache-2.0 (Kong OSS)         | Routing, auth, rate limit, CORS, correlation | Low    | No WAF; reliant on application-layer controls |
+| 2      | Apache-2.0 + cloud WAF/CDN    | Adds DDoS / bot / OWASP rule set             | Medium | Default choice                                |
+| 3      | Kong Enterprise (proprietary) | Adds WAF, RBAC for admin, dev portal         | High   | Reserved for enterprise tier                  |
 
 ### Decision
 
@@ -427,12 +427,12 @@ Adopt **Avro** with Apicurio as the canonical serializer. Reasonings: smallest p
 
 Topic naming: `<domain>.<aggregate>.<version>.v<n>` (e.g. `genealogy.person.v1.v1`). Partition key = `tenantId + aggregateId` when ordering across aggregate is required; otherwise `aggregateId` only. Retention:
 
-| Class | Retention | Compaction | Replay |
-|---|---|---|---|
-| Domain event | 30 days | No | Replay via outbox |
-| Projection rebuild | 7 days | No | Manual |
-| Audit | 365 days | No | Restricted replay |
-| DLQ | 14 days | No | Manual triage |
+| Class              | Retention | Compaction | Replay            |
+| ------------------ | --------- | ---------- | ----------------- |
+| Domain event       | 30 days   | No         | Replay via outbox |
+| Projection rebuild | 7 days    | No         | Manual            |
+| Audit              | 365 days  | No         | Restricted replay |
+| DLQ                | 14 days   | No         | Manual triage     |
 
 Compatibility policy = `BACKWARD` for domain events; `FORWARD` for command intents; `FULL` for shared enums.
 
@@ -866,51 +866,51 @@ Privacy + SRE. On-call: sre-primary.
 
 These values are documented here so that downstream epics have a single source of truth. They remain `DRAFT` until E0.6 ownership catalog sign-off.
 
-| Threshold | Current default | Source | ADR / open question |
-|---|---|---|---|
-| `LIVING_INFERENCE_YEARS` | 110 | `glossary-and-policy-matrix.md` §2.1 | E0.2 §5 #6 |
-| `MINORITY_AGE` | 18 | `glossary-and-policy-matrix.md` §1.2 | E0.4 §3 |
-| `MERGE_AUTO_THRESHOLD` | 0.85 | `glossary-and-policy-matrix.md` §2.4 | E0.2 §5 #4 |
-| `MERGE_REVERT_WINDOW_DAYS` | 30 | `glossary-and-policy-matrix.md` §2.4 | E0.2 |
-| `CONSENT_REVOCATION_PROPAGATION_SECONDS` | 60 | `glossary-and-policy-matrix.md` §2.8 | E0.4 |
-| `SHARE_TOKEN_DEFAULT_EXPIRY_DAYS` | 30 (max 365) | `glossary-and-policy-matrix.md` §5 #3 | E0.2 §5 #3 |
-| Burst multiplier (SaaS) | 3.0× | `scale-and-slo.md` §4 | E0.3 §11 #1 |
-| Burst multiplier (on-prem) | 2.0× | `scale-and-slo.md` §4 | E0.3 §11 #1 |
-| Cache hit ratio target | 85 % | `scale-and-slo.md` §5 | E0.3 §11 #2 |
-| RPO | ≤ 15 min | `requirements.md` NFR3 | E0.3 §11 #3 |
-| RTO | ≤ 4 h | `requirements.md` NFR3 | E0.3 §11 #3 |
-| Retention per plan | TBD per plan | `scale-and-slo.md` §6 | E0.3 §11 #4 |
-| Breach-notification SLA | TBD per jurisdiction | `privacy-and-legal-gate.md` §14 #8 | E0.4 |
-| Pseudonymous tenant-label rotation | quarterly | `privacy-and-legal-gate.md` §14 #9 | E0.4 |
-| p95 read latency (popular APIs) | 300 ms | `requirements.md` NFR2 | E0.3 |
-| p95 write latency (popular APIs) | 600 ms | `requirements.md` NFR2 | E0.3 |
-| p95 search latency | 1 s | `requirements.md` NFR2 | E0.3 |
-| Tree view first interaction | 2.5 s p75 on 10 K nodes | `requirements.md` NFR2 | E0.3 + ADR-E0.5-10 |
-| Availability (SaaS) | 99.9 % / month | `requirements.md` NFR3 | E0.3 |
-| Error-budget burn-rate alert | TBD per SRE workbook | `scale-and-slo.md` §5 | E0.3 §11 #6 |
+| Threshold                                | Current default         | Source                                | ADR / open question |
+| ---------------------------------------- | ----------------------- | ------------------------------------- | ------------------- |
+| `LIVING_INFERENCE_YEARS`                 | 110                     | `glossary-and-policy-matrix.md` §2.1  | E0.2 §5 #6          |
+| `MINORITY_AGE`                           | 18                      | `glossary-and-policy-matrix.md` §1.2  | E0.4 §3             |
+| `MERGE_AUTO_THRESHOLD`                   | 0.85                    | `glossary-and-policy-matrix.md` §2.4  | E0.2 §5 #4          |
+| `MERGE_REVERT_WINDOW_DAYS`               | 30                      | `glossary-and-policy-matrix.md` §2.4  | E0.2                |
+| `CONSENT_REVOCATION_PROPAGATION_SECONDS` | 60                      | `glossary-and-policy-matrix.md` §2.8  | E0.4                |
+| `SHARE_TOKEN_DEFAULT_EXPIRY_DAYS`        | 30 (max 365)            | `glossary-and-policy-matrix.md` §5 #3 | E0.2 §5 #3          |
+| Burst multiplier (SaaS)                  | 3.0×                    | `scale-and-slo.md` §4                 | E0.3 §11 #1         |
+| Burst multiplier (on-prem)               | 2.0×                    | `scale-and-slo.md` §4                 | E0.3 §11 #1         |
+| Cache hit ratio target                   | 85 %                    | `scale-and-slo.md` §5                 | E0.3 §11 #2         |
+| RPO                                      | ≤ 15 min                | `requirements.md` NFR3                | E0.3 §11 #3         |
+| RTO                                      | ≤ 4 h                   | `requirements.md` NFR3                | E0.3 §11 #3         |
+| Retention per plan                       | TBD per plan            | `scale-and-slo.md` §6                 | E0.3 §11 #4         |
+| Breach-notification SLA                  | TBD per jurisdiction    | `privacy-and-legal-gate.md` §14 #8    | E0.4                |
+| Pseudonymous tenant-label rotation       | quarterly               | `privacy-and-legal-gate.md` §14 #9    | E0.4                |
+| p95 read latency (popular APIs)          | 300 ms                  | `requirements.md` NFR2                | E0.3                |
+| p95 write latency (popular APIs)         | 600 ms                  | `requirements.md` NFR2                | E0.3                |
+| p95 search latency                       | 1 s                     | `requirements.md` NFR2                | E0.3                |
+| Tree view first interaction              | 2.5 s p75 on 10 K nodes | `requirements.md` NFR2                | E0.3 + ADR-E0.5-10  |
+| Availability (SaaS)                      | 99.9 % / month          | `requirements.md` NFR3                | E0.3                |
+| Error-budget burn-rate alert             | TBD per SRE workbook    | `scale-and-slo.md` §5                 | E0.3 §11 #6         |
 
 ---
 
 ## B. Version policy, review date and migration / rollback per ADR
 
-| ADR | Review date | Migration policy | Rollback path |
-|---|---|---|---|
-| E0.5-01 | 2026-11-01 | Renovate-driven PR + lockfile update | Revert lockfile |
-| E0.5-02 | 2026-12-15 | expand-contract via Flyway; cutover window 2 release trains | Reverse cutover + dual-write |
-| E0.5-03 | TBD (jurisdiction-dependent) | Region failover via DNS + Argo CD | DNS revert |
-| E0.5-04 | 2026-12-01 | CDN config as code; Kong declarative | Argo CD revert |
-| E0.5-05 | 2026-12-01 | Realm split per runbook | Dual-write users |
-| E0.5-06 | 2026-12-01 | Model upgrade via CI; store migration via dual-write | Revert CI model; restore store |
-| E0.5-07 | 2026-12-01 | Namespace export / import; chart rollback | Helm revision rollback |
-| E0.5-08 | 2026-12-01 | Avro schema evolution BACKWARD; consumer replay | Re-publish prior Apicurio version |
-| E0.5-09 | 2026-12-01 | Library swap via follow-up ADR | Library revert + feature flag |
-| E0.5-10 | TBD (post-prototype) | Renderer swap via feature flag + Argo Rollouts | Feature flag off |
-| E0.5-11 | 2026-12-01 | Worker image bump via Helm | Helm revision rollback |
-| E0.5-12 | 2026-12-01 | Adapter swap; no migration | Adapter rollback |
-| E0.5-13 | 2026-12-01 | Pipeline template bump; runner image bump | Workflow re-run previous commit |
-| E0.5-14 | 2026-12-01 | Adapter swap; no migration | Adapter rollback |
-| E0.5-15 | TBD (post-E10.1) | Provider onboarding per contract | Feature flag off |
-| E0.5-16 | 2026-12-01 | Analytics disable = flag; DR = DNS + PITR | DNS failback |
+| ADR     | Review date                  | Migration policy                                            | Rollback path                     |
+| ------- | ---------------------------- | ----------------------------------------------------------- | --------------------------------- |
+| E0.5-01 | 2026-11-01                   | Renovate-driven PR + lockfile update                        | Revert lockfile                   |
+| E0.5-02 | 2026-12-15                   | expand-contract via Flyway; cutover window 2 release trains | Reverse cutover + dual-write      |
+| E0.5-03 | TBD (jurisdiction-dependent) | Region failover via DNS + Argo CD                           | DNS revert                        |
+| E0.5-04 | 2026-12-01                   | CDN config as code; Kong declarative                        | Argo CD revert                    |
+| E0.5-05 | 2026-12-01                   | Realm split per runbook                                     | Dual-write users                  |
+| E0.5-06 | 2026-12-01                   | Model upgrade via CI; store migration via dual-write        | Revert CI model; restore store    |
+| E0.5-07 | 2026-12-01                   | Namespace export / import; chart rollback                   | Helm revision rollback            |
+| E0.5-08 | 2026-12-01                   | Avro schema evolution BACKWARD; consumer replay             | Re-publish prior Apicurio version |
+| E0.5-09 | 2026-12-01                   | Library swap via follow-up ADR                              | Library revert + feature flag     |
+| E0.5-10 | TBD (post-prototype)         | Renderer swap via feature flag + Argo Rollouts              | Feature flag off                  |
+| E0.5-11 | 2026-12-01                   | Worker image bump via Helm                                  | Helm revision rollback            |
+| E0.5-12 | 2026-12-01                   | Adapter swap; no migration                                  | Adapter rollback                  |
+| E0.5-13 | 2026-12-01                   | Pipeline template bump; runner image bump                   | Workflow re-run previous commit   |
+| E0.5-14 | 2026-12-01                   | Adapter swap; no migration                                  | Adapter rollback                  |
+| E0.5-15 | TBD (post-E10.1)             | Provider onboarding per contract                            | Feature flag off                  |
+| E0.5-16 | 2026-12-01                   | Analytics disable = flag; DR = DNS + PITR                   | DNS failback                      |
 
 ---
 

@@ -19,7 +19,6 @@
 /services/reporting-service/   @genealogy/reporting
 /services/audit-service/       @genealogy/identity @genealogy/security
 
-/apps/web/                     @genealogy/web
 /apps/web-bff/                 @genealogy/web
 /apps/public-api/              @genealogy/web
 
@@ -39,5 +38,5 @@
 /tools/                        @genealogy/platform
 
 # Privacy-sensitive areas.
-/services/dna-service/db/      @genealogy/dna @genealogy/security @genealogy/privacy
+/services/dna-service/         @genealogy/dna @genealogy/security @genealogy/privacy
 /services/audit-service/       @genealogy/identity @genealogy/security

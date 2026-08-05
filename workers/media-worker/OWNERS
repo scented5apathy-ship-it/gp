@@ -1,0 +1,9 @@
+# media-worker — asynchronous media processing pipeline (image/video
+# transcode, OCR, malware scan, derivative generation). Owned by
+# the media team; cross-team changes need @genealogy/platform sign-off.
+#
+# primary:   @genealogy/media
+# secondary: @genealogy/platform
+# on-call:   media-oncall@genealogy.local
+
+@genealogy/media @genealogy/platform

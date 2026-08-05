@@ -405,27 +405,27 @@ A journey is an end-to-end flow with a defined start trigger, observable outcome
 
 ## 3. Failure mode summary
 
-| Failure event | Impacted journeys | Required handling |
-|---|---|---|
-| Lost tenant owner | J-ONB-1, J-ONB-3, J-DSR-1 | Transfer workflow, admin hold, owner recovery with re-verification |
-| Tenant suspension | All tenant journeys | API return `tenant_suspended` problem; queued jobs paused |
-| Living person falsely labelled deceased | J-TREE-2, J-TREE-4, J-SHARE-2 | Living re-inference + audit reversal; public projection rebuild |
-| DNA consent revoked mid-job | J-DNA-2, J-DNA-3 | Cancellation + purge; legal hold may override purge |
-| GEDCOM parser exploit | J-IMP-1 | Sandbox, resource cap, kill switch via Flagsmith |
-| Media malware detected | J-MED-1, J-MED-2 | Quarantine, alert, CVEs tracked in audit |
-| Flagsmith or OIDC outage | many journeys | Safe default fallbacks (degraded UX, fail-closed for auth) |
-| Audit tampering attempt | J-OPS-1, J-DSR-* | Append-only chain evidence; auditor alerted; restore from immutable archive |
+| Failure event                           | Impacted journeys             | Required handling                                                           |
+| --------------------------------------- | ----------------------------- | --------------------------------------------------------------------------- |
+| Lost tenant owner                       | J-ONB-1, J-ONB-3, J-DSR-1     | Transfer workflow, admin hold, owner recovery with re-verification          |
+| Tenant suspension                       | All tenant journeys           | API return `tenant_suspended` problem; queued jobs paused                   |
+| Living person falsely labelled deceased | J-TREE-2, J-TREE-4, J-SHARE-2 | Living re-inference + audit reversal; public projection rebuild             |
+| DNA consent revoked mid-job             | J-DNA-2, J-DNA-3              | Cancellation + purge; legal hold may override purge                         |
+| GEDCOM parser exploit                   | J-IMP-1                       | Sandbox, resource cap, kill switch via Flagsmith                            |
+| Media malware detected                  | J-MED-1, J-MED-2              | Quarantine, alert, CVEs tracked in audit                                    |
+| Flagsmith or OIDC outage                | many journeys                 | Safe default fallbacks (degraded UX, fail-closed for auth)                  |
+| Audit tampering attempt                 | J-OPS-1, J-DSR-\*             | Append-only chain evidence; auditor alerted; restore from immutable archive |
 
 ## 4. Success metrics roll-up
 
-| Metric group | Target | Anchor |
-|---|---|---|
-| Activation | time_to_first_tree; first-person creation rate | J-ONB-1, J-TREE-1 |
-| Collaboration throughput | proposal review latency, merge reversal success | J-COL-1, J-TREE-4 |
-| Sharing safety | 0 living-person leaks, 0 DNA leaks | J-SHARE-1..2, J-MED-3, J-DNA-2 |
-| Data integrity | 0 unsourced critical claims in production | J-RES-1 |
-| Privacy & DSR | DSAR turnaround, revocation propagation | J-DSR-1, J-DNA-3 |
-| Platform reliability | RPO/RTO adherence; service availability | J-OPS-2 |
+| Metric group             | Target                                          | Anchor                         |
+| ------------------------ | ----------------------------------------------- | ------------------------------ |
+| Activation               | time_to_first_tree; first-person creation rate  | J-ONB-1, J-TREE-1              |
+| Collaboration throughput | proposal review latency, merge reversal success | J-COL-1, J-TREE-4              |
+| Sharing safety           | 0 living-person leaks, 0 DNA leaks              | J-SHARE-1..2, J-MED-3, J-DNA-2 |
+| Data integrity           | 0 unsourced critical claims in production       | J-RES-1                        |
+| Privacy & DSR            | DSAR turnaround, revocation propagation         | J-DSR-1, J-DNA-3               |
+| Platform reliability     | RPO/RTO adherence; service availability         | J-OPS-2                        |
 
 ## 5. Downstream traceability
 
@@ -434,9 +434,9 @@ A journey is an end-to-end flow with a defined start trigger, observable outcome
 - E0.4 (privacy/legal gate) consumes §2.8–§2.10 and §3 for DPIA scope.
 - E0.5 (ADR closure) is independent but E0.1 feeds it product/operator constraints.
 - E0.6 (ownership catalog) consumes §1 personas to assign service/platform owners.
-- Epic E3 (identity) and E4 (genealogy) implement J-ONB-*, J-TREE-*, J-COL-*.
-- Epic E5/E7/E8 implement J-SHARE-*, J-MED-*, J-SHARE-2 respectively.
-- Epic E9 implements J-IMP-*.
+- Epic E3 (identity) and E4 (genealogy) implement J-ONB-_, J-TREE-_, J-COL-\*.
+- Epic E5/E7/E8 implement J-SHARE-_, J-MED-_, J-SHARE-2 respectively.
+- Epic E9 implements J-IMP-\*.
 - Epic E10 implements §2.8 journeys end to end.
 - Epic E11 implements §2.10 journeys plus notification guarantees.
 - Epic E14/E15 verify J-OPS-2 and J-OPS-3.
@@ -445,5 +445,5 @@ A journey is an end-to-end flow with a defined start trigger, observable outcome
 
 - Confirm exact entitlement keys for each role (E0.2).
 - Confirm legal/jurisdiction scope before enabling DNA journeys (E0.4).
-- Confirm SaaS/on-premise plan names and quotas that gate J-ONB-* (E0.3/E0.5).
+- Confirm SaaS/on-premise plan names and quotas that gate J-ONB-\* (E0.3/E0.5).
 - Confirm which consent templates are required for first release of DNA journeys (E0.4).

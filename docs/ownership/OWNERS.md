@@ -13,14 +13,14 @@ machine-readable `OWNERS` files in every service and platform directory.
 
 ## Files
 
-| File | Purpose | Owner |
-|---|---|---|
-| `OWNERS.md` | This index | `@genealogy/platform` |
-| `OWNERS` | Repo-wide CODEOWNERS (delegates to per-area files) | `@genealogy/platform` |
-| `team-map.yaml` | Generated snapshot of `config/teams.yaml` (machine-readable) | `@genealogy/platform` |
-| `services/<svc>/OWNERS` | CODEOWNERS for that service | per-service team |
-| `apps/<app>/OWNERS` | CODEOWNERS for that application | per-area team |
-| `platform/<area>/OWNERS` | CODEOWNERS for platform config | `@genealogy/platform` |
+| File                     | Purpose                                                      | Owner                 |
+| ------------------------ | ------------------------------------------------------------ | --------------------- |
+| `OWNERS.md`              | This index                                                   | `@genealogy/platform` |
+| `OWNERS`                 | Repo-wide CODEOWNERS (delegates to per-area files)           | `@genealogy/platform` |
+| `team-map.yaml`          | Generated snapshot of `config/teams.yaml` (machine-readable) | `@genealogy/platform` |
+| `services/<svc>/OWNERS`  | CODEOWNERS for that service                                  | per-service team      |
+| `apps/<app>/OWNERS`      | CODEOWNERS for that application                              | per-area team         |
+| `platform/<area>/OWNERS` | CODEOWNERS for platform config                               | `@genealogy/platform` |
 
 ## Update process
 

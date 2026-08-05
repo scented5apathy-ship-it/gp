@@ -1,0 +1,8 @@
+# platform-errors — shared error model + RFC 9457 problem-details
+# helpers. Cross-cutting library owned by platform.
+#
+# primary:   @genealogy/platform
+# secondary: @genealogy/security
+# on-call:   platform-oncall@genealogy.local
+
+@genealogy/platform @genealogy/security

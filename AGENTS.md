@@ -6,14 +6,14 @@ repository. It mirrors and extends the project-wide rules in
 
 ## 1. Source of truth
 
-| Document | When to read |
-|---|---|
-| `.kiro/specs/genealogy-platform/requirements.md` | Reading R1–R18 / NFR1–NFR8 |
-| `.kiro/specs/genealogy-platform/design.md` | Architectural decisions |
-| `.kiro/specs/genealogy-platform/tasks.md` | Picking up an epic/subtask |
-| `.kiro/specs/genealogy-platform/ownership-catalog.md` | Service ownership, RACI, SLOs |
-| `.kiro/specs/genealogy-platform/architecture-decisions.md` | ADR index + numeric thresholds |
-| `.kiro/specs/genealogy-platform/agent-execution.md` | How to execute a task end-to-end |
+| Document                                                   | When to read                     |
+| ---------------------------------------------------------- | -------------------------------- |
+| `.kiro/specs/genealogy-platform/requirements.md`           | Reading R1–R18 / NFR1–NFR8       |
+| `.kiro/specs/genealogy-platform/design.md`                 | Architectural decisions          |
+| `.kiro/specs/genealogy-platform/tasks.md`                  | Picking up an epic/subtask       |
+| `.kiro/specs/genealogy-platform/ownership-catalog.md`      | Service ownership, RACI, SLOs    |
+| `.kiro/specs/genealogy-platform/architecture-decisions.md` | ADR index + numeric thresholds   |
+| `.kiro/specs/genealogy-platform/agent-execution.md`        | How to execute a task end-to-end |
 
 Always start by reading the relevant section of these documents. If
 something is unclear, ask **before** making code/config changes that
@@ -66,11 +66,16 @@ Every change must respect:
 
 ## 4. Quality gates before any PR can merge
 
-- [ ] `pnpm -r typecheck` passes
-- [ ] `pnpm -r lint` passes
-- [ ] `pnpm -r test` passes
-- [ ] `pnpm exec scripts/check-monorepo-boundaries.mjs` passes
-- [ ] `./gradlew test` passes (incl. ArchUnit boundary)
+- [ ] `pnpm format:check` passes
+- [ ] `pnpm lint` passes (incl. `lint:eslint`, `lint:yaml`,
+      `lint:openapi`, `lint:markdown`, `lint:ownership`,
+      `lint:generated`)
+- [ ] `pnpm typecheck` passes
+- [ ] `pnpm test:unit` passes
+- [ ] `pnpm check:java` passes (Checkstyle + tests)
+- [ ] `pnpm check:boundary` passes (cross-service boundary)
+- [ ] `pnpm check:gradle:lock` passes (every `lockAll` subproject has
+      `gradle.lockfile` committed)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

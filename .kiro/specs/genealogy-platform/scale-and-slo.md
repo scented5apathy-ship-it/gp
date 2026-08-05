@@ -15,54 +15,54 @@ Con số dưới đây mô tả **steady-state active** (không phải peak burs
 
 ### 2.1 Active tenant / user
 
-| Hạng mục | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú |
-|---|---|---|---|---|
-| Active tenant (SaaS) | 1 000 | 5 000 | 20 000 | Bao gồm free + paid; on-premise tính riêng ở §2.6 |
-| Paying tenant | 150 | 800 | 3 500 | Ước lượng conversion 15% |
-| Enterprise tenant (on-premise) | 5 | 25 | 100 | Mỗi tenant có thể có dataset rất lớn |
-| DAU user / tenant trung bình | 3 | 5 | 8 | Editor + viewer tính chung |
-| Peak DAU / tenant (broadcast/webinar) | 200 | 500 | 1 500 | Dùng để tính burst search |
+| Hạng mục                              | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú                                           |
+| ------------------------------------- | ---------- | ---------- | ---------- | ------------------------------------------------- |
+| Active tenant (SaaS)                  | 1 000      | 5 000      | 20 000     | Bao gồm free + paid; on-premise tính riêng ở §2.6 |
+| Paying tenant                         | 150        | 800        | 3 500      | Ước lượng conversion 15%                          |
+| Enterprise tenant (on-premise)        | 5          | 25         | 100        | Mỗi tenant có thể có dataset rất lớn              |
+| DAU user / tenant trung bình          | 3          | 5          | 8          | Editor + viewer tính chung                        |
+| Peak DAU / tenant (broadcast/webinar) | 200        | 500        | 1 500      | Dùng để tính burst search                         |
 
 ### 2.2 Active tree / person
 
-| Hạng mục | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú |
-|---|---|---|---|---|
-| Tree / tenant trung bình | 3 | 5 | 8 | Family + research + partner |
-| Tree lớn nhất (p99) | 10 000 person | 50 000 person | 250 000 person | Phục vụ benchmark tree-view |
-| Total person toàn hệ (SaaS) | 30 M | 200 M | 1 B | Bao gồm cả LIVING bị redact |
-| Total person active query / ngày | 1 M | 10 M | 60 M | Cache + OpenSearch |
-| Person ingestion / ngày (write) | 50 K | 300 K | 1,5 M | Manual + GEDCOM import |
+| Hạng mục                         | Y1 (DRAFT)    | Y3 (DRAFT)    | Y5 (DRAFT)     | Ghi chú                     |
+| -------------------------------- | ------------- | ------------- | -------------- | --------------------------- |
+| Tree / tenant trung bình         | 3             | 5             | 8              | Family + research + partner |
+| Tree lớn nhất (p99)              | 10 000 person | 50 000 person | 250 000 person | Phục vụ benchmark tree-view |
+| Total person toàn hệ (SaaS)      | 30 M          | 200 M         | 1 B            | Bao gồm cả LIVING bị redact |
+| Total person active query / ngày | 1 M           | 10 M          | 60 M           | Cache + OpenSearch          |
+| Person ingestion / ngày (write)  | 50 K          | 300 K         | 1,5 M          | Manual + GEDCOM import      |
 
 ### 2.3 Media / object storage
 
-| Hạng mục | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú |
-|---|---|---|---|---|
-| Object lưu trữ (image, doc, audio) | 20 M | 150 M | 800 M | Bản gốc + thumbnail + preview |
-| Dung lượng raw (S3/MinIO) | 5 TB | 50 TB | 250 TB | Sau envelope encryption |
-| Media / person trung bình | 0,7 | 1,2 | 1,5 | Không tính DNA |
-| Media upload / giờ (peak) | 10 K | 40 K | 120 K | Có malware scan + preview job |
-| Preview / PDF render / giờ (peak) | 2 000 | 8 000 | 25 000 | Gotenberg + media worker |
+| Hạng mục                           | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú                       |
+| ---------------------------------- | ---------- | ---------- | ---------- | ----------------------------- |
+| Object lưu trữ (image, doc, audio) | 20 M       | 150 M      | 800 M      | Bản gốc + thumbnail + preview |
+| Dung lượng raw (S3/MinIO)          | 5 TB       | 50 TB      | 250 TB     | Sau envelope encryption       |
+| Media / person trung bình          | 0,7        | 1,2        | 1,5        | Không tính DNA                |
+| Media upload / giờ (peak)          | 10 K       | 40 K       | 120 K      | Có malware scan + preview job |
+| Preview / PDF render / giờ (peak)  | 2 000      | 8 000      | 25 000     | Gotenberg + media worker      |
 
 ### 2.4 DNA kit
 
-| Hạng mục | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú |
-|---|---|---|---|---|
-| DNA kit / tenant lớn | 50 | 500 | 5 000 | Kit có thể nhiều người |
-| Tổng DNA sample lưu trữ | 100 K | 1 M | 10 M | Chỉ lưu derived + raw encrypted |
-| Match job / ngày | 500 | 5 000 | 50 000 | Chạy Temporal activity |
-| Match latency ceiling (p95) | 60 s | 30 s | 15 s | Không tính intake queue |
+| Hạng mục                    | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú                         |
+| --------------------------- | ---------- | ---------- | ---------- | ------------------------------- |
+| DNA kit / tenant lớn        | 50         | 500        | 5 000      | Kit có thể nhiều người          |
+| Tổng DNA sample lưu trữ     | 100 K      | 1 M        | 10 M       | Chỉ lưu derived + raw encrypted |
+| Match job / ngày            | 500        | 5 000      | 50 000     | Chạy Temporal activity          |
+| Match latency ceiling (p95) | 60 s       | 30 s       | 15 s       | Không tính intake queue         |
 
 ### 2.5 Request rate và concurrency
 
-| Hạng mục | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú |
-|---|---|---|---|---|
-| Read RPS (BFF + service) | 5 K | 25 K | 80 K | BFF gộp UI request |
-| Write RPS (BFF + service) | 300 | 1 500 | 5 000 | Bao gồm proposal/merge |
-| Search RPS | 200 | 1 000 | 4 000 | p95 < 1 s theo NFR2 |
-| Ghép nối event (Kafka) | 1 K msg/s | 5 K msg/s | 15 K msg/s | Partition per aggregate |
-| Concurrent Temporal workflow | 200 | 1 000 | 4 000 | Worker pool scale theo queue |
-| Concurrent render job | 80 | 300 | 1 000 | Gotenberg + media worker |
-| Concurrent DNA match job | 20 | 100 | 500 | Resource-heavy, fenced pool |
+| Hạng mục                     | Y1 (DRAFT) | Y3 (DRAFT) | Y5 (DRAFT) | Ghi chú                      |
+| ---------------------------- | ---------- | ---------- | ---------- | ---------------------------- |
+| Read RPS (BFF + service)     | 5 K        | 25 K       | 80 K       | BFF gộp UI request           |
+| Write RPS (BFF + service)    | 300        | 1 500      | 5 000      | Bao gồm proposal/merge       |
+| Search RPS                   | 200        | 1 000      | 4 000      | p95 < 1 s theo NFR2          |
+| Ghép nối event (Kafka)       | 1 K msg/s  | 5 K msg/s  | 15 K msg/s | Partition per aggregate      |
+| Concurrent Temporal workflow | 200        | 1 000      | 4 000      | Worker pool scale theo queue |
+| Concurrent render job        | 80         | 300        | 1 000      | Gotenberg + media worker     |
+| Concurrent DNA match job     | 20         | 100        | 500        | Resource-heavy, fenced pool  |
 
 ### 2.6 On-premise enterprise
 
@@ -76,17 +76,17 @@ Mỗi bộ dataset phải đặt dưới `.kiro/specs/genealogy-platform/bench/d
 
 ### 3.1 Cấu trúc dataset `S`
 
-| Bảng / aggregate | 10K | 100K | 1M | Quan hệ |
-|---|---|---|---|---|
-| Tenant | 1 | 5 | 20 | Owner |
-| Tree | 10 | 200 | 4 000 | tenant |
-| Person | 10 000 | 100 000 | 1 000 000 | tree |
-| Relationship | 25 000 | 300 000 | 3 500 000 | person × person |
-| Citation | 30 000 | 350 000 | 4 000 000 | person / relationship |
-| Media | 7 000 | 120 000 | 1 200 000 | person / tree |
-| Claim / proposal | 1 500 | 20 000 | 250 000 | person |
-| Audit event | 100 000 | 1 M | 10 M | toàn hệ |
-| DNA match record | 200 | 4 000 | 40 000 | person |
+| Bảng / aggregate | 10K     | 100K    | 1M        | Quan hệ               |
+| ---------------- | ------- | ------- | --------- | --------------------- |
+| Tenant           | 1       | 5       | 20        | Owner                 |
+| Tree             | 10      | 200     | 4 000     | tenant                |
+| Person           | 10 000  | 100 000 | 1 000 000 | tree                  |
+| Relationship     | 25 000  | 300 000 | 3 500 000 | person × person       |
+| Citation         | 30 000  | 350 000 | 4 000 000 | person / relationship |
+| Media            | 7 000   | 120 000 | 1 200 000 | person / tree         |
+| Claim / proposal | 1 500   | 20 000  | 250 000   | person                |
+| Audit event      | 100 000 | 1 M     | 10 M      | toàn hệ               |
+| DNA match record | 200     | 4 000   | 40 000    | person                |
 
 ### 3.2 Phân bố thuộc tính
 
@@ -106,14 +106,14 @@ Mỗi bộ dataset phải đặt dưới `.kiro/specs/genealogy-platform/bench/d
 
 ### 3.4 Workload model
 
-| Workload class | Mix Y1 | Hành vi | SLI gắn với |
-|---|---|---|---|
-| Browse tree (read) | 55% | Read-heavy, cacheable, neighborhood fetch | p95 latency, cache hit |
-| Search (read) | 15% | Filter + faceted, có suggest | p95 search latency |
-| Detail / person (read) | 10% | Includes redaction + ABAC | p95 latency, redaction cost |
-| Write proposal/merge | 10% | Idempotent, optimistic concurrency | p95 write latency, conflict rate |
-| Media upload | 6% | Multipart + scan + preview | Throughput, scan success |
-| Async job (publish, DNA match) | 4% | Temporal workflow | Workflow success rate, heartbeat |
+| Workload class                 | Mix Y1 | Hành vi                                   | SLI gắn với                      |
+| ------------------------------ | ------ | ----------------------------------------- | -------------------------------- |
+| Browse tree (read)             | 55%    | Read-heavy, cacheable, neighborhood fetch | p95 latency, cache hit           |
+| Search (read)                  | 15%    | Filter + faceted, có suggest              | p95 search latency               |
+| Detail / person (read)         | 10%    | Includes redaction + ABAC                 | p95 latency, redaction cost      |
+| Write proposal/merge           | 10%    | Idempotent, optimistic concurrency        | p95 write latency, conflict rate |
+| Media upload                   | 6%     | Multipart + scan + preview                | Throughput, scan success         |
+| Async job (publish, DNA match) | 4%     | Temporal workflow                         | Workflow success rate, heartbeat |
 
 ## 4. Peak burst và headroom
 
@@ -132,39 +132,39 @@ Con số dưới đây là **SLO target ban đầu** (chưa phải SLA ký với
 
 ### 5.1 API latency
 
-| Endpoint class | SLI | SLO target (DRAFT) | Burn-rate alert |
-|---|---|---|---|
-| Read phổ biến (GET tree, person, search) | p95 latency | < 300 ms (NFR2) | 2× budget / 1 h, 5× budget / 5 min |
-| Write phổ biến (POST/PUT person, claim) | p95 latency | < 600 ms (NFR2) | 2× budget / 1 h, 5× budget / 5 min |
-| Search nâng cao | p95 latency | < 1 000 ms (NFR2) | 2× budget / 30 min |
-| Tree view initial render | p75 TTI | < 2 500 ms (NFR2) | 2× budget / 1 h |
-| Public share first paint | p75 LCP | < 2 000 ms | 2× budget / 1 h |
-| BFF aggregate (multi-call) | p95 | < 800 ms | 2× budget / 1 h |
+| Endpoint class                           | SLI         | SLO target (DRAFT) | Burn-rate alert                    |
+| ---------------------------------------- | ----------- | ------------------ | ---------------------------------- |
+| Read phổ biến (GET tree, person, search) | p95 latency | < 300 ms (NFR2)    | 2× budget / 1 h, 5× budget / 5 min |
+| Write phổ biến (POST/PUT person, claim)  | p95 latency | < 600 ms (NFR2)    | 2× budget / 1 h, 5× budget / 5 min |
+| Search nâng cao                          | p95 latency | < 1 000 ms (NFR2)  | 2× budget / 30 min                 |
+| Tree view initial render                 | p75 TTI     | < 2 500 ms (NFR2)  | 2× budget / 1 h                    |
+| Public share first paint                 | p75 LCP     | < 2 000 ms         | 2× budget / 1 h                    |
+| BFF aggregate (multi-call)               | p95         | < 800 ms           | 2× budget / 1 h                    |
 
 ### 5.2 Availability
 
-| Service class | SLO target (DRAFT) | Error budget tháng |
-|---|---|---|
-| SaaS production (toàn hệ) | 99,9 % (NFR3) | 43,2 phút / tháng |
-| API read path | 99,95 % | 21,6 phút / tháng |
-| Search (best-effort) | 99,5 % | 3 giờ / tháng |
-| Async job (publish, DNA match) | 99,0 % | 7 giờ 18 phút / tháng |
-| Media pipeline | 99,0 % | 7 giờ 18 phút / tháng |
-| On-premise base | 99,5 % (cluster HA) | 3 giờ 36 phút / tháng |
+| Service class                  | SLO target (DRAFT)  | Error budget tháng    |
+| ------------------------------ | ------------------- | --------------------- |
+| SaaS production (toàn hệ)      | 99,9 % (NFR3)       | 43,2 phút / tháng     |
+| API read path                  | 99,95 %             | 21,6 phút / tháng     |
+| Search (best-effort)           | 99,5 %              | 3 giờ / tháng         |
+| Async job (publish, DNA match) | 99,0 %              | 7 giờ 18 phút / tháng |
+| Media pipeline                 | 99,0 %              | 7 giờ 18 phút / tháng |
+| On-premise base                | 99,5 % (cluster HA) | 3 giờ 36 phút / tháng |
 
 `error budget` sẽ là tín hiệu freeze release khi vượt (NFR7 + design §16.5 — ADR chốt ở E0.5).
 
 ### 5.3 RPO / RTO
 
-| Tầng | RPO (DRAFT) | RTO (DRAFT) | Cơ chế |
-|---|---|---|---|
-| PostgreSQL (tenant data) | ≤ 5 phút (PITR + WAL ship) | ≤ 4 giờ (NFR3) | Backup mã hóa + PITR; enterprise có thể nâng 1 phút |
-| Object storage (media) | ≤ 15 phút (cross-region replication) | ≤ 4 giờ | Versioning + lifecycle; on-premise replicate sang site thứ hai |
-| Kafka | ≤ 1 phút (mirror + retention) | ≤ 1 giờ | MirrorMaker 2 / cluster link |
-| Temporal namespace | ≤ 1 phút (DB snapshot) | ≤ 1 giờ | Namespace per env + backup |
-| Keycloak realm | ≤ 15 phút (DB backup) | ≤ 2 giờ | Export/import runbook |
-| Vault / KMS | Không mất (HSM hoặc unseal quorum) | Không downtime | Shamir + replication |
-| Audit log | Không mất (append-only WORM) | Không downtime | Kafka + MinIO WORM bucket |
+| Tầng                     | RPO (DRAFT)                          | RTO (DRAFT)    | Cơ chế                                                         |
+| ------------------------ | ------------------------------------ | -------------- | -------------------------------------------------------------- |
+| PostgreSQL (tenant data) | ≤ 5 phút (PITR + WAL ship)           | ≤ 4 giờ (NFR3) | Backup mã hóa + PITR; enterprise có thể nâng 1 phút            |
+| Object storage (media)   | ≤ 15 phút (cross-region replication) | ≤ 4 giờ        | Versioning + lifecycle; on-premise replicate sang site thứ hai |
+| Kafka                    | ≤ 1 phút (mirror + retention)        | ≤ 1 giờ        | MirrorMaker 2 / cluster link                                   |
+| Temporal namespace       | ≤ 1 phút (DB snapshot)               | ≤ 1 giờ        | Namespace per env + backup                                     |
+| Keycloak realm           | ≤ 15 phút (DB backup)                | ≤ 2 giờ        | Export/import runbook                                          |
+| Vault / KMS              | Không mất (HSM hoặc unseal quorum)   | Không downtime | Shamir + replication                                           |
+| Audit log                | Không mất (append-only WORM)         | Không downtime | Kafka + MinIO WORM bucket                                      |
 
 ### 5.4 Error budget guardrails
 
@@ -174,14 +174,14 @@ Con số dưới đây là **SLO target ban đầu** (chưa phải SLA ký với
 
 ## 6. Retention theo plan
 
-| Plan | Hot storage | Warm storage | Cold / archive | Hard delete |
-|---|---|---|---|---|
-| Free | 90 ngày | 1 năm | 2 năm | Sau 3 năm không hoạt động + 30 ngày grace |
-| Pro | 1 năm | 3 năm | 5 năm | Sau 5 năm không hoạt động + 60 ngày grace |
-| Enterprise | 3 năm | 7 năm | 10 năm (tùy hợp đồng) | Theo hợp đồng + legal hold |
-| Audit log | 1 năm hot | 5 năm warm | 7 năm cold (immutable) | Chỉ khi hết legal hold |
-| DNA raw | Mã hóa envelope; KHÔNG cold | 7 năm (consent kéo dài) | Không archive | Khi consent thu hồi + retention |
-| Media | 1 năm hot | 5 năm warm | Theo plan | Cùng Person xóa mềm |
+| Plan       | Hot storage                 | Warm storage            | Cold / archive         | Hard delete                               |
+| ---------- | --------------------------- | ----------------------- | ---------------------- | ----------------------------------------- |
+| Free       | 90 ngày                     | 1 năm                   | 2 năm                  | Sau 3 năm không hoạt động + 30 ngày grace |
+| Pro        | 1 năm                       | 3 năm                   | 5 năm                  | Sau 5 năm không hoạt động + 60 ngày grace |
+| Enterprise | 3 năm                       | 7 năm                   | 10 năm (tùy hợp đồng)  | Theo hợp đồng + legal hold                |
+| Audit log  | 1 năm hot                   | 5 năm warm              | 7 năm cold (immutable) | Chỉ khi hết legal hold                    |
+| DNA raw    | Mã hóa envelope; KHÔNG cold | 7 năm (consent kéo dài) | Không archive          | Khi consent thu hồi + retention           |
+| Media      | 1 năm hot                   | 5 năm warm              | Theo plan              | Cùng Person xóa mềm                       |
 
 - Mọi retention policy chạy qua Temporal scheduled workflow; mỗi lần chạy phải tạo `deletion_evidence` không chứa nội dung đã xóa (requirements §6.5).
 - Backups giữ tối thiểu 30 ngày local + 90 ngày offsite; mã hóa envelope với key từ Vault/KMS.
@@ -189,13 +189,13 @@ Con số dưới đây là **SLO target ban đầu** (chưa phải SLA ký với
 
 ## 7. Data residency
 
-| Region | Plan | Residency yêu cầu | Giải thích |
-|---|---|---|---|
-| EU (Frankfurt, Paris) | Pro / Enterprise | Dữ liệu PII/DNA không rời EU | Keycloak, Postgres, MinIO, Kafka đặt trong region EU |
-| US (Virginia, Oregon) | Pro / Enterprise | Dữ liệu PII/DNA không rời US | Tương tự EU |
-| APAC (Singapore, Tokyo) | Pro / Enterprise | Residency theo jurisdiction KL/PIPL/JP | Đặt region theo tenant onboarding |
-| On-premise | Enterprise | Không rời site khách hàng | Toàn bộ stack chạy nội bộ |
-| Cross-region fallback | N/A | Disaster recovery DR site **cùng jurisdiction** | Không replicate PII/DNA ra ngoài region chính |
+| Region                  | Plan             | Residency yêu cầu                               | Giải thích                                           |
+| ----------------------- | ---------------- | ----------------------------------------------- | ---------------------------------------------------- |
+| EU (Frankfurt, Paris)   | Pro / Enterprise | Dữ liệu PII/DNA không rời EU                    | Keycloak, Postgres, MinIO, Kafka đặt trong region EU |
+| US (Virginia, Oregon)   | Pro / Enterprise | Dữ liệu PII/DNA không rời US                    | Tương tự EU                                          |
+| APAC (Singapore, Tokyo) | Pro / Enterprise | Residency theo jurisdiction KL/PIPL/JP          | Đặt region theo tenant onboarding                    |
+| On-premise              | Enterprise       | Không rời site khách hàng                       | Toàn bộ stack chạy nội bộ                            |
+| Cross-region fallback   | N/A              | Disaster recovery DR site **cùng jurisdiction** | Không replicate PII/DNA ra ngoài region chính        |
 
 - Tenant khi tạo phải chọn `data_residency = {EU, US, APAC, ON_PREMISE}`; trường này không thể đổi sau đó (chỉ có thể migrate qua export/import bundle có audit).
 - Backup offsite phải cùng jurisdiction; DR test hàng quý.
@@ -222,34 +222,34 @@ Mỗi service phải ship bảng capacity trong `runbook/<service>.md` (E0.6 own
 
 ## 9. Benchmark plan
 
-| Test | Mục tiêu | Tool | Threshold |
-|---|---|---|---|
-| API read p95 | NFR2 | k6 | < 300 ms @ 5K RPS |
-| API write p95 | NFR2 | k6 | < 600 ms @ 300 RPS |
-| Tree view TTI | NFR2 | Playwright + synthetic 10K | < 2 500 ms p75 |
-| Search p95 | NFR2 | k6 + OpenSearch stub | < 1 000 ms @ 200 RPS |
-| GEDCOM import | E2.3 | Gatling + 25 MB bundle | < 60 s end-to-end |
-| Publish tree | E2.4 | Playwright + tree 10K | < 90 s end-to-end |
-| DNA match | E2.5 | Temporal test env | < 60 s p95 Y1, 15 s p95 Y5 |
-| Tenant isolation | E3.4 | Negative test suite | 0 escape |
-| Restore drill | NFR3 | Quarterly | RPO/RTO < target |
+| Test             | Mục tiêu | Tool                       | Threshold                  |
+| ---------------- | -------- | -------------------------- | -------------------------- |
+| API read p95     | NFR2     | k6                         | < 300 ms @ 5K RPS          |
+| API write p95    | NFR2     | k6                         | < 600 ms @ 300 RPS         |
+| Tree view TTI    | NFR2     | Playwright + synthetic 10K | < 2 500 ms p75             |
+| Search p95       | NFR2     | k6 + OpenSearch stub       | < 1 000 ms @ 200 RPS       |
+| GEDCOM import    | E2.3     | Gatling + 25 MB bundle     | < 60 s end-to-end          |
+| Publish tree     | E2.4     | Playwright + tree 10K      | < 90 s end-to-end          |
+| DNA match        | E2.5     | Temporal test env          | < 60 s p95 Y1, 15 s p95 Y5 |
+| Tenant isolation | E3.4     | Negative test suite        | 0 escape                   |
+| Restore drill    | NFR3     | Quarterly                  | RPO/RTO < target           |
 
 Mọi benchmark chạy trên infrastructure gần production (node type, network, storage) và trên dataset §3. Kết quả phải được lưu tại `.kiro/specs/genealogy-platform/evidence/benchmark/`.
 
 ## 10. Capacity decision table (DRAFT)
 
-| Resource | Y1 | Y3 | Y5 | Lý do |
-|---|---|---|---|---|
-| BFF replica | 6 | 24 | 72 | 5K RPS / replica tham chiếu |
-| Domain service replica | 4 / service | 12 / service | 32 / service | Stateless, autoscale |
-| PostgreSQL instance | 1 primary + 2 read replica (8 vCPU/32 GB) | 1 primary + 4 read replica (16 vCPU/64 GB) | 1 primary + 6 read replica (32 vCPU/128 GB) + Citus shard | RPS + storage |
-| Kafka broker | 3 broker KRaft 100 GB | 6 broker KRaft 500 GB | 12 broker KRaft 2 TB | 15K msg/s + retention |
-| MinIO / S3 | 4 node 10 TB NVMe | 12 node 10 TB NVMe | 24 node 10 TB NVMe | Replication 3 |
-| Redis/Valkey | 3 node 8 GB | 6 node 32 GB | 12 node 64 GB | Session + cache |
-| Temporal worker | 8 | 24 | 64 | Workflow concurrency |
-| Gotenberg + media worker | 6 | 16 | 40 | Render job |
-| Keycloak | 3 node RAFT 8 vCPU | 6 node 16 vCPU | 12 node 32 vCPU | Realm + cache |
-| OpenFGA | 1 cluster 3 node | 3 cluster 3 node | 9 cluster 3 node | Tuple scale |
+| Resource                 | Y1                                        | Y3                                         | Y5                                                        | Lý do                       |
+| ------------------------ | ----------------------------------------- | ------------------------------------------ | --------------------------------------------------------- | --------------------------- |
+| BFF replica              | 6                                         | 24                                         | 72                                                        | 5K RPS / replica tham chiếu |
+| Domain service replica   | 4 / service                               | 12 / service                               | 32 / service                                              | Stateless, autoscale        |
+| PostgreSQL instance      | 1 primary + 2 read replica (8 vCPU/32 GB) | 1 primary + 4 read replica (16 vCPU/64 GB) | 1 primary + 6 read replica (32 vCPU/128 GB) + Citus shard | RPS + storage               |
+| Kafka broker             | 3 broker KRaft 100 GB                     | 6 broker KRaft 500 GB                      | 12 broker KRaft 2 TB                                      | 15K msg/s + retention       |
+| MinIO / S3               | 4 node 10 TB NVMe                         | 12 node 10 TB NVMe                         | 24 node 10 TB NVMe                                        | Replication 3               |
+| Redis/Valkey             | 3 node 8 GB                               | 6 node 32 GB                               | 12 node 64 GB                                             | Session + cache             |
+| Temporal worker          | 8                                         | 24                                         | 64                                                        | Workflow concurrency        |
+| Gotenberg + media worker | 6                                         | 16                                         | 40                                                        | Render job                  |
+| Keycloak                 | 3 node RAFT 8 vCPU                        | 6 node 16 vCPU                             | 12 node 32 vCPU                                           | Realm + cache               |
+| OpenFGA                  | 1 cluster 3 node                          | 3 cluster 3 node                           | 9 cluster 3 node                                          | Tuple scale                 |
 
 Con số trên dùng để dựng Helm values mặc định; E0.5 ADR sẽ chốt sizing tool cụ thể (KEDA / HPA / cluster-autoscaler).
 

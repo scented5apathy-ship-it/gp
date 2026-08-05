@@ -170,9 +170,9 @@ Nội dung chuẩn:
 
 ## Validation
 
-| Command/check | Result | Evidence |
-|---|---|---|
-| `<command>` | PASS | <summary/report path> |
+| Command/check | Result | Evidence              |
+| ------------- | ------ | --------------------- |
+| `<command>`   | PASS   | <summary/report path> |
 
 ## Security and privacy
 

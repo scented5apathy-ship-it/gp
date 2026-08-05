@@ -2,14 +2,27 @@
   "name": "@genealogy/api-client",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "main": "./src/index.ts",
   "scripts": {
-    "lint": "echo 'lint placeholder — wired by E1.2'",
-    "typecheck": "echo 'typecheck placeholder'",
-    "test": "echo 'test placeholder'",
-    "build": "echo 'build placeholder'"
+    "lint": "eslint --max-warnings=0 --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,js,mjs,cjs,mts,cts}\"",
+    "lint:eslint": "eslint --max-warnings=0 --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,js,mjs,cjs,mts,cts}\"",
+    "lint:yaml": "node ../../scripts/lint-yaml.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test src/**/*.test.ts",
+    "test:unit": "node --test src/**/*.test.ts",
+    "test:integration": "echo 'no integration tests for api-client package yet'",
+    "test:contract": "echo 'no contract tests for api-client package yet'",
+    "test:e2e": "echo 'no e2e tests for api-client package yet'",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "format": "prettier --write --log-level=warn --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,js,mjs,cjs,mts,cts,json}\" \"package.json\"",
+    "format:check": "prettier --check --log-level=warn --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,js,mjs,cjs,mts,cts,json}\" \"package.json\"",
+    "clean": "rimraf node_modules dist .turbo coverage"
   },
   "devDependencies": {
-    "typescript": "5.6.2"
+    "typescript": "5.6.2",
+    "eslint": "9.13.0",
+    "prettier": "3.3.3",
+    "rimraf": "6.0.1"
   }
 }

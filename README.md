@@ -10,18 +10,18 @@ The canonical specification is in
 
 ## Stack
 
-| Layer | Choice |
-|---|---|
-| Frontend | Next.js 15 + TypeScript 5.6, Tailwind + shadcn/ui |
-| Backend | Java 21 + Spring Boot 3.3 + jOOQ + Flyway |
-| Edge | Kong Gateway (OSS) behind CDN/WAF |
-| Internal API | gRPC + Kafka + Apicurio Registry |
-| Identity | Keycloak (OIDC) + OpenFGA + ABAC |
-| Workflow | Temporal |
-| Data | PostgreSQL 16, S3 / MinIO, Valkey |
-| Orchestration | Kubernetes + Helm + Argo CD + Argo Rollouts |
-| Observability | OpenTelemetry → Grafana stack |
-| Repo | pnpm + Turborepo + Gradle (this repo) |
+| Layer         | Choice                                            |
+| ------------- | ------------------------------------------------- |
+| Frontend      | Next.js 15 + TypeScript 5.6, Tailwind + shadcn/ui |
+| Backend       | Java 21 + Spring Boot 3.3 + jOOQ + Flyway         |
+| Edge          | Kong Gateway (OSS) behind CDN/WAF                 |
+| Internal API  | gRPC + Kafka + Apicurio Registry                  |
+| Identity      | Keycloak (OIDC) + OpenFGA + ABAC                  |
+| Workflow      | Temporal                                          |
+| Data          | PostgreSQL 16, S3 / MinIO, Valkey                 |
+| Orchestration | Kubernetes + Helm + Argo CD + Argo Rollouts       |
+| Observability | OpenTelemetry → Grafana stack                     |
+| Repo          | pnpm + Turborepo + Gradle (this repo)             |
 
 Versions pinned in [`gradle/libs.versions.toml`](gradle/libs.versions.toml)
 per ADR-E0.5-01.
