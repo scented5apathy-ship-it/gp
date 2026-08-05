@@ -68,10 +68,12 @@ Every change must respect:
 
 - [ ] `pnpm format:check` passes
 - [ ] `pnpm lint` passes (incl. `lint:eslint`, `lint:yaml`,
-      `lint:openapi`, `lint:markdown`, `lint:ownership`,
-      `lint:generated`)
+      `lint:openapi`, `lint:protobuf`, `lint:events`,
+      `lint:markdown`, `lint:ownership`, `lint:generated`)
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test:unit` passes
+- [ ] `pnpm test:contract` passes (Node-side contract tests +
+      Gradle `ContractInvariantsTest`)
 - [ ] `pnpm check:java` passes (Checkstyle + tests)
 - [ ] `pnpm check:boundary` passes (cross-service boundary)
 - [ ] `pnpm check:gradle:lock` passes (every `lockAll` subproject has

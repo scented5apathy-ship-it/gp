@@ -1,0 +1,14 @@
+version: v1
+lint:
+  use:
+    - DEFAULT
+  except:
+    - PACKAGE_VERSION_SUFFIX
+  enum:
+    - VALUE
+breaking:
+  use:
+    - FILE
+modules:
+  - path: .
+    name: buf.build/genealogy/platform

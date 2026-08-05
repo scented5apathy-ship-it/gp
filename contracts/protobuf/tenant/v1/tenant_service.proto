@@ -1,0 +1,171 @@
+// Contracts — tenant v1
+//
+// Tenant + membership lifecycle. Backing service:
+// `services/tenant-service`.
+syntax = "proto3";
+
+package com.genealogy.platform.tenant.v1;
+
+import "com/genealogy/platform/common/v1/context.proto";
+import "com/genealogy/platform/common/v1/page.proto";
+import "com/genealogy/platform/common/v1/error.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.tenant.v1";
+
+service TenantService {
+  rpc CreateTenant(CreateTenantRequest) returns (Tenant);
+  rpc GetTenant(GetTenantRequest) returns (Tenant);
+  rpc UpdateTenant(UpdateTenantRequest) returns (Tenant);
+  rpc DeleteTenant(DeleteTenantRequest) returns (DeleteTenantResponse);
+  rpc ListTenantsForCurrentUser(ListTenantsRequest) returns (TenantPage);
+
+  rpc InviteMember(InviteMemberRequest) returns (Invitation);
+  rpc ListMemberships(ListMembershipsRequest) returns (MembershipPage);
+  rpc RevokeMembership(RevokeMembershipRequest) returns (Membership);
+}
+
+message Tenant {
+  string tenant_id = 1;
+  string slug = 2;
+  string display_name = 3;
+  TenantPlan plan = 4;
+  TenantStatus status = 5;
+  string default_locale = 6;
+  string default_timezone = 7;
+  Calendar default_calendar = 8;
+  string etag = 9;
+  string created_at = 10;
+
+  reserved 100 to 999;
+  reserved "metadata";
+}
+
+enum TenantPlan {
+  TENANT_PLAN_UNSPECIFIED = 0;
+  FREE = 1;
+  FAMILY = 2;
+  PRO = 3;
+  ENTERPRISE = 4;
+}
+
+enum TenantStatus {
+  TENANT_STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  SUSPENDED = 2;
+  DELETED = 3;
+}
+
+enum Calendar {
+  CALENDAR_UNSPECIFIED = 0;
+  GREGORIAN = 1;
+  HEBREW = 2;
+  HIJRI = 3;
+  ETHIOPIAN = 4;
+  CUSTOM = 5;
+}
+
+message CreateTenantRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string slug = 2;
+  string display_name = 3;
+  string default_locale = 4;
+  string default_timezone = 5;
+  Calendar default_calendar = 6;
+}
+
+message GetTenantRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tenant_id = 2;
+}
+
+message UpdateTenantRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tenant_id = 2;
+  string etag = 3;
+  string display_name = 4;
+  string default_locale = 5;
+  string default_timezone = 6;
+}
+
+message DeleteTenantRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tenant_id = 2;
+  string etag = 3;
+}
+
+message DeleteTenantResponse {
+  string tenant_id = 1;
+  string scheduled_at = 2;
+}
+
+message ListTenantsRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string cursor = 2;
+  int32 page_size = 3;
+}
+
+message TenantPage {
+  repeated Tenant items = 1;
+  com.genealogy.platform.common.v1.Page page = 2;
+}
+
+message Membership {
+  string membership_id = 1;
+  string tenant_id = 2;
+  string user_id = 3;
+  MembershipRole role = 4;
+  MembershipStatus status = 5;
+  string invited_at = 6;
+  string joined_at = 7;
+}
+
+enum MembershipRole {
+  MEMBERSHIP_ROLE_UNSPECIFIED = 0;
+  OWNER = 1;
+  ADMIN = 2;
+  MEMBER = 3;
+  AUDITOR = 4;
+  BILLING_ADMIN = 5;
+}
+
+enum MembershipStatus {
+  MEMBERSHIP_STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  INVITED = 2;
+  SUSPENDED = 3;
+  REVOKED = 4;
+}
+
+message InviteMemberRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tenant_id = 2;
+  string email = 3;
+  MembershipRole role = 4;
+}
+
+message Invitation {
+  string invitation_id = 1;
+  string tenant_id = 2;
+  string email = 3;
+  MembershipRole role = 4;
+  string expires_at = 5;
+}
+
+message ListMembershipsRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tenant_id = 2;
+  string cursor = 3;
+  int32 page_size = 4;
+}
+
+message MembershipPage {
+  repeated Membership items = 1;
+  com.genealogy.platform.common.v1.Page page = 2;
+}
+
+message RevokeMembershipRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tenant_id = 2;
+  string membership_id = 3;
+}

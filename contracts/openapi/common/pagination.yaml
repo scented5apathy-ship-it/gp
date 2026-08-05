@@ -1,0 +1,42 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — Cursor Pagination Envelope
+  version: 1.0.0
+  description: |
+    Shared cursor-pagination envelope. Lists expose `?cursor=` +
+    `?pageSize=` and respond with `Page<T>`. Server clamps `pageSize`
+    to the per-resource maximum. `nextCursor` is opaque and
+    must not be decoded client-side.
+  x-contract-major: 1
+paths: {}
+components:
+  schemas:
+    Page:
+      type: object
+      required:
+        - items
+      description: |
+        Generic cursor page. Each list endpoint declares its own
+        `PageOf<Thing>` alias that replaces `items` with a concrete
+        type.
+      properties:
+        items:
+          type: array
+          description: Page items.
+          items:
+            type: object
+            additionalProperties: true
+        nextCursor:
+          type: string
+          description: |
+            Opaque cursor for the next page. Absent when the caller
+            has reached the end of the result set.
+          maxLength: 1024
+        total:
+          type: integer
+          format: int64
+          description: |
+            Optional total count. Only present when the underlying
+            store can compute it cheaply; absence is not a contract
+            violation.
+          minimum: 0

@@ -1,0 +1,22 @@
+// Contracts — common v1 — cursor pagination
+//
+// Shared by every list RPC. `next_cursor` is opaque and never decoded
+// on the client.
+syntax = "proto3";
+
+package com.genealogy.platform.common.v1;
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.common.v1";
+
+// Cursor page envelope. Domain RPCs wrap their item type in a
+// dedicated `XxxPage` message that contains exactly one
+// `repeated Xxx items = 1;` field plus the shared `Page` fields.
+message Page {
+  // Opaque cursor for the next page. Empty when there are no more
+  // items.
+  string next_cursor = 1;
+  // Optional total. Only present when the underlying store can
+  // compute it cheaply. Absence is not a contract violation.
+  int64 total = 2;
+}

@@ -1,0 +1,7 @@
+{
+  "type": "enum",
+  "name": "Visibility",
+  "namespace": "com.genealogy.platform.events.shared.v1",
+  "doc": "Mirror of the gRPC Visibility enum used in tree-related events. Compatibility policy = FULL: removing a symbol requires bumping to v2.",
+  "symbols": ["PRIVATE", "UNLISTED", "PUBLIC"]
+}

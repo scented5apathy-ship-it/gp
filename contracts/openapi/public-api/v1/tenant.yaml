@@ -1,0 +1,385 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — Tenant API
+  version: 1.0.0
+  description: |
+    Tenant onboarding, membership and lifecycle. Backed by
+    `services/tenant-service`. Mounted at `/api/v1/tenants`.
+  x-contract-major: 1
+  contact:
+    name: Platform Identity
+    url: https://github.com/genealogy/platform
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.genealogy-platform.com/api/v1
+    description: Production
+  - url: https://api.staging.genealogy-platform.com/api/v1
+    description: Staging
+tags:
+  - name: Tenant
+    description: Tenant lifecycle (create, suspend, restore, delete).
+  - name: Membership
+    description: Per-tenant membership and invitation lifecycle.
+paths:
+  /tenants:
+    post:
+      tags: [Tenant]
+      operationId: createTenant
+      summary: Create a tenant
+      description: |
+        Creates a new tenant. The caller becomes the `OWNER` of the
+        new tenant. Idempotent via `Idempotency-Key`.
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Tenant created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+            X-Correlation-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "401":
+          description: Missing or invalid credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "409":
+          description: Idempotency-Key conflict or slug collision.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    get:
+      tags: [Tenant]
+      operationId: listTenantsForCurrentUser
+      summary: List tenants the caller belongs to
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/Cursor"
+        - $ref: "../../common/headers.yaml#/components/parameters/PageSize"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Tenants the caller is a member of.
+          headers:
+            X-Correlation-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantPage"
+        "401":
+          description: Missing or invalid credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /tenants/{tenantId}:
+    parameters:
+      - name: tenantId
+        in: path
+        required: true
+        description: Tenant pseudonymous id (opaque, server-issued).
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9_\\-]{8,64}$"
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    get:
+      tags: [Tenant]
+      operationId: getTenant
+      summary: Retrieve a tenant by id
+      responses:
+        "200":
+          description: Tenant detail.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          description: Tenant not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    patch:
+      tags: [Tenant]
+      operationId: updateTenant
+      summary: Update tenant metadata
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTenantRequest"
+      responses:
+        "200":
+          description: Updated tenant.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "412":
+          description: ETag mismatch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    delete:
+      tags: [Tenant]
+      operationId: deleteTenant
+      summary: Soft-delete a tenant
+      description: |
+        Marks the tenant for deletion. Hard delete + GDPR purge run
+        asynchronously per the retention policy in `design.md` §13.
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Deletion scheduled.
+        "412":
+          description: ETag mismatch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /tenants/{tenantId}/memberships:
+    parameters:
+      - name: tenantId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    post:
+      tags: [Membership]
+      operationId: inviteMember
+      summary: Invite a user to the tenant
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteMemberRequest"
+      responses:
+        "202":
+          description: Invitation queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invitation"
+        "409":
+          description: Already a member or pending invitation exists.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    get:
+      tags: [Membership]
+      operationId: listMemberships
+      summary: List tenant memberships
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/Cursor"
+        - $ref: "../../common/headers.yaml#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Tenant memberships.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MembershipPage"
+components:
+  schemas:
+    Tenant:
+      type: object
+      required:
+        - tenantId
+        - slug
+        - displayName
+        - plan
+        - status
+        - createdAt
+        - etag
+      properties:
+        tenantId:
+          type: string
+          description: Opaque server-issued tenant id.
+          pattern: "^[A-Za-z0-9_\\-]{8,64}$"
+        slug:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9\\-]{1,62}[a-z0-9]$"
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        plan:
+          type: string
+          enum: [FREE, FAMILY, PRO, ENTERPRISE]
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, DELETED]
+        defaultLocale:
+          type: string
+          pattern: "^[a-z]{2,3}(-[A-Z]{2})?$"
+        defaultTimezone:
+          type: string
+          description: IANA timezone id.
+          example: Europe/Helsinki
+        defaultCalendar:
+          type: string
+          enum: [GREGORIAN, HEBREW, HIJRI, ETHIOPIAN, CUSTOM]
+        createdAt:
+          type: string
+          format: date-time
+        etag:
+          type: string
+          pattern: '^"[^"]+"$'
+    CreateTenantRequest:
+      type: object
+      required:
+        - slug
+        - displayName
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9\\-]{1,62}[a-z0-9]$"
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        defaultLocale:
+          type: string
+        defaultTimezone:
+          type: string
+        defaultCalendar:
+          type: string
+          enum: [GREGORIAN, HEBREW, HIJRI, ETHIOPIAN, CUSTOM]
+    UpdateTenantRequest:
+      type: object
+      required:
+        - displayName
+      properties:
+        displayName:
+          type: string
+        defaultLocale:
+          type: string
+        defaultTimezone:
+          type: string
+    TenantPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tenant"
+        nextCursor:
+          type: string
+    Membership:
+      type: object
+      required:
+        - membershipId
+        - tenantId
+        - userId
+        - role
+        - status
+      properties:
+        membershipId:
+          type: string
+        tenantId:
+          type: string
+        userId:
+          type: string
+        role:
+          type: string
+          enum: [OWNER, ADMIN, MEMBER, AUDITOR, BILLING_ADMIN]
+        status:
+          type: string
+          enum: [ACTIVE, INVITED, SUSPENDED, REVOKED]
+        invitedAt:
+          type: string
+          format: date-time
+        joinedAt:
+          type: string
+          format: date-time
+    InviteMemberRequest:
+      type: object
+      required:
+        - email
+        - role
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [OWNER, ADMIN, MEMBER, AUDITOR, BILLING_ADMIN]
+        scope:
+          type: object
+          additionalProperties: true
+    Invitation:
+      type: object
+      required:
+        - invitationId
+        - tenantId
+        - email
+        - role
+        - expiresAt
+      properties:
+        invitationId:
+          type: string
+        tenantId:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [OWNER, ADMIN, MEMBER, AUDITOR, BILLING_ADMIN]
+        expiresAt:
+          type: string
+          format: date-time
+    MembershipPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Membership"
+        nextCursor:
+          type: string

@@ -1,0 +1,96 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — Shared REST Headers
+  version: 1.0.0
+  description: |
+    Shared header / parameter definitions referenced from every
+    public-api and BFF OpenAPI document. Centralised here so
+    RFC 9457, cursor pagination, optimistic concurrency, idempotency
+    and correlation rules are described exactly once.
+  x-contract-major: 1
+paths: {}
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Opaque client-generated key (UUID v4 recommended). Required on
+        every non-GET mutation. The server caches the response for the
+        configured idempotency window (24h default) and replays it on
+        retry. See draft-ietf-httpapi-idempotency-key.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: "^[A-Za-z0-9_\\-]+$"
+      example: 9f0b1d63-2c8e-4d6f-9b48-a5d6f0c4f0b1
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        ETag of the resource being mutated. Required on every mutation
+        of a versioned aggregate. Returns 412 Precondition Failed when
+        the stored ETag does not match.
+      schema:
+        type: string
+        pattern: '^"[^"]+"$'
+      example: '"7f3a9b21"'
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: |
+        W3C `traceparent`-compatible correlation id. Propagated
+        through gRPC metadata (`x-correlation-id`) and Kafka event
+        envelopes (`traceId`).
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9_\\-\\.]+$"
+      example: 4bf92f3577b34da6a3ce929d0e0e4736
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Opaque pagination cursor returned by the previous response in
+        `Page.nextCursor`. Never decode or interpret client-side.
+      schema:
+        type: string
+        maxLength: 1024
+      example: eyJ0IjoxNzA5MDk5MjAwLCJpIjoiM2Y5NTM0In0
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      description: Maximum number of items per page. Server may clamp.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+  headers:
+    ETagHeader:
+      description: |
+        Strong ETag per RFC 9110. Clients MUST send it back as
+        `If-Match` on every mutation.
+      schema:
+        type: string
+        pattern: '^"[^"]+"$'
+      example: '"7f3a9b21"'
+    RateLimitLimit:
+      description: Maximum requests allowed in the current window.
+      schema:
+        type: integer
+    RateLimitRemaining:
+      description: Remaining requests in the current window.
+      schema:
+        type: integer
+    RateLimitReset:
+      description: Seconds until the current window resets (Unix time).
+      schema:
+        type: integer

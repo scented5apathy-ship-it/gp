@@ -1,0 +1,33 @@
+{
+  "type": "record",
+  "name": "PersonCreated",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a new person aggregate is created in a tree. Compatibility policy = BACKWARD per ADR-E0.5-08. Forbidden payload fields per design.md §7.3: dnaRaw, rawGenotype, dna, kit, rawDna, raw_dna.",
+  "fields": [
+    {
+      "name": "personId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "primaryName",
+      "type": "string"
+    },
+    {
+      "name": "livingStatus",
+      "type": {
+        "type": "enum",
+        "name": "LivingStatus",
+        "symbols": ["LIVING", "DECEASED", "UNKNOWN", "INFERRED_LIVING"]
+      }
+    },
+    {
+      "name": "createdAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

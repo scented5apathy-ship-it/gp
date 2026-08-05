@@ -1,0 +1,108 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — BFF Session API
+  version: 1.0.0
+  description: |
+    Internal BFF session endpoints. Not exposed to the public
+    internet; Kong terminates public traffic and the BFF is only
+    reachable from the same cluster.
+  x-contract-major: 1
+  contact:
+    name: Web
+    url: https://github.com/genealogy/platform
+  license:
+    name: Proprietary
+servers:
+  - url: https://bff.internal/api/v1
+    description: BFF internal
+tags:
+  - name: Session
+paths:
+  /session:
+    get:
+      tags: [Session]
+      operationId: getSession
+      summary: Read the current BFF session
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Current session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          description: Not authenticated.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    delete:
+      tags: [Session]
+      operationId: endSession
+      summary: End the current BFF session
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Session ended.
+  /session/tenants/{tenantId}/select:
+    parameters:
+      - name: tenantId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    post:
+      tags: [Session]
+      operationId: selectTenant
+      summary: Select a tenant as the active context
+      description: |
+        Validates that the caller is a member of the tenant before
+        persisting it as the active tenant selection. Returns 403
+        otherwise. The BFF never trusts a tenant id supplied via
+        query string.
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      x-versioned-resource: false
+      responses:
+        "204":
+          description: Tenant selected.
+        "403":
+          description: Caller is not a member of the tenant.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+components:
+  schemas:
+    Session:
+      type: object
+      required:
+        - userId
+        - tenants
+      properties:
+        userId:
+          type: string
+        tenants:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionTenant"
+        activeTenantId:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    SessionTenant:
+      type: object
+      required:
+        - tenantId
+        - role
+      properties:
+        tenantId:
+          type: string
+        role:
+          type: string
+          enum: [OWNER, ADMIN, MEMBER, AUDITOR, BILLING_ADMIN]

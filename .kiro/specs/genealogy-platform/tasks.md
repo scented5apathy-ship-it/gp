@@ -80,7 +80,7 @@ _Requirements: R1–R18, NFR1–NFR8_
   - Tạo root commands cho unit, integration, contract, E2E và build.
   - Thêm ownership/path rules và generated-code policy.
 
-- [ ] E1.3 Thiết lập contract-first
+- [x] E1.3 Thiết lập contract-first
 
   - Tạo OpenAPI versioned, Protobuf packages, Kafka envelope và schema modules.
   - Tích hợp Apicurio compatibility; lint/breaking checks cho REST/gRPC/event.

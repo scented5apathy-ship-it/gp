@@ -1,0 +1,43 @@
+// Contracts — common v1 — error mapping
+//
+// Standard gRPC error mapping for the public REST surface. Mirrors
+// the RFC 9457 `Problem` schema in `contracts/openapi/common/problem-details.yaml`.
+syntax = "proto3";
+
+package com.genealogy.platform.common.v1;
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.common.v1";
+
+// Stable machine-readable error codes. Add new entries; never
+// repurpose or remove an existing code.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  INVALID_ARGUMENT = 1;
+  UNAUTHENTICATED = 2;
+  PERMISSION_DENIED = 3;
+  NOT_FOUND = 4;
+  CONFLICT = 5;
+  PRECONDITION_FAILED = 6;
+  RATE_LIMITED = 7;
+  INTERNAL = 8;
+  UNAVAILABLE = 9;
+  DEADLINE_EXCEEDED = 10;
+}
+
+// Wire shape of an error returned by every RPC. The platform
+// interceptor converts this into a `application/problem+json` body
+// for the REST surface.
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+  // Stable URI identifying the problem type, mirrors RFC 9457
+  // `type`. Optional; empty means `about:blank`.
+  string type_uri = 3;
+  // Echo of the correlation id. Always populated when the request
+  // carried one (or after the interceptor generated one).
+  string correlation_id = 4;
+  // Optional retry hint in seconds, surfaced as RFC 9457
+  // `retryAfterSeconds` and the `Retry-After` HTTP header.
+  int32 retry_after_seconds = 5;
+}

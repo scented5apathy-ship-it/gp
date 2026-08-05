@@ -1,0 +1,230 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — Person API
+  version: 1.0.0
+  description: |
+    Person aggregate. Backed by `services/genealogy-service`. Mounted
+    at `/api/v1/persons`. Optimistic concurrency via ETag + If-Match.
+  x-contract-major: 1
+  contact:
+    name: Genealogy
+    url: https://github.com/genealogy/platform
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.genealogy-platform.com/api/v1
+    description: Production
+tags:
+  - name: Person
+paths:
+  /trees/{treeId}/persons:
+    parameters:
+      - name: treeId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    post:
+      tags: [Person]
+      operationId: createPerson
+      summary: Create a person in a tree
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePersonRequest"
+      responses:
+        "201":
+          description: Person created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+    get:
+      tags: [Person]
+      operationId: listPersons
+      summary: List persons in a tree
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/Cursor"
+        - $ref: "../../common/headers.yaml#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Persons.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonPage"
+  /persons/{personId}:
+    parameters:
+      - name: personId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    get:
+      tags: [Person]
+      operationId: getPerson
+      summary: Retrieve a person
+      responses:
+        "200":
+          description: Person detail.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+        "404":
+          description: Person not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    patch:
+      tags: [Person]
+      operationId: updatePerson
+      summary: Update a person
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePersonRequest"
+      responses:
+        "200":
+          description: Updated person.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+        "412":
+          description: ETag mismatch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+components:
+  schemas:
+    LivingStatus:
+      type: string
+      enum: [LIVING, DECEASED, UNKNOWN, INFERRED_LIVING]
+    PersonName:
+      type: object
+      required:
+        - script
+        - full
+      properties:
+        script:
+          type: string
+          description: ISO 15924 script tag, e.g. `Latn`, `Cyrl`.
+        full:
+          type: string
+        given:
+          type: string
+        surname:
+          type: string
+        prefix:
+          type: string
+        suffix:
+          type: string
+        alias:
+          type: boolean
+        privacyLevel:
+          type: string
+          enum: [PUBLIC, REGISTERED, PRIVATE]
+    Person:
+      type: object
+      required:
+        - personId
+        - treeId
+        - livingStatus
+        - names
+        - etag
+      properties:
+        personId:
+          type: string
+        treeId:
+          type: string
+        names:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PersonName"
+        livingStatus:
+          $ref: "#/components/schemas/LivingStatus"
+        pronoun:
+          type: string
+          maxLength: 32
+        biography:
+          type: string
+          maxLength: 4000
+        externalIdentifiers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExternalIdentifier"
+        etag:
+          type: string
+    ExternalIdentifier:
+      type: object
+      required:
+        - authority
+        - value
+      properties:
+        authority:
+          type: string
+          description: Provider-neutral authority reference (e.g. `wikidata:Q5`).
+        value:
+          type: string
+    CreatePersonRequest:
+      type: object
+      required:
+        - names
+      properties:
+        names:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PersonName"
+        livingStatus:
+          $ref: "#/components/schemas/LivingStatus"
+        pronoun:
+          type: string
+    UpdatePersonRequest:
+      type: object
+      properties:
+        names:
+          type: array
+          items:
+            $ref: "#/components/schemas/PersonName"
+        livingStatus:
+          $ref: "#/components/schemas/LivingStatus"
+        pronoun:
+          type: string
+        biography:
+          type: string
+    PersonPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Person"
+        nextCursor:
+          type: string

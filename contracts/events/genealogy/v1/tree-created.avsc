@@ -1,0 +1,37 @@
+{
+  "type": "record",
+  "name": "TreeCreated",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a new tree aggregate is created. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "slug",
+      "type": "string"
+    },
+    {
+      "name": "displayName",
+      "type": "string"
+    },
+    {
+      "name": "visibility",
+      "type": "com.genealogy.platform.events.shared.v1.Visibility"
+    },
+    {
+      "name": "defaultLocale",
+      "type": "string"
+    },
+    {
+      "name": "defaultTimezone",
+      "type": "string"
+    },
+    {
+      "name": "createdAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

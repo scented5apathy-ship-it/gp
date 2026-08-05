@@ -1,0 +1,62 @@
+// Contracts — search v1
+//
+// Authorized search over the search projection. Authorization + ABAC
+// is enforced server-side; the request never carries tenant / privacy
+// hints — those come from `Context`.
+syntax = "proto3";
+
+package com.genealogy.platform.search.v1;
+
+import "com/genealogy/platform/common/v1/context.proto";
+import "com/genealogy/platform/common/v1/page.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.search.v1";
+
+service SearchService {
+  rpc SearchPersons(SearchPersonsRequest) returns (SearchPersonsResponse);
+  rpc SearchTrees(SearchTreesRequest) returns (SearchTreesResponse);
+}
+
+message SearchPersonsRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string query = 2;
+  string cursor = 3;
+  int32 page_size = 4;
+  // Optional living-status filter. When omitted the server applies the
+  // redaction policy in `design.md` §6.3 (living persons are hidden
+  // for unauthenticated callers).
+  string living_status_filter = 5;
+}
+
+message SearchPersonsResponse {
+  repeated PersonHit hits = 1;
+  com.genealogy.platform.common.v1.Page page = 2;
+}
+
+message PersonHit {
+  string person_id = 1;
+  string tree_id = 2;
+  string display_name = 3;
+  double score = 4;
+  // Only present when the search service already redacted the hit.
+  bool redacted = 5;
+}
+
+message SearchTreesRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string query = 2;
+  string cursor = 3;
+  int32 page_size = 4;
+}
+
+message SearchTreesResponse {
+  repeated TreeHit hits = 1;
+  com.genealogy.platform.common.v1.Page page = 2;
+}
+
+message TreeHit {
+  string tree_id = 1;
+  string display_name = 2;
+  double score = 3;
+}

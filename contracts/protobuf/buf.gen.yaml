@@ -1,0 +1,10 @@
+version: v1
+plugins:
+  - plugin: buf.build/protocolbuffers/java
+    out: ../../build/generated/sources/proto/main/java
+    opt:
+      - java_package=com.genealogy.platform
+  - plugin: buf.build/grpc/java
+    out: ../../build/generated/sources/proto/main/java
+    opt:
+      - java_package=com.genealogy.platform

@@ -1,0 +1,51 @@
+{
+  "type": "record",
+  "name": "EventEnvelope",
+  "namespace": "com.genealogy.platform.events.envelope.v1",
+  "doc": "Mandatory wire envelope for every Kafka event in the Genealogy Platform. Mirrors the JSON shape defined in design.md §7.3 and the Protobuf envelope contract in contracts/protobuf/.../envelope.proto (Avro per ADR-E0.5-08). Compatibility policy = BACKWARD: removing a field requires bumping to v2.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Opaque, server-issued event id. Format: UUID v4 string."
+    },
+    {
+      "name": "eventType",
+      "type": "string",
+      "doc": "Stable, dotted event-type identifier e.g. `genealogy.person.v1.updated`."
+    },
+    {
+      "name": "occurredAt",
+      "type": "string",
+      "logicalType": "timestamp-millis",
+      "doc": "RFC 3339 timestamp; millisecond precision."
+    },
+    {
+      "name": "tenantId",
+      "type": "string",
+      "doc": "Pseudonymous tenant id. Same shape as the REST `tenantId` and gRPC `Context.tenant_id`."
+    },
+    {
+      "name": "aggregateId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Aggregate the event mutates. Null for events that span aggregates."
+    },
+    {
+      "name": "aggregateVersion",
+      "type": ["null", "long"],
+      "default": null,
+      "doc": "Monotonic version of the aggregate after applying the event."
+    },
+    {
+      "name": "traceId",
+      "type": "string",
+      "doc": "W3C trace id. Echoes the OTel trace that produced the event."
+    },
+    {
+      "name": "payload",
+      "type": "bytes",
+      "doc": "Avro-encoded domain payload. Always Avro, never raw JSON."
+    }
+  ]
+}

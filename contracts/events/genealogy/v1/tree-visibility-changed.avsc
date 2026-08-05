@@ -1,0 +1,34 @@
+{
+  "type": "record",
+  "name": "TreeVisibilityChanged",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a tree transitions visibility (PRIVATE <-> UNLISTED <-> PUBLIC). Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "from",
+      "type": "com.genealogy.platform.events.shared.v1.Visibility"
+    },
+    {
+      "name": "to",
+      "type": "com.genealogy.platform.events.shared.v1.Visibility"
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "reason",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "changedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

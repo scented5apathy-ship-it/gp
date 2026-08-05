@@ -1,0 +1,98 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — Event Outbox Query API
+  version: 1.0.0
+  description: |
+    Read-only event outbox query endpoint. Useful for debugging,
+    reconciliation and replay tooling. Mounted at `/api/v1/events`.
+  x-contract-major: 1
+  contact:
+    name: Platform Data
+    url: https://github.com/genealogy/platform
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.genealogy-platform.com/api/v1
+    description: Production
+tags:
+  - name: Events
+paths:
+  /events:
+    get:
+      tags: [Events]
+      operationId: listOutboxEvents
+      summary: List outbox events (audit / debug only)
+      x-list: true
+      parameters:
+        - name: topic
+          in: query
+          required: false
+          description: Filter by topic (e.g. `genealogy.person.v1.v1`).
+          schema:
+            type: string
+        - name: aggregateId
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: "../../common/headers.yaml#/components/parameters/Cursor"
+        - $ref: "../../common/headers.yaml#/components/parameters/PageSize"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Outbox events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxEventPage"
+        "403":
+          description: Caller lacks the auditor role.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+components:
+  schemas:
+    OutboxEvent:
+      type: object
+      required:
+        - eventId
+        - eventType
+        - topic
+        - occurredAt
+        - aggregateId
+        - aggregateVersion
+      properties:
+        eventId:
+          type: string
+        eventType:
+          type: string
+        topic:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        aggregateId:
+          type: string
+        aggregateVersion:
+          type: integer
+          format: int64
+        traceId:
+          type: string
+        publishedAt:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
+    OutboxEventPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutboxEvent"
+        nextCursor:
+          type: string

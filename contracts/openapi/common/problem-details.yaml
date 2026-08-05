@@ -1,0 +1,72 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — RFC 9457 Problem Details
+  version: 1.0.0
+  description: |
+    Canonical `application/problem+json` shape used by every REST
+    4xx/5xx response. Mirrors the gRPC error mapping in
+    `contracts/protobuf/common/v1/error.proto`.
+  x-contract-major: 1
+paths: {}
+components:
+  schemas:
+    Problem:
+      type: object
+      required:
+        - type
+        - title
+        - status
+      description: |
+        RFC 9457 Problem Details for HTTP APIs. Extensions
+        (`x-correlation-id`, `x-tenant-id`, `x-error-code`) carry
+        platform-specific context. Sensitive fields (raw DNA, file
+        content, tokens) must never be added as extensions.
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: |
+            URI reference identifying the problem type. When the
+            error has no registered type, this field MUST be
+            `about:blank`.
+          example: https://errors.genealogy-platform.com/invalid-etag
+        title:
+          type: string
+          description: Short human-readable summary.
+          example: ETag does not match
+        status:
+          type: integer
+          format: int32
+          description: HTTP status code mirroring the response status.
+          example: 412
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence.
+        instance:
+          type: string
+          format: uri-reference
+          description: URI identifying the specific occurrence.
+        correlationId:
+          type: string
+          description: |
+            Echo of `X-Correlation-Id`. Always present on Problem
+            responses so support tooling can correlate client-side
+            errors with platform traces.
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_\\-\\.]+$"
+        errorCode:
+          type: string
+          description: |
+            Stable machine-readable error code (e.g.
+            `invalid-etag`, `tenant-not-found`). Used for client-side
+            branching.
+          pattern: "^[a-z][a-z0-9\\-]{1,63}$"
+        retryAfterSeconds:
+          type: integer
+          format: int32
+          description: |
+            When present, the client should retry after this many
+            seconds. Mirrors the `Retry-After` header.
+          minimum: 1
+          maximum: 86400

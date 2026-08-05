@@ -1,0 +1,262 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — Tree API
+  version: 1.0.0
+  description: |
+    Tree aggregate CRUD, visibility transitions and archival.
+    Backed by `services/genealogy-service`. Mounted at
+    `/api/v1/trees`.
+  x-contract-major: 1
+  contact:
+    name: Genealogy
+    url: https://github.com/genealogy/platform
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.genealogy-platform.com/api/v1
+    description: Production
+tags:
+  - name: Tree
+paths:
+  /trees:
+    post:
+      tags: [Tree]
+      operationId: createTree
+      summary: Create a tree in the caller's tenant
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTreeRequest"
+      responses:
+        "201":
+          description: Tree created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tree"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    get:
+      tags: [Tree]
+      operationId: listTrees
+      summary: List trees visible to the caller
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/Cursor"
+        - $ref: "../../common/headers.yaml#/components/parameters/PageSize"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Trees visible to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreePage"
+  /trees/{treeId}:
+    parameters:
+      - name: treeId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    get:
+      tags: [Tree]
+      operationId: getTree
+      summary: Retrieve a tree
+      responses:
+        "200":
+          description: Tree detail.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tree"
+        "404":
+          description: Tree not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    patch:
+      tags: [Tree]
+      operationId: updateTree
+      summary: Update tree metadata or visibility
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTreeRequest"
+      responses:
+        "200":
+          description: Updated tree.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tree"
+        "412":
+          description: ETag mismatch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /trees/{treeId}/visibility:
+    parameters:
+      - name: treeId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    post:
+      tags: [Tree]
+      operationId: transitionTreeVisibility
+      summary: Transition a tree's visibility
+      description: |
+        Transitions the visibility of a tree. Allowed values:
+        PRIVATE <-> UNLISTED, PRIVATE/UNLISTED -> PUBLIC (with
+        living/minor redaction obligations per `design.md` §6.3).
+        PUBLIC -> PRIVATE or UNLISTED is always allowed.
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VisibilityTransitionRequest"
+      responses:
+        "200":
+          description: New visibility applied.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tree"
+        "409":
+          description: Transition not allowed by policy.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+components:
+  schemas:
+    Visibility:
+      type: string
+      enum: [PRIVATE, UNLISTED, PUBLIC]
+    Tree:
+      type: object
+      required:
+        - treeId
+        - tenantId
+        - slug
+        - displayName
+        - visibility
+        - defaultLocale
+        - defaultCalendar
+        - etag
+        - createdAt
+      properties:
+        treeId:
+          type: string
+        tenantId:
+          type: string
+        slug:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9\\-]{1,62}[a-z0-9]$"
+        displayName:
+          type: string
+        visibility:
+          $ref: "#/components/schemas/Visibility"
+        defaultLocale:
+          type: string
+        defaultTimezone:
+          type: string
+        defaultCalendar:
+          type: string
+          enum: [GREGORIAN, HEBREW, HIJRI, ETHIOPIAN, CUSTOM]
+        collaborationPolicy:
+          type: string
+          enum: [DIRECT_EDIT, REVIEW_REQUIRED, MIXED]
+        etag:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    CreateTreeRequest:
+      type: object
+      required:
+        - slug
+        - displayName
+      properties:
+        slug:
+          type: string
+        displayName:
+          type: string
+        defaultLocale:
+          type: string
+        defaultTimezone:
+          type: string
+        defaultCalendar:
+          type: string
+        collaborationPolicy:
+          type: string
+          enum: [DIRECT_EDIT, REVIEW_REQUIRED, MIXED]
+    UpdateTreeRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        defaultLocale:
+          type: string
+        defaultTimezone:
+          type: string
+        defaultCalendar:
+          type: string
+        collaborationPolicy:
+          type: string
+          enum: [DIRECT_EDIT, REVIEW_REQUIRED, MIXED]
+    VisibilityTransitionRequest:
+      type: object
+      required:
+        - target
+      properties:
+        target:
+          $ref: "#/components/schemas/Visibility"
+        reason:
+          type: string
+          maxLength: 500
+    TreePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tree"
+        nextCursor:
+          type: string

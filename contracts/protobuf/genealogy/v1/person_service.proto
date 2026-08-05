@@ -1,0 +1,94 @@
+// Contracts — genealogy v1 — person service
+syntax = "proto3";
+
+package com.genealogy.platform.genealogy.v1;
+
+import "com/genealogy/platform/common/v1/context.proto";
+import "com/genealogy/platform/common/v1/page.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.genealogy.v1";
+
+service PersonService {
+  rpc CreatePerson(CreatePersonRequest) returns (Person);
+  rpc GetPerson(GetPersonRequest) returns (Person);
+  rpc UpdatePerson(UpdatePersonRequest) returns (Person);
+  rpc ListPersons(ListPersonsRequest) returns (PersonPage);
+}
+
+message Person {
+  string person_id = 1;
+  string tree_id = 2;
+  repeated PersonName names = 3;
+  LivingStatus living_status = 4;
+  string pronoun = 5;
+  string biography = 6;
+  repeated ExternalIdentifier external_identifiers = 7;
+  string etag = 8;
+}
+
+enum LivingStatus {
+  LIVING_STATUS_UNSPECIFIED = 0;
+  LIVING = 1;
+  DECEASED = 2;
+  UNKNOWN = 3;
+  INFERRED_LIVING = 4;
+}
+
+enum PrivacyLevel {
+  PRIVACY_LEVEL_UNSPECIFIED = 0;
+  PUBLIC = 1;
+  REGISTERED = 2;
+  PRIVATE = 3;
+}
+
+message PersonName {
+  string script = 1;
+  string full = 2;
+  string given = 3;
+  string surname = 4;
+  string prefix = 5;
+  string suffix = 6;
+  bool alias = 7;
+  PrivacyLevel privacy_level = 8;
+}
+
+message ExternalIdentifier {
+  string authority = 1;
+  string value = 2;
+}
+
+message CreatePersonRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tree_id = 2;
+  repeated PersonName names = 3;
+  LivingStatus living_status = 4;
+  string pronoun = 5;
+}
+
+message GetPersonRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string person_id = 2;
+}
+
+message UpdatePersonRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string person_id = 2;
+  string etag = 3;
+  repeated PersonName names = 4;
+  LivingStatus living_status = 5;
+  string pronoun = 6;
+  string biography = 7;
+}
+
+message ListPersonsRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tree_id = 2;
+  string cursor = 3;
+  int32 page_size = 4;
+}
+
+message PersonPage {
+  repeated Person items = 1;
+  com.genealogy.platform.common.v1.Page page = 2;
+}

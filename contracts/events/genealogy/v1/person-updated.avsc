@@ -1,0 +1,34 @@
+{
+  "type": "record",
+  "name": "PersonUpdated",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a person aggregate is updated. Carries the changed fields only; consumers should treat absent fields as 'unchanged'. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "personId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "aggregateVersion",
+      "type": "long",
+      "doc": "Aggregate version after applying the update."
+    },
+    {
+      "name": "changedFields",
+      "type": {
+        "type": "array",
+        "items": "string"
+      },
+      "doc": "List of dotted field paths that changed in this event."
+    },
+    {
+      "name": "updatedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

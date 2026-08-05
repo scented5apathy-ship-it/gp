@@ -78,9 +78,13 @@ const args = [
 ];
 
 console.log(`[openapi] spectral ${args.join(" ")}`);
-const proc = spawnSync("pnpm", ["exec", "spectral", ...args], {
-  stdio: "inherit",
-  cwd: ROOT,
-  env: { ...process.env, FORCE_COLOR: "0" },
-});
+const proc = spawnSync(
+  "node",
+  ["node_modules/@stoplight/spectral-cli/dist/index.js", ...args],
+  {
+    stdio: "inherit",
+    cwd: ROOT,
+    env: { ...process.env, FORCE_COLOR: "0" },
+  },
+);
 process.exit(proc.status ?? 1);

@@ -1,0 +1,36 @@
+// Contracts — common v1 — trusted context
+//
+// Carried as the FIRST field of every gRPC request message. The
+// server-side interceptor fills this from the Istio mTLS peer
+// identity, Keycloak token claims and the active tenant selection
+// stored in the BFF. Clients MUST NOT set these fields directly —
+// the server rejects mutations where `tenant_id` is supplied by the
+// caller (see E3.5 Trusted tenant context).
+syntax = "proto3";
+
+package com.genealogy.platform.common.v1;
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.common.v1";
+
+// Trusted context propagated to every gRPC request.
+message Context {
+  // Server-derived tenant id. Never accepted from clients.
+  string tenant_id = 1;
+  // Keycloak subject (user sub claim).
+  string actor_id = 2;
+  // Membership role within the tenant, used by ABAC fast-path.
+  string actor_role = 3;
+  // Correlation id propagated from `X-Correlation-Id` (REST) or
+  // `x-correlation-id` (gRPC metadata). Always present; the server
+  // generates a value if the client did not supply one.
+  string correlation_id = 4;
+  // W3C traceparent / tracestate. Filled by the OTel gRPC
+  // interceptor. Always present.
+  string trace_id = 5;
+  // Idempotency key for mutations; required on every non-idempotent
+  // RPC. Format: opaque, ≤ 128 chars, `[A-Za-z0-9_-]`.
+  string idempotency_key = 6;
+  // Optional user agent for audit.
+  string user_agent = 7;
+}

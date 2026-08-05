@@ -1,0 +1,91 @@
+// Contracts — genealogy v1 — tree service
+syntax = "proto3";
+
+package com.genealogy.platform.genealogy.v1;
+
+import "com/genealogy/platform/common/v1/context.proto";
+import "com/genealogy/platform/common/v1/page.proto";
+import "com/genealogy/platform/tenant/v1/tenant_service.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.genealogy.v1";
+
+service TreeService {
+  rpc CreateTree(CreateTreeRequest) returns (Tree);
+  rpc GetTree(GetTreeRequest) returns (Tree);
+  rpc UpdateTree(UpdateTreeRequest) returns (Tree);
+  rpc TransitionTreeVisibility(TransitionVisibilityRequest) returns (Tree);
+  rpc ListTrees(ListTreesRequest) returns (TreePage);
+}
+
+message Tree {
+  string tree_id = 1;
+  string tenant_id = 2;
+  string slug = 3;
+  string display_name = 4;
+  Visibility visibility = 5;
+  string default_locale = 6;
+  string default_timezone = 7;
+  com.genealogy.platform.tenant.v1.Calendar default_calendar = 8;
+  CollaborationPolicy collaboration_policy = 9;
+  string etag = 10;
+  string created_at = 11;
+}
+
+enum Visibility {
+  VISIBILITY_UNSPECIFIED = 0;
+  PRIVATE = 1;
+  UNLISTED = 2;
+  PUBLIC = 3;
+}
+
+enum CollaborationPolicy {
+  COLLABORATION_POLICY_UNSPECIFIED = 0;
+  DIRECT_EDIT = 1;
+  REVIEW_REQUIRED = 2;
+  MIXED = 3;
+}
+
+message CreateTreeRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string slug = 2;
+  string display_name = 3;
+  string default_locale = 4;
+  string default_timezone = 5;
+  com.genealogy.platform.tenant.v1.Calendar default_calendar = 6;
+  CollaborationPolicy collaboration_policy = 7;
+}
+
+message GetTreeRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tree_id = 2;
+}
+
+message UpdateTreeRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tree_id = 2;
+  string etag = 3;
+  string display_name = 4;
+  string default_locale = 5;
+  string default_timezone = 6;
+  CollaborationPolicy collaboration_policy = 7;
+}
+
+message TransitionVisibilityRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string tree_id = 2;
+  string etag = 3;
+  Visibility target = 4;
+  string reason = 5;
+}
+
+message ListTreesRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string cursor = 2;
+  int32 page_size = 3;
+}
+
+message TreePage {
+  repeated Tree items = 1;
+  com.genealogy.platform.common.v1.Page page = 2;
+}
