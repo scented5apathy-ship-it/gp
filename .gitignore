@@ -35,3 +35,9 @@ secrets/
 .turbo/
 .eslintcache
 .kotlin/
+
+# Generated code (OpenAPI / Protobuf / Avro / JavaPoet outputs).
+# The contracts in `contracts/` are the source of truth; the
+# generated artefacts are reproducible by `pnpm codegen:*`.
+**/src/lib/api/generated/
+**/src/generated/

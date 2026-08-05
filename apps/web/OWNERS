@@ -1,0 +1,10 @@
+# Web — owns the Next.js PWA shell, design tokens, i18n catalogue,
+# OpenAPI typed client and PWA manifest. Cross-service changes that
+# touch the web shell require sign-off from @genealogy/web in
+# addition to the touched service team.
+#
+# primary:   @genealogy/web
+# secondary: @genealogy/platform
+# on-call:   web-oncall@genealogy.local
+
+@genealogy/web @genealogy/platform

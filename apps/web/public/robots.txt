@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+# Privacy: do not expose /api/, /admin or any future authenticated
+# routes to the public web crawler. The BFF surface is gated by
+# Kong and the PWA app shell handles authenticated routes client
+# side; the spec nevertheless asks for an explicit deny list so
+# future engineers do not accidentally leak internal endpoints.
+Disallow: /api/
+Disallow: /admin
+Disallow: /*/admin
+Sitemap: /sitemap.xml

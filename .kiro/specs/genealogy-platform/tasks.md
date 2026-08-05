@@ -92,7 +92,7 @@ _Requirements: R1–R18, NFR1–NFR8_
   - Thêm trusted context, audit hook, OpenFeature SDK và secure defaults.
   - Tạo Testcontainers fixtures cho PostgreSQL, Kafka, Keycloak, OpenFGA, Temporal, S3 và Valkey.
 
-- [ ] E1.5 Tạo Next.js PWA shell
+- [x] E1.5 Tạo Next.js PWA shell
 
   - App Router, Tailwind, shadcn/ui, tokens, i18n/RTL và PWA manifest.
   - Sinh typed REST client từ OpenAPI; thêm error/loading boundaries.

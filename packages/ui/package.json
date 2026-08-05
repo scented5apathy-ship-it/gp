@@ -2,15 +2,22 @@
   "name": "@genealogy/ui",
   "version": "0.1.0",
   "private": true,
+  "description": "Genealogy Platform — design system primitives (Tailwind + shadcn-style API).",
+  "license": "UNLICENSED",
   "type": "module",
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./button": "./src/button.tsx",
+    "./card": "./src/card.tsx"
+  },
   "scripts": {
     "lint": "eslint --max-warnings=0 --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,js,mjs,cjs,mts,cts}\"",
     "lint:eslint": "eslint --max-warnings=0 --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,js,mjs,cjs,mts,cts}\"",
     "lint:yaml": "node ../../scripts/lint-yaml.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test src/**/*.test.ts",
-    "test:unit": "node --test src/**/*.test.ts",
+    "test": "node ../../scripts/test-ts.mjs \"src/**/*.test.ts\"",
+    "test:unit": "node ../../scripts/test-ts.mjs \"src/**/*.test.ts\"",
     "test:integration": "echo 'no integration tests for ui package yet'",
     "test:contract": "echo 'no contract tests for ui package yet'",
     "test:e2e": "echo 'no e2e tests for ui package yet'",
@@ -19,7 +26,16 @@
     "format:check": "prettier --check --log-level=warn --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,js,mjs,cjs,mts,cts,json}\" \"package.json\"",
     "clean": "rimraf node_modules dist .turbo coverage"
   },
+  "dependencies": {
+    "react": "18.3.1"
+  },
+  "peerDependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
   "devDependencies": {
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
     "typescript": "5.6.2",
     "eslint": "9.13.0",
     "prettier": "3.3.3",

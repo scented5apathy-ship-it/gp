@@ -1,0 +1,79 @@
+/*
+ * Design tokens — the source of truth for colour, spacing, type and
+ * motion across the PWA shell. `tailwind.config.ts` reads the
+ * `--color-*` / `--font-*` / `--radius-*` names so utility classes
+ * like `bg-primary text-primary-foreground` map onto these values.
+ *
+ * Why raw `rgb()` triplets? Tailwind v3 alpha-modifier syntax
+ * (`bg-primary/40`) needs the colour in space-separated triplet form
+ * so the `/` operator can wrap the alpha. The trade-off is that
+ * these tokens are not directly usable as colour values outside
+ * Tailwind — use `color-mix()` or the Tailwind classes in code.
+ *
+ * Dark mode is opt-in via the `data-theme="dark"` attribute set by
+ * `src/components/theme-toggle.tsx`. The user preference is
+ * persisted in `localStorage` (no server round-trip) and the next
+ * theme pass at E6 will also respect `prefers-color-scheme`.
+ */
+:root {
+  /* Palette (light) — all values are AA-compliant against the surface. */
+  --color-primary: 31 58 95;            /* deep slate */
+  --color-on-primary: 247 245 240;      /* paper */
+  --color-accent: 168 75 40;            /* terracotta */
+  --color-on-accent: 247 245 240;
+  --color-surface: 247 245 240;         /* paper */
+  --color-surface-raised: 255 253 248;  /* card */
+  --color-surface-sunken: 235 230 220;  /* inset */
+  --color-on-surface: 31 33 36;         /* ink */
+  --color-on-surface-muted: 91 95 102;
+  --color-danger: 153 38 38;
+  --color-success: 38 110 64;
+  --color-warning: 161 96 12;
+
+  /* Type — system stack; no remote font fetch in the shell so the
+   * initial paint is unaffected by network latency. E6 swaps in
+   * a self-hosted variable font once the brand spec lands. */
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-serif: ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, monospace;
+
+  /* Geometry */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-xl: 24px;
+  --focus-ring-width: 2px;
+
+  /* Motion — honours `prefers-reduced-motion` automatically when the
+   * global stylesheet overrides `animation-duration` to 0.001ms. */
+  --motion-fast: 120ms;
+  --motion-medium: 220ms;
+  --motion-slow: 320ms;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --color-primary: 138 173 219;
+  --color-on-primary: 16 24 36;
+  --color-accent: 232 145 110;
+  --color-on-accent: 16 24 36;
+  --color-surface: 16 20 26;
+  --color-surface-raised: 24 30 38;
+  --color-surface-sunken: 12 14 18;
+  --color-on-surface: 240 240 240;
+  --color-on-surface-muted: 168 174 182;
+  --color-danger: 240 110 110;
+  --color-success: 110 188 138;
+  --color-warning: 226 168 78;
+
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0.001ms;
+    --motion-medium: 0.001ms;
+    --motion-slow: 0.001ms;
+  }
+}

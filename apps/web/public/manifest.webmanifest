@@ -1,0 +1,45 @@
+{
+  "name": "Genealogy Platform",
+  "short_name": "Genealogy",
+  "description": "Privacy-first genealogy platform — trees, sources and DNA.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "orientation": "any",
+  "background_color": "#f7f5f0",
+  "theme_color": "#1f3a5f",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["productivity", "education", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Recent trees",
+      "short_name": "Trees",
+      "url": "/en/trees",
+      "description": "Open the trees overview"
+    }
+  ],
+  "prefer_related_applications": false
+}

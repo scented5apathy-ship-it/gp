@@ -1,0 +1,15 @@
+# Browsers must opt in to the PWA surface.
+# `default-src 'self'` keeps the shell offline-only; external assets
+# are whitelisted through service-worker workbox config (E6).
+#
+# Staged for E6 once the asset CDN is in place. We intentionally do
+# NOT ship a strict CSP in the shell yet because the placeholder
+# would block the Next.js dev tools and hot-reload scripts. The
+# shell currently relies on:
+#   - HSTS preload, X-Frame-Options DENY, X-Content-Type-Options
+#     nosniff, Referrer-Policy strict-origin-when-cross-origin.
+# See `next.config.mjs` for the production headers.
+/* This file documents the future CSP. The E1.5 shell does NOT serve
+ * it; production rollout happens in E6 alongside the service worker. */
+
+# Content-Security-Policy: default-src 'self'; img-src 'self' data: blob: https://assets.genealogy-platform.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https://bff.genealogy-platform.com https://api.genealogy-platform.com; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; report-uri https://csp-report.genealogy-platform.com/collect

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Genealogy Platform icon">
+  <rect width="512" height="512" rx="86" fill="#1f3a5f"/>
+  <g fill="none" stroke="#f7f5f0" stroke-width="14" stroke-linecap="round">
+    <circle cx="256" cy="148" r="48"/>
+    <circle cx="148" cy="318" r="48"/>
+    <circle cx="364" cy="318" r="48"/>
+    <path d="M256 196 V256 M256 256 L148 270 M256 256 L364 270"/>
+  </g>
+</svg>

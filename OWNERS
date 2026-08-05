@@ -23,6 +23,7 @@
 /services/audit-service/         @genealogy/identity @genealogy/security
 
 # Edge / BFF / public API
+/apps/web/                       @genealogy/web
 /apps/web-bff/                   @genealogy/web
 /apps/public-api/                @genealogy/web
 

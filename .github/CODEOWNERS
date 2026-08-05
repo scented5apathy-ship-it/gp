@@ -19,6 +19,7 @@
 /services/reporting-service/   @genealogy/reporting
 /services/audit-service/       @genealogy/identity @genealogy/security
 
+/apps/web/                     @genealogy/web
 /apps/web-bff/                 @genealogy/web
 /apps/public-api/              @genealogy/web
 
