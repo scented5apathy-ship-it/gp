@@ -1,10 +1,26 @@
 {
-  "worktrees": {},
-  "sessions": {},
+  "worktrees": {
+    "wt-1785914739874-1": {
+      "branch": "tri-n-khai-task-e0",
+      "path": "/Users/os_ngocnq/Documents/gp1/.kilo/worktrees/tri-n-khai-task-e0",
+      "parentBranch": "main",
+      "createdAt": "2026-08-04T08:37:36.734Z",
+      "remote": "origin"
+    }
+  },
+  "sessions": {
+    "ses_03408adfbffeh7BOt9zlFwhiYe": {
+      "worktreeId": "wt-1785914739874-1",
+      "createdAt": "2026-08-05T07:25:39.874Z"
+    }
+  },
   "tabOrder": {
     "local": [
       "pending:63627ea7-42d3-4e57-a34f-31af06dd2867"
     ]
   },
+  "worktreeOrder": [
+    "wt-1785914739874-1"
+  ],
   "sessionsCollapsed": true
 }

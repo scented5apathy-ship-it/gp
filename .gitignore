@@ -8,6 +8,10 @@ coverage/
 .gradle/
 target/
 
+# Custom Java/Kotlin output dirs (platform-build-logic java-conventions
+# uses `bin/main` / `bin/test` instead of `build/classes/...`).
+**/bin/
+
 # Editor / IDE
 .idea/
 .vscode/
