@@ -20,7 +20,7 @@
  * The script returns exit code 0 on success, 1 on violation, 2 on
  * configuration error.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -78,7 +78,7 @@ if (!existsSync(chartYamlPath)) {
 } else {
   const text = readFileSync(chartYamlPath, "utf8");
   for (const field of ["apiVersion", "name", "version", "appVersion"]) {
-    if (!new RegExp(`^${field}\\s*:`).test(text)) {
+    if (!new RegExp(`^${field}\\s*:`, "m").test(text)) {
       fail(`Chart.yaml missing required field '${field}'`);
     }
   }
@@ -96,7 +96,13 @@ if (!existsSync(valuesPath)) {
   }
 
   for (const ns of REQUIRED_NAMESPACES) {
-    if (!new RegExp(`name:\\s*${ns}\\b`).test(values)) {
+    // Match the namespace declaration either as a list entry
+    // (`- name: gp-XXX`) or as a map key (`gp-XXX:` followed by
+    // a `name: gp-XXX` line). Use a non-word boundary so
+    // `gp-data` does NOT match `gp-data-ssd` (the storage class).
+    const mapKey = new RegExp(`\\n\\s*${ns}:\\s*\\n`).test(values);
+    const listEntry = new RegExp(`-\\s*name:\\s*${ns}(?:\\s|$|,|"|\\})`).test(values);
+    if (!mapKey && !listEntry) {
       fail(`baseline namespace '${ns}' not declared in values.yaml`);
     }
   }
@@ -105,7 +111,7 @@ if (!existsSync(valuesPath)) {
     fail("gp-platform quota baseline (requestsCpu: 32) not found — ADR-E0.5-01 parity broken");
   }
 
-  if (!/podSecurity:\\s*restricted/.test(values)) {
+  if (!/podSecurity:\s*restricted/.test(values)) {
     fail("Pod Security 'restricted' profile missing from baseline.namespaces");
   }
 
@@ -249,7 +255,7 @@ if (!existsSync(LOCAL_DIR)) {
         fail(`docker-compose.yml missing service '${required.replace(/[:]/g, "")}'`);
       }
     }
-    if (!/\\$\\{[A-Z_]+\\}/.test(compose)) {
+    if (!/\$\{[A-Z_]+\}/.test(compose)) {
       fail("docker-compose.yml must reference env vars for secrets (no literal credentials)");
     }
   }

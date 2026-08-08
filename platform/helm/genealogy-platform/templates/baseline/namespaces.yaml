@@ -1,17 +1,30 @@
 {{/*
 Baseline namespace + quota + Pod Security admission labels.
 
-Iterates `baseline.namespaces[*]` and emits:
+Iterates `baseline.namespaces` (a map keyed by name) and emits:
   - Namespace (with PodSecurity labels + gp-tenant-id gateway)
   - ResourceQuota
   - LimitRange (sane default request/limit ratio)
 
-Per design §5.1 / privacy-and-legal-gate §6 risk T-06 the namespace
-set is fixed so missing namespaces are caught by the preflight script
-(`scripts/check-platform-baseline.mjs`) before any workload chart is
-installed.
+Map form is deliberate so per-environment overrides can patch a
+single namespace by key (`baseline.namespacesOverrides.gp-data.quota`)
+without replacing the entire list. Per design §5.1 / privacy-and-legal-gate
+§6 risk T-06 the namespace set is fixed so missing namespaces are
+caught by the preflight script (`scripts/check-platform-baseline.mjs`)
+before any workload chart is installed.
 */}}
-{{- range $ns := .Values.baseline.namespaces }}
+{{- /*
+  Iterate baseline.namespaces (map keyed by name). Per-env
+  overrides sit in `baseline.namespacesOverrides.<ns>` and are
+  merged inline per-iteration so Go template scope does not
+  discard the mutation.
+*/ -}}
+{{- $nsMap := .Values.baseline.namespaces }}
+{{- $overrides := default dict .Values.baseline.namespacesOverrides }}
+{{- range $nsName, $ns := $nsMap }}
+{{- $override := index $overrides $nsName | default dict }}
+{{- $ns := include "genealogy-platform.mergeMaps" (dict "base" $ns "override" $override) | fromYaml }}
+{{- $nsName := $nsName }}
 ---
 apiVersion: v1
 kind: Namespace

@@ -117,7 +117,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
 
 ### Subtasks
 
-- [ ] E2.1 Dựng local và cluster baseline
+- [x] E2.1 Dựng local và cluster baseline
 
   - Tạo local profile và Helm values cho SaaS/on-premise.
   - Thiết lập namespace, quota, Pod Security, NetworkPolicy, probes và PDB.

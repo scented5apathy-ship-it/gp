@@ -88,7 +88,12 @@ test("baseline: missing namespace fails", () => {
   const dir = makeFixture();
   try {
     const valuesPath = join(dir, "platform", "helm", "genealogy-platform", "values.yaml");
-    const text = readFileSync(valuesPath, "utf8").replace(/name:\s*gp-data\n/, "# gp-data removed\n");
+    // Remove the `gp-data:` map key (with the `name: gp-data` line
+    // that follows it inside the map entry).
+    const text = readFileSync(valuesPath, "utf8").replace(
+      /    gp-data:\n(?:      .*\n)+/,
+      "# gp-data removed\n",
+    );
     writeFileSync(valuesPath, text);
     const proc = runScript({ BASELINE_ROOT: dir });
     assert.equal(proc.status, 1);

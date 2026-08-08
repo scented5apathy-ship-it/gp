@@ -22,8 +22,8 @@ baseline:
     ingressClass: nginx-internal
   storage:
     defaultClass: gp-data-ssd
-  namespaces:
-    - name: gp-data
+  namespacesOverrides:
+    gp-data:
       quota:
         requestsCpu: "96"
         requestsMemory: 384Gi

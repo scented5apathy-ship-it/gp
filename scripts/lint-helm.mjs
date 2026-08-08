@@ -67,7 +67,7 @@ for (const chart of charts) {
   if (existsSync(chartYamlPath)) {
     const text = readFileSync(chartYamlPath, "utf8");
     for (const field of ["apiVersion", "name", "version"]) {
-      if (!new RegExp(`^${field}\\s*:`).test(text)) {
+      if (!new RegExp(`^${field}\\s*:`, "m").test(text)) {
         violations++;
         console.error(`[helm] ${rel}/Chart.yaml — missing '${field}'`);
       }
