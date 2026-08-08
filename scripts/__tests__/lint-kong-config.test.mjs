@@ -79,9 +79,10 @@ test("kong: forbidden acl plugin fails", () => {
   const dir = makeFixture();
   try {
     const target = join(dir, "platform", "kong", "kong.yml");
-    const text =
-      readFileSync(target, "utf8") +
-      '\n  - name: acl\n    route: admin-api-v1\n    config:\n      allow:\n        - "admin"\n';
+    const text = readFileSync(target, "utf8").replace(
+      /upstreams: \[\]\n?$/,
+      '  - name: acl\n    route: admin-api-v1\n    config:\n      allow:\n        - "admin"\nupstreams: []\n',
+    );
     writeFileSync(target, text);
     const proc = runScript({ KONG_ROOT: dir });
     assert.equal(proc.status, 1);
@@ -129,7 +130,10 @@ test("kong: missing admin route fails", () => {
   const dir = makeFixture();
   try {
     const target = join(dir, "platform", "kong", "kong.yml");
-    const text = readFileSync(target, "utf8").replace(/- name: admin-api-v1\n/, "# admin removed\n");
+    const text = readFileSync(target, "utf8").replace(
+      /- name: admin-api-v1\n[\s\S]*?snis:\n\s+- "admin\.genealogy\.local"\n\s+tags:\n\s+- "route-class:admin"\n/,
+      "",
+    );
     writeFileSync(target, text);
     const proc = runScript({ KONG_ROOT: dir });
     assert.equal(proc.status, 1);

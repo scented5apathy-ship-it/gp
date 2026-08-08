@@ -81,6 +81,10 @@ if ("database" in config) {
   fail(`kong.yml must not declare a top-level 'database' key — set KONG_DATABASE=off in the runtime env instead`);
 }
 
+const services = Array.isArray(config.services) ? config.services : [];
+const routes = Array.isArray(config.routes) ? config.routes : [];
+const plugins = Array.isArray(config.plugins) ? config.plugins : [];
+
 // `request-size-limiting.allowed_payload_size` must be an integer
 // (Kong 3.x rejects string values even when a unit suffix is set).
 for (const plugin of plugins) {
@@ -89,10 +93,6 @@ for (const plugin of plugins) {
     fail(`route '${plugin.route}' request-size-limiting.allowed_payload_size must be an integer (got ${JSON.stringify(psize)})`);
   }
 }
-
-const services = Array.isArray(config.services) ? config.services : [];
-const routes = Array.isArray(config.routes) ? config.routes : [];
-const plugins = Array.isArray(config.plugins) ? config.plugins : [];
 
 if (services.length === 0) fail("kong.yml declares no services");
 if (routes.length === 0) fail("kong.yml declares no routes");

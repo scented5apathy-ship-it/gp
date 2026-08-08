@@ -41,6 +41,9 @@ importers:
       typescript-eslint:
         specifier: 8.12.2
         version: 8.12.2(eslint@9.13.0(jiti@1.21.7))(typescript@5.6.2)
+      yaml:
+        specifier: 2.6.1
+        version: 2.6.1
 
   apps/web:
     dependencies:
@@ -2258,9 +2261,9 @@ packages:
   yaml-ast-parser@0.0.43:
     resolution: {integrity: sha512-2PTINUwsRqSd+s8XxKaJWQlUuEMHJQyEuh2edBbW8KNJz0SJPwUSD2zRWqezFEdN7IzAgeuYHFUCF7o8zRdZ0A==}
 
-  yaml@2.9.0:
-    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
-    engines: {node: '>= 14.6'}
+  yaml@2.6.1:
+    resolution: {integrity: sha512-7r0XPzioN/Q9kXBro/XPnA6kznR73DHq+GXh5ON7ZozRO6aMjbmiBuKste2wslTFkC5d1dw0GooOCepZXJ2SAg==}
+    engines: {node: '>= 14'}
     hasBin: true
 
   yargs-parser@21.1.1:
@@ -4070,7 +4073,7 @@ snapshots:
   postcss-load-config@4.0.2(postcss@8.4.47):
     dependencies:
       lilconfig: 3.1.3
-      yaml: 2.9.0
+      yaml: 2.6.1
     optionalDependencies:
       postcss: 8.4.47
 
@@ -4612,7 +4615,7 @@ snapshots:
 
   yaml-ast-parser@0.0.43: {}
 
-  yaml@2.9.0: {}
+  yaml@2.6.1: {}
 
   yargs-parser@21.1.1: {}
 

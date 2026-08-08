@@ -123,7 +123,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - Thiết lập namespace, quota, Pod Security, NetworkPolicy, probes và PDB.
   - Tạo preflight kiểm version, storage class, DNS, certificate và capacity.
 
-- [ ] E2.2 Cấu hình Kong Gateway runtime
+- [x] E2.2 Cấu hình Kong Gateway runtime
 
   - Quản lý route/plugin declaratively: TLS, auth validation, CORS, request-size, rate limit và correlation ID.
   - Tách public, authenticated, partner và admin routes; không đặt domain authorization trong Kong.
