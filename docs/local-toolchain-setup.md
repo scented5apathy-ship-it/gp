@@ -94,7 +94,9 @@ Append `~/.local/bin` vào PATH trong `~/.zshrc`:
 ```sh
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
-helm version --short    # v3.16.3+gcfd0749
+helm version    # version.BuildInfo{Version:"v3.16.3", ...}
+# nếu vẫn lỗi 'accepts no arguments' thì Helm cũ hơn (≤ 3.10) chưa
+# hỗ trợ --short positional; cài lại bản 3.16.3 như script trên.
 ```
 
 > Nếu dùng Intel Mac, thay `darwin-arm64` bằng `darwin-amd64`.
@@ -124,7 +126,7 @@ Mở terminal mới và chạy:
 node --version       # v22.x.x
 npm --version        # 10.x.x
 pnpm --version       # 9.12.0
-helm version --short # v3.16.3+gcfd0749
+helm version         # version.BuildInfo{Version:"v3.16.3", ...}
 docker --version     # 29.x.x
 python3 --version    # 3.x.x
 git --version        # 2.x.x
