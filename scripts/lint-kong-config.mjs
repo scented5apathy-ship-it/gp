@@ -74,6 +74,22 @@ if (config._format_version !== "3.0") {
   fail(`kong.yml _format_version must be '3.0' (Kong 3.x DB-less); got '${config._format_version}'`);
 }
 
+// DB-less mode is enforced via `KONG_DATABASE=off` env var (not the
+// config file). Asserting `database: "off"` would be a Kong parse
+// error — the config must NOT declare a top-level `database` key.
+if ("database" in config) {
+  fail(`kong.yml must not declare a top-level 'database' key — set KONG_DATABASE=off in the runtime env instead`);
+}
+
+// `request-size-limiting.allowed_payload_size` must be an integer
+// (Kong 3.x rejects string values even when a unit suffix is set).
+for (const plugin of plugins) {
+  const psize = plugin?.config?.allowed_payload_size;
+  if (plugin?.name === "request-size-limiting" && (typeof psize !== "number" || !Number.isInteger(psize))) {
+    fail(`route '${plugin.route}' request-size-limiting.allowed_payload_size must be an integer (got ${JSON.stringify(psize)})`);
+  }
+}
+
 const services = Array.isArray(config.services) ? config.services : [];
 const routes = Array.isArray(config.routes) ? config.routes : [];
 const plugins = Array.isArray(config.plugins) ? config.plugins : [];

@@ -25,9 +25,8 @@ _format_version: "3.0"
 
 # Runtime posture — DB-less. The Kong process is started with
 # `KONG_DATABASE=off` (see `platform/local/docker-compose.yml` and the
-# Helm Deployment env block); this stanza documents the choice in the
-# config file itself so a reader doesn't need to consult the chart.
-database: "off"
+# Helm Deployment env block); Kong reads that from the environment,
+# not from this file.
 
 # ---------------------------------------------------------------------------
 # Service entries — one logical backend per Kong route class. Each service
@@ -244,25 +243,27 @@ plugins:
 
   # Request size — protects against decompression bombs and oversized
   # multipart bodies. Limit matches `platform/security/waf.yaml` and
-  # `web-bff` BFF file-upload budget (E7.1).
+  # `web-bff` BFF file-upload budget (E7.1). `allowed_payload_size`
+  # is an integer in the chosen `size_unit`; Kong 3.x rejects string
+  # values here.
   - name: request-size-limiting
     route: web-bff-api
     config:
-      allowed_payload_size: "16"   # MB
+      allowed_payload_size: 16
       size_unit: "megabytes"
       require_content_length: true
 
   - name: request-size-limiting
     route: public-api-v1
     config:
-      allowed_payload_size: "8"    # MB
+      allowed_payload_size: 8
       size_unit: "megabytes"
       require_content_length: true
 
   - name: request-size-limiting
     route: admin-api-v1
     config:
-      allowed_payload_size: "4"    # MB
+      allowed_payload_size: 4
       size_unit: "megabytes"
       require_content_length: true
 

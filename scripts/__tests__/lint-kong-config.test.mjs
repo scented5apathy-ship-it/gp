@@ -91,6 +91,40 @@ test("kong: forbidden acl plugin fails", () => {
   }
 });
 
+test("kong: top-level database key fails", () => {
+  const dir = makeFixture();
+  try {
+    const target = join(dir, "platform", "kong", "kong.yml");
+    const text = readFileSync(target, "utf8").replace(
+      /_format_version:\s*"3\.0"\n/,
+      '_format_version: "3.0"\ndatabase: "off"\n',
+    );
+    writeFileSync(target, text);
+    const proc = runScript({ KONG_ROOT: dir });
+    assert.equal(proc.status, 1);
+    assert.match(proc.stderr, /must not declare a top-level 'database' key/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("kong: string allowed_payload_size fails", () => {
+  const dir = makeFixture();
+  try {
+    const target = join(dir, "platform", "kong", "kong.yml");
+    const text = readFileSync(target, "utf8").replace(
+      "allowed_payload_size: 8",
+      'allowed_payload_size: "8"',
+    );
+    writeFileSync(target, text);
+    const proc = runScript({ KONG_ROOT: dir });
+    assert.equal(proc.status, 1);
+    assert.match(proc.stderr, /allowed_payload_size must be an integer/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("kong: missing admin route fails", () => {
   const dir = makeFixture();
   try {

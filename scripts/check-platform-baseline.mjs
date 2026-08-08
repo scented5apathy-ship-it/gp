@@ -311,10 +311,17 @@ if (!existsSync(kongConfig)) {
   if (!/_format_version:\s*"3\.0"/.test(kong)) {
     fail("kong.yml must declare _format_version: '3.0' (Kong 3.x DB-less)");
   }
-  // The local profile uses `KONG_DATABASE: "off"` in docker-compose;
-  // the umbrella / Kong config uses `database: "off"`. Accept both.
-  if (!/KONG_DATABASE:\s*"off"/.test(kong) && !/database:\s*"off"/.test(kong)) {
-    fail("kong.yml / docker-compose must declare KONG_DATABASE: off or database: off");
+  // DB-less mode is enforced via the `KONG_DATABASE=off` env var (in
+  // docker-compose + the Helm Deployment env block). Declaring a
+  // top-level `database: "off"` key in the config file is a Kong
+  // parse error — the linter rejects it.
+  if (/^database:\s*"off"/.test(kong)) {
+    fail("kong.yml must not declare a top-level 'database' key — use KONG_DATABASE=off in the runtime env");
+  }
+  // `allowed_payload_size` must be an integer (Kong 3.x rejects
+  // string values even when `size_unit` is set).
+  if (/"allowed_payload_size":\s*"[0-9]/.test(kong)) {
+    fail("kong.yml request-size-limiting.allowed_payload_size must be an integer (not a quoted string)");
   }
   for (const route of ["public-web-root", "web-bff-api", "public-api-v1", "admin-api-v1"]) {
     if (!new RegExp(`name:\\s*${route}\\b`).test(kong)) {
