@@ -1,0 +1,93 @@
+{{/*
+Umbrella component template.
+
+This template intentionally only emits a labelled namespace stub per
+component block. The actual workload manifests ship with the
+dedicated E2.2–E2.10 subcharts. Keeping a single stub here lets
+`helm template --validate-only` succeed today (required by the
+preflight script) without duplicating any platform workload into the
+umbrella.
+
+Per `agent-execution.md` §4.4 the umbrella is contract-first; no
+domain authorization, no inline secret, no implicit cross-namespace
+allow — those live in the dedicated subcharts and the workload
+charts.
+*/}}
+{{- range $name, $component := .Values.components }}
+{{- if eq $name "kong" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kong-contract-stub
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kong
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Kong runtime contract (E2.2).
+    # Domain authorization is forbidden here per design.md §5.
+    responsibilities:
+      - tls termination
+      - auth-validation
+      - cors
+      - request-size limit
+      - rate limit (per tenant + per route)
+      - correlation-id injection
+    forbidden:
+      - business authorization
+      - aggregate data storage
+{{- end }}
+{{- if eq $name "vault" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-contract-stub
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Vault runtime contract (E2.6).
+    responsibilities:
+      - dynamic short-lived credentials
+      - per-workload policy
+      - key rotation
+    forbidden:
+      - storing raw DNA
+      - storing PII
+      - persisting secret material outside KMS-backed storage
+{{- end }}
+{{- if eq $name "observability" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: observability-contract-stub
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: observability
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Observability contract (E2.10).
+    label_allowlist:
+      - tenant_pseudo_id
+      - user_pseudo_id
+      - service
+      - version
+      - environment
+      - trace_id
+    label_denylist:
+      - tenant_id
+      - user_id
+      - email
+      - raw_dna
+{{- end }}
+{{- end }}

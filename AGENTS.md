@@ -78,6 +78,9 @@ Every change must respect:
 - [ ] `pnpm check:boundary` passes (cross-service boundary)
 - [ ] `pnpm check:gradle:lock` passes (every `lockAll` subproject has
       `gradle.lockfile` committed)
+- [ ] `pnpm check:platform:baseline` passes (cluster baseline
+      preflight: namespaces, default-deny NetworkPolicy, PDB,
+      StorageClass encryption, per-env values, probe contract)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

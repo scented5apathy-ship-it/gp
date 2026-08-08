@@ -1,0 +1,10 @@
+# Per-directory OWNERS — platform/helm umbrella chart.
+# Source of truth: config/teams.yaml. Sync via
+# tools/scripts/sync-team-map.ts.
+helm:
+  primary: platform
+  secondary: "@genealogy/sre"
+  oncall: platform
+  # Umbrella chart that Argo CD reconciles (E2.9). E2.2–E2.10 subcharts
+  # each live under platform/<component>/ and are co-owned by the
+  # platform team and the dedicated component on-call.

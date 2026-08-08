@@ -1,0 +1,32 @@
+{{/*
+StorageClass resources for the data plane.
+
+Per design §13 the data plane uses an SSD class for hot PostgreSQL
+data, an HDD class for cold audit/object storage and an NVMe class
+for latency-sensitive workloads (Temporal persistence). Encrypted at
+rest per ADR §12 (KMS key per cluster).
+*/}}
+{{- range $sc := .Values.baseline.storage.classes }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ $sc.name }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    gp.genealogy/storage-type: {{ $sc.type }}
+    {{- if $sc.encrypted }}
+    gp.genealogy/encrypted: "true"
+    {{- end }}
+provisioner: {{ default "kubernetes.io/no-provisioner" $.Values.global.storageProvisioner }}
+{{- if $sc.reclaimPolicy }}
+reclaimPolicy: {{ $sc.reclaimPolicy }}
+{{- end }}
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: {{ $sc.type }}
+{{- if $sc.encrypted }}
+  encrypted: "true"
+{{- end }}
+{{- end }}

@@ -42,7 +42,8 @@
     "check:boundary": "node scripts/check-monorepo-boundaries.mjs",
     "check:ownership": "node scripts/check-ownership-coverage.mjs",
     "check:generated": "node scripts/check-generated-code.mjs",
-    "check:platform": "pnpm lint:helm",
+    "check:platform": "pnpm lint:helm && node scripts/check-platform-baseline.mjs",
+    "check:platform:baseline": "node scripts/check-platform-baseline.mjs",
     "check:contracts": "pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events",
     "check:docs": "pnpm lint:markdown",
     "security": "node scripts/security-ci.mjs all",
@@ -53,10 +54,10 @@
     "security:sbom": "node scripts/security-ci.mjs sbom",
     "security:license": "node scripts/security-ci.mjs license",
     "security:baseline": "docker run --rm -v \"${PWD}:/src:ro\" -w /src ghcr.io/gitleaks/gitleaks:v8.21.2 detect --no-banner --config /src/security/gitleaks.toml --report-path /src/security/.gitleaks-baseline.json --report-format json --source /src",
-    "check:all": "pnpm check:boundary && pnpm check:lockfile && pnpm check:gradle:lock && pnpm check:ownership && pnpm check:generated && pnpm lint:eslint && pnpm lint:yaml && pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events && pnpm lint:helm && pnpm lint:markdown && pnpm typecheck && pnpm test:unit && pnpm check:java:format && pnpm check:java && pnpm check:java:test",
+    "check:all": "pnpm check:boundary && pnpm check:lockfile && pnpm check:gradle:lock && pnpm check:ownership && pnpm check:generated && pnpm lint:eslint && pnpm lint:yaml && pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events && pnpm lint:helm && pnpm lint:markdown && pnpm typecheck && pnpm test:unit && pnpm check:java:format && pnpm check:java && pnpm check:java:test && pnpm check:platform:baseline",
     "release": "turbo run build --filter=...{git origin/main...HEAD}",
     "ci:quality": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit && pnpm check:java && pnpm check:boundary",
-    "ci:full": "pnpm ci:quality && pnpm test:integration && pnpm test:contract && pnpm test:e2e && pnpm lint:ownership && pnpm lint:generated && pnpm lint:helm && pnpm check:platform"
+    "ci:full": "pnpm ci:quality && pnpm test:integration && pnpm test:contract && pnpm test:e2e && pnpm lint:ownership && pnpm lint:generated && pnpm lint:helm && pnpm check:platform && pnpm check:platform:baseline"
   },
   "devDependencies": {
     "@eslint/js": "9.13.0",

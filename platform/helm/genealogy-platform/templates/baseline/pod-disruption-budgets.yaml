@@ -1,0 +1,49 @@
+{{/*
+Cluster-wide PodDisruptionBudget defaults.
+
+Per design §13 ("PDBs phải bật cho mọi workload, tránh voluntary
+disruption drop SLO budget"), every namespace gets a default PDB
+that workload charts opt-out of via an explicit override.
+
+Single-replica workloads (Kong control plane, Vault, Keycloak) are
+forced to `maxUnavailable: 0` so the cluster can never split-brain
+during a voluntary disruption.
+*/}}
+{{- $pdb := .Values.baseline.podDisruptionBudget -}}
+{{- range $ns := .Values.baseline.namespaces }}
+{{- if eq $ns.purpose "shared platform components" }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: shared-platform-default
+  namespace: {{ $ns.name }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+spec:
+  {{- if $pdb.minAvailable }}
+  minAvailable: {{ $pdb.minAvailable }}
+  {{- else if $pdb.maxUnavailable }}
+  maxUnavailable: {{ $pdb.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+{{- end }}
+{{- end }}
+{{- range $single := $pdb.singleReplicaWorkloads }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $single }}-no-disruption
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: {{ $single }}
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: {{ $single }}
+{{- end }}

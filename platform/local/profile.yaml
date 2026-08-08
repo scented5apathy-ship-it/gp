@@ -1,0 +1,146 @@
+# Local-development profiles for `platform/local`.
+#
+# These files describe the local profile that `scripts/local-up.sh`
+# brings up on a developer workstation (Docker Desktop / OrbStack /
+# colima / k3d). The `docker-compose.yml` in this directory is the
+# minimal stack the contract tests (E1.2) need; the umbrella chart
+# (`platform/helm/genealogy-platform`) drives the full topology in
+# `kind` for integration testing.
+#
+# Per `design.md` §3.1 / §13 the local profile mirrors SaaS topology
+# so cloud/on-prem parity holds during development.
+
+# PostgreSQL — schema-per-service via Flyway init scripts.
+postgres:
+  image: postgres:16-alpine
+  version: "16"
+  port: 5432
+  databases:
+    - genea_shared
+    - genea_tenant
+    - genea_genealogy
+    - genea_research
+    - genea_collaboration
+    - genea_media
+    - genea_search
+    - genea_importexport
+    - genea_dna
+    - genea_notification
+    - genea_reporting
+    - genea_audit
+  rls:
+    enabled: true
+    seed: scripts/seed-rls.sql
+  extensions:
+    - pgcrypto
+    - citext
+    - pg_stat_statements
+    - btree_gin
+
+# Keycloak — realm export + test identities.
+keycloak:
+  image: quay.io/keycloak/keycloak:26.0
+  port: 8080
+  realmExport: keycloak/keycloak-realm-genealogy-dev.json
+  adminUser: admin
+  # Password injected from `.env.local` (NEVER committed).
+  adminPasswordEnv: KEYCLOAK_ADMIN_PASSWORD
+  tls:
+    enabled: false
+
+# OpenFGA — relationship model + initial store.
+openfga:
+  image: openfga/openfga:1.10
+  port: 8080
+  grpcPort: 8081
+  datastore:
+    engine: memory
+    # Production swaps to postgres; local uses in-memory for
+    # deterministic contract tests.
+  model: openfga/openfga-model-draft.yaml
+
+# Strimzi Kafka single-node + Apicurio Registry.
+kafka:
+  image: quay.io/strimzi/kafka:0.43.0-kafka-3.8.0
+  port: 9092
+  replicationFactor: 1
+  topics:
+    - name: genea.person.events.v1
+      partitions: 3
+      retentionMs: 604800000
+    - name: genea.tree.events.v1
+      partitions: 3
+      retentionMs: 604800000
+    - name: genea.media.events.v1
+      partitions: 3
+      retentionMs: 604800000
+apicurio:
+  image: apicurio/apicurio-registry:2.6
+  port: 8080
+  compatibility: BACKWARDS
+
+# Temporal dev server + namespace.
+temporal:
+  image: temporalio/auto-setup:1.26.2
+  port: 7233
+  uiPort: 8088
+  namespace: genea-default
+  retentionDays: 7
+
+# MinIO + bucket layout.
+minio:
+  image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+  apiPort: 9000
+  consolePort: 9001
+  buckets:
+    - name: media
+      versioning: enabled
+      lifecycleDays: 365
+    - name: media-quarantine
+      versioning: enabled
+      lifecycleDays: 30
+    - name: dna-raw
+      versioning: enabled
+      lifecycleDays: 0 # indefinite (legal hold semantics)
+      encryption: envelope
+    - name: import-export
+      versioning: enabled
+      lifecycleDays: 30
+  rootUserEnv: MINIO_ROOT_USER
+  rootPasswordEnv: MINIO_ROOT_PASSWORD
+
+# Valkey (Redis-compatible) cache / session / rate state.
+valkey:
+  image: valkey/valkey:7.2-alpine
+  port: 6379
+  ttl:
+    sessionSeconds: 3600
+    rateStateSeconds: 60
+    cacheSeconds: 300
+
+# Flagsmith local container.
+flagsmith:
+  image: flagsmith/flagsmith:latest
+  apiPort: 8000
+  uiPort: 8080
+  sdkSafeDefault: true
+
+# Observability — OTel Collector + Grafana + Prometheus + Loki + Tempo.
+observability:
+  otelCollector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    port: 4317
+    portHttp: 4318
+  grafana:
+    image: grafana/grafana:11.3.0
+    port: 3000
+    dashboards: ../observability/grafana/dashboards
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    port: 9090
+  loki:
+    image: grafana/loki:3.3.2
+    port: 3100
+  tempo:
+    image: grafana/tempo:2.6.0
+    port: 3200

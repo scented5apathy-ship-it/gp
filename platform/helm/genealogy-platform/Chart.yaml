@@ -1,0 +1,46 @@
+apiVersion: v2
+name: genealogy-platform
+description: |
+  Genealogy Platform umbrella Helm chart.
+
+  This chart installs the cluster baseline (namespaces, quotas, Pod Security
+  admission labels, default-deny NetworkPolicies, PodDisruptionBudgets and
+  per-workload probes), plus the shared platform components (Kong, Keycloak,
+  OpenFGA, Strimzi Kafka, Apicurio, Temporal, Istio addons, Vault, S3/MinIO,
+  Valkey, Flagsmith, Argo CD/Rollouts and the OTel/Grafana stack).
+
+  The same chart reconciles SaaS, on-premise and local-development clusters;
+  per-environment overrides live in `values-<env>.yaml` so SaaS/on-prem stay
+  in lockstep with `architecture-decisions.md` ADR-E0.5-01/02.
+
+  Per `design.md` §13 (GitOps), every workload is shipped as a versioned Helm
+  chart and reconciled by Argo CD; canary promotion is performed by Argo
+  Rollouts using SLI signals from the OTel/Prometheus stack.
+
+  Per `agent-execution.md` §4.4 the chart is contract-first (no inline domain
+  authorization), respects tenant isolation by default (NetworkPolicy
+  default-deny + per-tenant namespace quotas), and never stores secrets in
+  values — they are injected by External Secrets / Vault at runtime.
+type: application
+version: 0.1.0
+# appVersion tracks the platform component pin (ADR-E0.5-01).
+appVersion: "0.1.0"
+kubeVersion: ">=1.28.0-0"
+home: https://github.com/genealogy/platform
+sources:
+  - https://github.com/genealogy/platform
+keywords:
+  - genealogy
+  - saas
+  - on-premise
+  - istio
+  - kong
+  - strimzi
+  - temporal
+maintainers:
+  - name: platform-primary
+    email: platform@genealogy.local
+icon: https://genealogy.local/icon.png
+annotations:
+  category: Platform
+  licenses: Apache-2.0

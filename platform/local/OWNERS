@@ -1,0 +1,9 @@
+# Per-directory OWNERS — platform/local developer stack.
+# Source of truth: config/teams.yaml. Sync via
+# tools/scripts/sync-team-map.ts.
+local:
+  primary: platform
+  secondary: "@genealogy/sre"
+  oncall: platform
+  # Mirrors the SaaS topology on a developer workstation (Docker
+  # Desktop / OrbStack / colima / k3d). See profile.yaml + docker-compose.yml.

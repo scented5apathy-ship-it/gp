@@ -1,0 +1,99 @@
+# On-premise values for the genealogy-platform umbrella chart.
+#
+# Per ADR-E0.5-01 / NFR6 the on-prem profile self-hosts every
+# capability (PostgreSQL, Kafka, MinIO, Vault, Valkey) so an
+# enterprise tenant can run air-gapped. The shape of the cluster is
+# the same as SaaS — only the size knobs differ (target ~64 vCPU /
+# 256 GB RAM per `scale-and-slo.md` §2.6) and the secret store is the
+# customer's Vault.
+global:
+  environment: onprem
+  clusterDomain: onprem.genealogy.local
+  region: customer-managed
+
+baseline:
+  podDisruptionBudget:
+    minAvailable: 1
+  certificate:
+    # On-prem customers typically front the cluster with their own
+    # PKI; the default Issuer is overridden per customer.
+    issuerName: internal-ca
+    stagingIssuerName: internal-ca-staging
+    ingressClass: nginx-internal
+  storage:
+    defaultClass: gp-data-ssd
+  namespaces:
+    - name: gp-data
+      quota:
+        requestsCpu: "96"
+        requestsMemory: 384Gi
+        limitsCpu: "192"
+        limitsMemory: 768Gi
+        pods: "80"
+        persistentVolumeClaims: "120"
+
+components:
+  kong:
+    replicas: 3
+    edition: oss
+  keycloak:
+    topology: clustered
+    replicas: 3
+  kafka:
+    replicas: 3
+    replicationFactor: 3
+  apicurio:
+    replicas: 2
+  temporal:
+    replicasFrontend: 2
+    replicasWorker: 4
+    replicasHistory: 1
+    replicasMatching: 2
+    replicasVisibility: 2
+  vault:
+    replicas: 3
+    # On-prem Vault seals against a customer-managed KMS (HSM,
+    # OpenBao, Azure Key Vault, etc.) selected per ADR-E0.5-01.
+    sealMode: transit
+  storage:
+    driver: minio
+    buckets:
+      - media
+      - media-quarantine
+      - dna-raw
+      - import-export
+    encryption: envelope
+    versioning: enabled
+  cache:
+    driver: valkey
+    replicas: 3
+  featureFlags:
+    driver: flagsmith
+    replicas: 2
+  observability:
+    retention:
+      prometheus: 30d
+      loki: 30d
+      tempo: 14d
+
+backups:
+  postgres:
+    schedule: "0 2 * * *"
+    retentionDays: 14
+  kafka:
+    schedule: "0 3 * * *"
+    retentionDays: 7
+  minio:
+    schedule: "0 4 * * *"
+    retentionDays: 60
+  vault:
+    schedule: "0 5 * * *"
+    retentionDays: 365
+
+# Customer-managed Vault path. The path prefix is reserved per
+# deployment (`onprem/<tenant>/...`) so multi-tenant on-prem
+# deployments cannot read each other's secrets.
+secretRefs:
+  vault:
+    address: https://vault.customer.local:8200
+    namespacePrefix: onprem/REPLACE_ME

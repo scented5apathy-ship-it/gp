@@ -1,0 +1,91 @@
+# SaaS values for the genealogy-platform umbrella chart.
+#
+# Per ADR-E0.5-01 / design §13 the SaaS profile pins to managed cloud
+# services where available (PostgreSQL, S3, KMS, Redis) while keeping
+# the same Helm contract as on-premise. Tenant isolation is enforced
+# via per-tenant namespace quotas (baseline.namespaces[*].quota).
+#
+# Per `agent-execution.md` §4.4 secrets are NEVER inlined — the
+# `secretRefs` map below is consumed by External Secrets / Vault.
+global:
+  environment: saas
+  clusterDomain: saas.genealogy.example
+  region: ap-southeast-1
+
+# SaaS pushes the data plane to managed services; the chart only
+# stands up the operator/agent side. Replicas reflect peak Y3 load
+# (`scale-and-slo.md` §2.5) divided across three availability zones.
+baseline:
+  podDisruptionBudget:
+    minAvailable: 2
+  probes:
+    liveness:
+      initialDelaySeconds: 45
+    readiness:
+      initialDelaySeconds: 15
+
+components:
+  kong:
+    replicas: 6
+  keycloak:
+    replicas: 4
+  kafka:
+    replicas: 6
+    replicationFactor: 3
+  apicurio:
+    replicas: 3
+  temporal:
+    replicasFrontend: 4
+    replicasWorker: 8
+    replicasHistory: 3
+    replicasMatching: 4
+    replicasVisibility: 3
+  vault:
+    replicas: 5
+  storage:
+    driver: s3-managed
+    region: ap-southeast-1
+  cache:
+    # Managed Redis for SaaS; replica count + shard count live in
+    # `cache.managed` and are reconciled by the cluster operator.
+    driver: redis-managed
+    replicas: 6
+  observability:
+    retention:
+      prometheus: 90d
+      loki: 90d
+      tempo: 30d
+
+# Backup retention extended for SaaS (audit/compliance needs).
+backups:
+  postgres:
+    schedule: "0 1 * * *"
+    retentionDays: 35
+  kafka:
+    schedule: "0 2 * * *"
+    retentionDays: 14
+  minio:
+    schedule: "0 3 * * *"
+    retentionDays: 90
+  vault:
+    schedule: "0 4 * * *"
+    retentionDays: 90
+
+# External Secrets references. The literal Vault path lives here (no
+# secret material); the Vault policy gate `cluster/<region>/saas/*`
+# is enforced at runtime.
+secretRefs:
+  postgres:
+    vaultPath: secret/saas/data/postgres
+    keys:
+      - username
+      - password
+  kafka:
+    vaultPath: secret/saas/data/kafka
+    keys:
+      - bootstrapServers
+      - saslPassword
+  vault:
+    kms:
+      provider: aws-kms
+      keyArn: arn:aws:kms:ap-southeast-1:000000000000:key/REPLACE_ME

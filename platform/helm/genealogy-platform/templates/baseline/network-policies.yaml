@@ -1,0 +1,42 @@
+{{/*
+Default-deny NetworkPolicy for every baseline namespace.
+
+Per design §13 ("Istio bật strict mTLS, authorization/network policy
+và egress control") the deny posture is the cluster default. Workload
+charts opt-in by layering an allow rule. Per privacy-and-legal-gate
+risk T-06 a missing namespace or missing NetworkPolicy blocks the
+preflight script from declaring the baseline green.
+*/}}
+{{- range $ns := .Values.baseline.namespaces }}
+{{- if $.Values.baseline.defaultDeny.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns.name }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    gp.genealogy/purpose: {{ $ns.purpose }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    {{- if eq $ns.purpose "shared platform components" }}
+    # Platform components need DNS + same-namespace communication.
+    - to:
+        - podSelector: {}
+    {{- end }}
+    {{- range $.Values.baseline.defaultDeny.egressAllow }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .toNamespaceSelector.matchLabels | nindent 14 }}
+      ports:
+        {{- toYaml .ports | nindent 8 }}
+    {{- end }}
+{{- end }}
+{{- end }}

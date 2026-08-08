@@ -1,0 +1,65 @@
+{{/*
+Baseline namespace + quota + Pod Security admission labels.
+
+Iterates `baseline.namespaces[*]` and emits:
+  - Namespace (with PodSecurity labels + gp-tenant-id gateway)
+  - ResourceQuota
+  - LimitRange (sane default request/limit ratio)
+
+Per design §5.1 / privacy-and-legal-gate §6 risk T-06 the namespace
+set is fixed so missing namespaces are caught by the preflight script
+(`scripts/check-platform-baseline.mjs`) before any workload chart is
+installed.
+*/}}
+{{- range $ns := .Values.baseline.namespaces }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns.name }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/managed-by: Helm
+    gp.genealogy/environment: {{ $.Values.global.environment | default "dev" }}
+    gp.genealogy/purpose: {{ $ns.purpose }}
+    {{- if $ns.tenantShared }}
+    gp.genealogy/tenant-shared: "true"
+    {{- end }}
+    {{- if $ns.publicFacing }}
+    gp.genealogy/public-facing: "true"
+    {{- end }}
+    pod-security.kubernetes.io/enforce: {{ $ns.podSecurity }}
+    pod-security.kubernetes.io/audit: {{ $ns.podSecurity }}
+    pod-security.kubernetes.io/warn: {{ $ns.podSecurity }}
+{{- if $ns.quota }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ $ns.name }}-quota
+  namespace: {{ $ns.name }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    gp.genealogy/purpose: {{ $ns.purpose }}
+spec:
+  hard:
+    {{- if $ns.quota.requestsCpu }}
+    requests.cpu: {{ $ns.quota.requestsCpu | quote }}
+    {{- end }}
+    {{- if $ns.quota.requestsMemory }}
+    requests.memory: {{ $ns.quota.requestsMemory | quote }}
+    {{- end }}
+    {{- if $ns.quota.limitsCpu }}
+    limits.cpu: {{ $ns.quota.limitsCpu | quote }}
+    {{- end }}
+    {{- if $ns.quota.limitsMemory }}
+    limits.memory: {{ $ns.quota.limitsMemory | quote }}
+    {{- end }}
+    {{- if $ns.quota.pods }}
+    pods: {{ $ns.quota.pods | quote }}
+    {{- end }}
+    {{- if $ns.quota.persistentVolumeClaims }}
+    persistentvolumeclaims: {{ $ns.quota.persistentVolumeClaims | quote }}
+    {{- end }}
+{{- end }}
+{{- end }}

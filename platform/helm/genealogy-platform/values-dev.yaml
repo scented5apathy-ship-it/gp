@@ -1,0 +1,81 @@
+# Local / dev values for the genealogy-platform umbrella chart.
+#
+# Drives `platform/local/` (kind / k3d / Docker Desktop) so a
+# developer can bring up the full stack on a laptop. Replica counts
+# are pinned to 1 (CPU/RAM friendly) and in-tree replacements are
+# enabled where managed services don't exist locally.
+global:
+  environment: dev
+  clusterDomain: genealogy.localhost
+  region: local
+
+baseline:
+  podDisruptionBudget:
+    minAvailable: 1
+  certificate:
+    issuerName: selfsigned-ca
+    stagingIssuerName: selfsigned-ca
+    ingressClass: nginx
+  probes:
+    liveness:
+      initialDelaySeconds: 10
+    readiness:
+      initialDelaySeconds: 5
+    startup:
+      failureThreshold: 60
+
+components:
+  kong:
+    replicas: 1
+    edition: oss
+  keycloak:
+    topology: standalone
+    replicas: 1
+  kafka:
+    replicas: 1
+    replicationFactor: 1
+  apicurio:
+    replicas: 1
+  temporal:
+    replicasFrontend: 1
+    replicasWorker: 1
+    replicasHistory: 1
+    replicasMatching: 1
+    replicasVisibility: 1
+  vault:
+    replicas: 1
+    # Local dev runs Vault in `dev` mode with auto-unseal; the
+    # preflight script refuses to start with this mode in any other
+    # environment.
+    unsealMode: dev
+  storage:
+    driver: minio
+    encryption: envelope
+  cache:
+    driver: valkey
+    replicas: 1
+  featureFlags:
+    driver: flagsmith
+    replicas: 1
+    sdkSafeDefault: true
+  observability:
+    # Local stack keeps one replica each and a 7-day retention so
+    # the dev VM doesn't run out of disk.
+    retention:
+      prometheus: 7d
+      loki: 7d
+      tempo: 3d
+  gitops:
+    driver: argocd
+    replicas: 1
+    rolloutsEnabled: false
+
+backups:
+  postgres:
+    enabled: false
+  kafka:
+    enabled: false
+  minio:
+    enabled: false
+  vault:
+    enabled: false

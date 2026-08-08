@@ -1,0 +1,319 @@
+# Default values for the genealogy-platform umbrella chart.
+#
+# Per `architecture-decisions.md` ADR-E0.5-01 (pinned baseline) and
+# ADR-E0.5-02 (database topology), the chart ships a single set of
+# defaults that every environment (SaaS, on-prem, staging, dev) inherits.
+# Each environment then layers its overrides via `values-<env>.yaml`.
+#
+# Secrets are NEVER inlined — see `values-<env>.yaml` for the
+# `secretRefs:` mapping consumed by External Secrets / Vault. The
+# `scripts/lint-yaml.mjs` sensitive-key smoke check enforces this.
+
+global:
+  # Tenant boundary = `tenant_pseudo_id`. Workloads must label every
+  # metric/log/trace with this pseudo-id only (no raw tenant UUIDs).
+  tenantLabel: tenant_pseudo_id
+  userLabel: user_pseudo_id
+  # Default cluster domain used by Kong public route DNS and by
+  # cert-manager certificate SANs.
+  clusterDomain: cluster.local
+  # Region tag is consumed by the OTel Collector (per
+  # `ownership-catalog.md` data-residency column) and by Vault policy
+  # templates that refuse cross-region secret reads.
+  region: ap-southeast-1
+  # Environment tag (saas | onprem | staging | dev).
+  environment: dev
+
+# Cluster baseline — applied to every environment.
+baseline:
+  # Namespaces follow the contract: 1 namespace per workload layer.
+  # Pod Security admission profiles are pinned per namespace below.
+  namespaces:
+    - name: gp-platform
+      purpose: shared platform components (Kong, Keycloak, OpenFGA, etc.)
+      podSecurity: restricted
+      quota:
+        requestsCpu: "32"
+        requestsMemory: 64Gi
+        limitsCpu: "64"
+        limitsMemory: 128Gi
+        pods: "100"
+        persistentVolumeClaims: "50"
+        # Tenant isolation enforced by `default-deny` NetworkPolicy +
+        # per-namespace `gp-tenant-id` label consumed by OpenFGA and ABAC.
+        tenantShared: true
+    - name: gp-edge
+      purpose: public edge (Kong ingress, WAF)
+      podSecurity: baseline
+      quota:
+        requestsCpu: "16"
+        requestsMemory: 32Gi
+        limitsCpu: "32"
+        limitsMemory: 64Gi
+        pods: "40"
+        persistentVolumeClaims: "10"
+        publicFacing: true
+    - name: gp-bff
+      purpose: web-bff and public-api applications
+      podSecurity: restricted
+      quota:
+        requestsCpu: "24"
+        requestsMemory: 48Gi
+        limitsCpu: "48"
+        limitsMemory: 96Gi
+        pods: "80"
+        persistentVolumeClaims: "0"
+    - name: gp-services
+      purpose: domain services (11 services)
+      podSecurity: restricted
+      quota:
+        requestsCpu: "64"
+        requestsMemory: 128Gi
+        limitsCpu: "128"
+        limitsMemory: 256Gi
+        pods: "200"
+        persistentVolumeClaims: "100"
+        tenantShared: true
+    - name: gp-workers
+      purpose: async workers (media, search-indexer, export, dna-match)
+      podSecurity: restricted
+      quota:
+        requestsCpu: "48"
+        requestsMemory: 96Gi
+        limitsCpu: "96"
+        limitsMemory: 192Gi
+        pods: "120"
+        persistentVolumeClaims: "80"
+    - name: gp-data
+      purpose: stateful data plane (PostgreSQL, Kafka brokers, MinIO, Vault)
+      podSecurity: baseline
+      quota:
+        requestsCpu: "64"
+        requestsMemory: 256Gi
+        limitsCpu: "128"
+        limitsMemory: 512Gi
+        pods: "60"
+        persistentVolumeClaims: "80"
+        storageClass: gp-data-ssd
+    - name: gp-observability
+      purpose: OTel Collector, Prometheus, Loki, Tempo, Grafana
+      podSecurity: restricted
+      quota:
+        requestsCpu: "24"
+        requestsMemory: 64Gi
+        limitsCpu: "48"
+        limitsMemory: 128Gi
+        pods: "60"
+        persistentVolumeClaims: "30"
+    - name: gp-argocd
+      purpose: Argo CD / Rollouts control plane
+      podSecurity: restricted
+      quota:
+        requestsCpu: "8"
+        requestsMemory: 16Gi
+        limitsCpu: "16"
+        limitsMemory: 32Gi
+        pods: "40"
+        persistentVolumeClaims: "10"
+
+  # Pod Security admission labels applied to every namespace above.
+  # Per ADR-E0.5-01 / design §13, workloads run as non-root with
+  # read-only root filesystem and drop ALL capabilities.
+  podSecurityDefaults:
+    enforce: restricted
+    audit: restricted
+    warn: baseline
+
+  # Default NetworkPolicy posture: deny-all ingress + egress, then
+  # per-workload allow rules layered by the workload templates.
+  defaultDeny:
+    enabled: true
+    egressAllow:
+      # DNS must always be reachable (CoreDNS).
+      - toNamespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        ports:
+          - protocol: UDP
+            port: 53
+          - protocol: TCP
+            port: 53
+
+  # PodDisruptionBudget defaults — at least one replica must remain
+  # available during voluntary disruption so Argo CD can roll without
+  # dropping SLO budget.
+  podDisruptionBudget:
+    minAvailable: 1
+    maxUnavailable: null
+    # Services that are always single-replica (e.g. Kong control plane,
+    # Vault) keep `maxUnavailable: 0` to prevent split-brain.
+    singleReplicaWorkloads:
+      - kong
+      - vault
+      - keycloak
+
+  # Probe defaults — applied by every workload via the `_probes.tpl`
+  # helper. Values match `scale-and-slo.md` §11 readiness budget.
+  probes:
+    startup:
+      failureThreshold: 30
+      periodSeconds: 5
+      timeoutSeconds: 3
+    liveness:
+      failureThreshold: 3
+      periodSeconds: 10
+      timeoutSeconds: 3
+      initialDelaySeconds: 30
+    readiness:
+      failureThreshold: 3
+      periodSeconds: 5
+      timeoutSeconds: 2
+      initialDelaySeconds: 10
+    # `/healthz/live` and `/healthz/ready` are the contract enforced by
+    # every Spring Boot service template (`libs/platform-spring-boot-starter`).
+    paths:
+      live: /healthz/live
+      ready: /healthz/ready
+      startup: /healthz/startup
+
+  # Storage classes — used by the data plane.
+  storage:
+    defaultClass: gp-data-ssd
+    classes:
+      - name: gp-data-ssd
+        type: ssd
+        reclaimPolicy: Retain
+        # Encrypted at rest per ADR §12 (KMS key per cluster).
+        encrypted: true
+      - name: gp-data-hdd
+        type: hdd
+        reclaimPolicy: Retain
+        encrypted: true
+      - name: gp-data-nvme
+        type: nvme
+        reclaimPolicy: Retain
+        encrypted: true
+
+  # cert-manager ClusterIssuer that Kong + BFF + public-api consume.
+  # The preflight script (`scripts/preflight-cluster.mjs`) requires a
+  # healthy `Ready=True` Issuer before declaring baseline OK.
+  certificate:
+    issuerName: letsencrypt-prod
+    stagingIssuerName: letsencrypt-staging
+    # Domain placeholders — overridden per environment.
+    ingressClass: nginx
+
+# Shared platform components. Each block ships its own subchart
+# dependencies (kept inline here so the umbrella is self-contained for
+# air-gapped on-premise installs). Detailed component config lives in
+# the E2.2–E2.10 tasks; the values here are contract defaults so the
+# umbrella can `helm template --validate-only` from day one.
+components:
+  kong:
+    enabled: true
+    edition: oss
+    # Domain authorization lives in services; Kong handles only edge
+    # policies (TLS, auth validation, CORS, request-size, rate limit,
+    # correlation ID). See tasks.md E2.2.
+    domainAuthorizationInKong: false
+    replicas: 3
+  keycloak:
+    enabled: true
+    topology: standalone
+    # Realm strategy + operator lifecycle owned by E3.1.
+    realmStrategy: per-environment
+    replicas: 2
+  openfga:
+    enabled: true
+    replicas: 2
+    # Store/model lifecycle is an E3.2 task; the chart installs the
+    # CRDs + controller only.
+  kafka:
+    enabled: true
+    # Strimzi-managed; see E2.3 for topic/ACL/quota policy.
+    replicas: 3
+  apicurio:
+    enabled: true
+    replicas: 2
+  temporal:
+    enabled: true
+    replicasFrontend: 3
+    replicasWorker: 4
+    replicasHistory: 1
+    replicasMatching: 2
+    replicasVisibility: 2
+  istio:
+    enabled: true
+    profile: default
+    # Strict mTLS, deny-by-default AuthorizationPolicy and no in-mesh
+    # retry (mesh + app retries are kept disjoint per design §13).
+    mesh:
+      mtls: STRICT
+      outboundPolicy: REGISTRY_ONLY
+      inboundPolicy: MUTUAL_TLS
+  vault:
+    enabled: true
+    # KMS abstraction (E2.6) wires cloud KMS for SaaS, transit Vault
+    # for on-premise; the chart only ships the server + agent.
+    unsealMode: auto
+    replicas: 3
+  storage:
+    # S3/MinIO + bucket policy (E2.7).
+    driver: minio
+    buckets:
+      - media
+      - media-quarantine
+      - dna-raw
+      - import-export
+    encryption: envelope
+    versioning: enabled
+  cache:
+    # Valkey (Redis-compatible) for cache/session/rate state (E2.7).
+    driver: valkey
+    replicas: 2
+  featureFlags:
+    # Flagsmith + OpenFeature (E2.8).
+    driver: flagsmith
+    replicas: 2
+    sdkSafeDefault: true
+  gitops:
+    # Argo CD + Rollouts (E2.9).
+    driver: argocd
+    rolloutsEnabled: true
+    # Merge / config-change / promotion-approval separation enforced
+    # via AppProject RBAC; template below.
+    rbacStrict: true
+  observability:
+    # OTel Collector + Prometheus + Loki + Tempo + Grafana (E2.10).
+    otelCollector: enabled
+    prometheus: enabled
+    loki: enabled
+    tempo: enabled
+    grafana: enabled
+    retention:
+      prometheus: 30d
+      loki: 30d
+      tempo: 14d
+
+# Backups (Per design §13). The `scripts/check-platform-baseline.mjs`
+# helper requires a CronJob manifest in this section for every
+# stateful component before marking baseline green.
+backups:
+  postgres:
+    enabled: true
+    schedule: "0 2 * * *"
+    # Vault / S3 destination references an ExternalSecret (no
+    # literal credential).
+    destinationRef: backup-postgres
+  kafka:
+    enabled: true
+    schedule: "0 3 * * *"
+    destinationRef: backup-kafka
+  minio:
+    enabled: true
+    schedule: "0 4 * * *"
+    destinationRef: backup-minio
+  vault:
+    enabled: true
+    schedule: "0 5 * * *"
+    destinationRef: backup-vault
