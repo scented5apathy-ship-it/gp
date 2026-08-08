@@ -28,8 +28,14 @@ global:
 baseline:
   # Namespaces follow the contract: 1 namespace per workload layer.
   # Pod Security admission profiles are pinned per namespace below.
+  # The map is keyed by namespace name so per-environment overrides
+  # (`baseline.namespacesOverrides.<ns>`) can patch a single
+  # namespace without replacing the entire list (Helm default list
+  # replacement would otherwise wipe namespaces on every per-env
+  # values file).
   namespaces:
-    - name: gp-platform
+    gp-platform:
+      name: gp-platform
       purpose: shared platform components (Kong, Keycloak, OpenFGA, etc.)
       podSecurity: restricted
       quota:
@@ -42,7 +48,8 @@ baseline:
         # Tenant isolation enforced by `default-deny` NetworkPolicy +
         # per-namespace `gp-tenant-id` label consumed by OpenFGA and ABAC.
         tenantShared: true
-    - name: gp-edge
+    gp-edge:
+      name: gp-edge
       purpose: public edge (Kong ingress, WAF)
       podSecurity: baseline
       quota:
@@ -53,7 +60,8 @@ baseline:
         pods: "40"
         persistentVolumeClaims: "10"
         publicFacing: true
-    - name: gp-bff
+    gp-bff:
+      name: gp-bff
       purpose: web-bff and public-api applications
       podSecurity: restricted
       quota:
@@ -63,7 +71,8 @@ baseline:
         limitsMemory: 96Gi
         pods: "80"
         persistentVolumeClaims: "0"
-    - name: gp-services
+    gp-services:
+      name: gp-services
       purpose: domain services (11 services)
       podSecurity: restricted
       quota:
@@ -74,7 +83,8 @@ baseline:
         pods: "200"
         persistentVolumeClaims: "100"
         tenantShared: true
-    - name: gp-workers
+    gp-workers:
+      name: gp-workers
       purpose: async workers (media, search-indexer, export, dna-match)
       podSecurity: restricted
       quota:
@@ -84,7 +94,8 @@ baseline:
         limitsMemory: 192Gi
         pods: "120"
         persistentVolumeClaims: "80"
-    - name: gp-data
+    gp-data:
+      name: gp-data
       purpose: stateful data plane (PostgreSQL, Kafka brokers, MinIO, Vault)
       podSecurity: baseline
       quota:
@@ -95,7 +106,8 @@ baseline:
         pods: "60"
         persistentVolumeClaims: "80"
         storageClass: gp-data-ssd
-    - name: gp-observability
+    gp-observability:
+      name: gp-observability
       purpose: OTel Collector, Prometheus, Loki, Tempo, Grafana
       podSecurity: restricted
       quota:
@@ -105,7 +117,8 @@ baseline:
         limitsMemory: 128Gi
         pods: "60"
         persistentVolumeClaims: "30"
-    - name: gp-argocd
+    gp-argocd:
+      name: gp-argocd
       purpose: Argo CD / Rollouts control plane
       podSecurity: restricted
       quota:
@@ -115,6 +128,12 @@ baseline:
         limitsMemory: 32Gi
         pods: "40"
         persistentVolumeClaims: "10"
+
+  # Per-environment overrides. Each entry is deep-merged into the
+  # matching namespace entry above (sprig `merge` semantics). Use
+  # this to bump a quota or change a podSecurity profile without
+  # redacting the rest of the namespace definition.
+  namespacesOverrides: {}
 
   # Pod Security admission labels applied to every namespace above.
   # Per ADR-E0.5-01 / design §13, workloads run as non-root with
