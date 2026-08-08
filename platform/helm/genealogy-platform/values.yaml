@@ -217,6 +217,28 @@ components:
     # correlation ID). See tasks.md E2.2.
     domainAuthorizationInKong: false
     replicas: 3
+    # Image pin — ADR-E0.5-01 baseline (Kong 3.8.x). The Helm workload
+    # template renders a digest-pinned reference; Renovate bumps the
+    # patch line per ADR-E0.5-01.
+    image:
+      repository: kong
+      tag: "3.8.0"
+      registry: docker.io
+    # Path to the DB-less declarative config mounted by the
+    # `kong-declarative-config` ConfigMap. Per E2.2 the same file is
+    # reused by SaaS / on-prem / dev so route/plugin diffs stay in
+    # git.
+    declarativeConfig: /etc/kong/kong.yml
+    # Explicit allow-list of plugins. Anything outside this list is
+    # denied at startup, which makes the contract auditable.
+    enabledPlugins:
+      - correlation-id
+      - cors
+      - request-size-limiting
+      - rate-limiting
+      - ip-restriction
+      - jwt
+      - prometheus
   keycloak:
     enabled: true
     topology: standalone

@@ -144,3 +144,23 @@ observability:
   tempo:
     image: grafana/tempo:2.6.0
     port: 3200
+
+# Kong Gateway (E2.2) — DB-less, declarative config. The same
+# `kong.yml` is reused by the umbrella Helm chart; the local stack
+# mounts it at `/etc/kong/kong.yml`.
+kong:
+  image: kong:3.8.0
+  edition: oss
+  database: off
+  declarativeConfig: /etc/kong/kong.yml
+  proxyPort: 8000
+  proxyTlsPort: 8443
+  statusPort: 8100
+  enabledPlugins:
+    - correlation-id
+    - cors
+    - request-size-limiting
+    - rate-limiting
+    - ip-restriction
+    - jwt
+    - prometheus

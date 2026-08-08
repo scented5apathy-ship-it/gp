@@ -80,7 +80,9 @@ Every change must respect:
       `gradle.lockfile` committed)
 - [ ] `pnpm check:platform:baseline` passes (cluster baseline
       preflight: namespaces, default-deny NetworkPolicy, PDB,
-      StorageClass encryption, per-env values, probe contract)
+      StorageClass encryption, per-env values, probe contract,
+      Kong runtime invariants — E2.2)
+- [ ] `pnpm lint:kong` passes (Kong declarative config validator — E2.2)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

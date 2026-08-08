@@ -59,11 +59,13 @@ function makeFixture() {
     recursive: true,
   });
   mkdirSync(join(dir, "platform", "local", "db"), { recursive: true });
+  mkdirSync(join(dir, "platform", "kong"), { recursive: true });
   copyTree(
     join(ROOT, "platform", "helm", "genealogy-platform"),
     join(dir, "platform", "helm", "genealogy-platform"),
   );
   copyTree(join(ROOT, "platform", "local"), join(dir, "platform", "local"));
+  copyTree(join(ROOT, "platform", "kong"), join(dir, "platform", "kong"));
   return dir;
 }
 

@@ -1,0 +1,26 @@
+{{/*
+Kong ConfigMap — declarative DB-less configuration.
+
+Per `tasks.md` E2.2 the same `kong.yml` ships for SaaS, on-prem and
+local. The chart mounts it at `/etc/kong/kong.yml` and sets
+`KONG_DECLARATIVE_CONFIG` so Kong reloads it on every pod restart.
+Rolling back a route/plugin change is a Helm revision revert; the
+config never lives in the Kong admin API.
+
+Owner: platform-primary (`platform/helm/OWNERS`).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kong-declarative-config
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kong
+    app.kubernetes.io/version: {{ default "3.8.0" .Values.components.kong.image.tag }}
+    gp.genealogy/contract-only: "true"
+data:
+  kong.yml: |-
+{{- range $line := splitList "\n" (.Files.Get "files/kong.yml") }}
+    {{ $line }}
+{{- end }}

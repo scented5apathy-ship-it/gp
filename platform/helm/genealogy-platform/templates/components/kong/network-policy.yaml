@@ -1,0 +1,79 @@
+{{/*
+Kong NetworkPolicy — explicit ingress from the Istio ingress gateway,
+the CDN health-check prefix and the platform bastion; egress to the
+BFF / public-api / admin-api workloads in `gp-bff` / `gp-platform`.
+
+Per `design.md` §13 / E2.2 Kong is the only edge workload allowed to
+reach the public surface. The default-deny baseline NetworkPolicy is
+already applied by `templates/baseline/network-policies.yaml`; this
+manifest layers the explicit allow list on top.
+*/}}
+{{- $kong := .Values.components.kong }}
+{{- if $kong.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kong-edge-allow
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kong
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: kong
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Istio ingress gateway (front of CDN/WAF).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-edge
+          podSelector:
+            matchLabels:
+              istio: ingressgateway
+      ports:
+        - protocol: TCP
+          port: proxy
+        - protocol: TCP
+          port: proxy-ssl
+    # Platform bastion / Argo CD / on-call VPN for the admin surface.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gp.genealogy/purpose: shared platform components
+      ports:
+        - protocol: TCP
+          port: proxy-ssl
+  egress:
+    # DNS to CoreDNS is already permitted by the default-deny baseline.
+    # Kong needs to reach the destination services in gp-bff and
+    # gp-platform.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-bff
+      ports:
+        - protocol: TCP
+          port: 80
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - protocol: TCP
+          port: 80
+    # OTel Collector (telemetry).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+{{- end }}

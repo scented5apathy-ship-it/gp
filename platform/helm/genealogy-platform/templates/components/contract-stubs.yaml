@@ -28,17 +28,31 @@ metadata:
 data:
   contract: |
     # Kong runtime contract (E2.2).
-    # Domain authorization is forbidden here per design.md §5.
+    # Domain authorization is forbidden here per design.md §4.1 / §5.
     responsibilities:
       - tls termination
-      - auth-validation
+      - auth-validation (jwt slot; key resolution wired in E3.1)
       - cors
       - request-size limit
-      - rate limit (per tenant + per route)
-      - correlation-id injection
+      - rate limit (per route class)
+      - correlation-id injection (X-Request-Id)
+    route_classes:
+      - public      # web-public  -> gp-bff/web-public
+      - authenticated # web-bff    -> gp-bff/web-bff
+      - partner     # public-api  -> gp-bff/public-api
+      - admin       # admin-api   -> gp-platform/admin-api
     forbidden:
-      - business authorization
+      - business authorization (living / DNA / consent)
       - aggregate data storage
+      - OpenFGA tuple write
+      - ABAC decision
+    notes:
+      - All routes are path-scoped and tag-scoped so a cross-route
+        request cannot reach the wrong backend.
+      - The admin route is additionally IP-restricted to the bastion
+        + Argo CD + on-call VPN ranges.
+      - `KONG_PLUGINS` allow-list rejects any plugin that could carry
+        domain authorization at startup.
 {{- end }}
 {{- if eq $name "vault" }}
 ---

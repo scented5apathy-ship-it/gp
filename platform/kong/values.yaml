@@ -1,0 +1,94 @@
+# Kong Gateway runtime configuration — Kong OSS, DB-less.
+#
+# This block is consumed by:
+#   - `platform/helm/genealogy-platform/templates/components/kong/`
+#     (umbrella chart workload manifests for SaaS / on-prem)
+#   - `platform/local/docker-compose.yml` via
+#     `platform/kong/kong.yml` (mount at `/etc/kong/kong.yml`)
+#
+# Per `architecture-decisions.md` ADR-E0.5-04 (Kong OSS behind cloud
+# CDN/WAF) and `tasks.md` E2.2, Kong is edge-only: TLS, auth
+# validation, CORS, request-size, rate limit, correlation-id. Domain
+# authorization stays in the destination service (BFF / public-api).
+#
+# Image: pinned to `kong:3.8` per ADR-E0.5-01.
+
+kong:
+  image:
+    repository: kong
+    tag: "3.8.0"
+    registry: docker.io
+  # DB-less: declarative config only. Postgres / Cassandra is forbidden
+  # so the control plane stays in git and rollback is a Helm revision.
+  database: "off"
+  declarativeConfig: /etc/kong/kong.yml
+  # Plugins explicitly enabled. Anything outside this list is denied by
+  # the `KONG_PLUGINS` env var so a developer cannot accidentally load
+  # `oauth2-introspection`, `mtls-auth` or any other plugin that could
+  # carry domain authorization.
+  enabledPlugins:
+    - correlation-id
+    - cors
+    - request-size-limiting
+    - rate-limiting
+    - ip-restriction
+    - jwt            # verify-only, key resolver wired in E3.1
+    - prometheus     # /metrics
+  # Resources sized for the edge load profile (`scale-and-slo.md` §2.5).
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  # TLS — Kong listens only on TLS; the cloud CDN/WAF terminates the
+  # public edge certificate. The private certificate here is loaded
+  # from Vault via External Secrets (no literal credential).
+  tls:
+    enabled: true
+    minimumProtocolVersion: "TLSv1.3"
+    ciphers:
+      - "TLS_AES_256_GCM_SHA384"
+      - "TLS_AES_128_GCM_SHA256"
+      - "TLS_CHACHA20_POLY1305_SHA256"
+    http2: true
+  # Upstream service hosts (resolved by Kong via cluster DNS).
+  # Overridden per environment so SaaS / on-prem / dev can target the
+  # right cluster service names.
+  services:
+    web-public:
+      host: web-public.gp-bff.svc.cluster.local
+      port: 80
+    web-bff:
+      host: web-bff.gp-bff.svc.cluster.local
+      port: 80
+    public-api:
+      host: public-api.gp-bff.svc.cluster.local
+      port: 80
+    admin-api:
+      host: admin-api.gp-platform.svc.cluster.local
+      port: 80
+  # SNIs the certificate SANs must cover. The umbrella chart's
+  # cert-manager Issuer template uses these for cert provisioning.
+  snis:
+    - "public.genealogy.local"
+    - "app.genealogy.local"
+    - "api.genealogy.local"
+    - "admin.genealogy.local"
+  # Metrics — Prometheus plugin enabled on `/metrics`. The OTel
+  # Collector scrapes Kong directly in SaaS; on-prem uses the same
+  # endpoint.
+  metrics:
+    prometheus:
+      enabled: true
+      path: "/metrics"
+      port: 9542
+  # Logging — JSON to stdout so the OTel Collector can pick it up via
+  # the Kubernetes log enrichment (no direct Loki exporter required).
+  logging:
+    level: "notice"
+    format: "json"
+  # Rollout posture — single-replica control-plane PDB is enforced by
+  # the umbrella chart; this block is only here for documentation.
+  singleReplicaControlPlane: true

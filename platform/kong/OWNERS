@@ -1,0 +1,11 @@
+# Per-directory OWNERS — platform/kong (Kong declarative config + values).
+# Source of truth: config/teams.yaml. Sync via
+# tools/scripts/sync-team-map.ts.
+kong:
+  primary: platform
+  secondary: "@genealogy/security"
+  oncall: platform
+  # E2.2 ships the Kong runtime config (routes, plugins, rate limit,
+  # correlation ID) for the edge gateway. Domain authorization is
+  # forbidden here per design.md §4.1; the contract stub lives in
+  # platform/helm/genealogy-platform/templates/components/contract-stubs.yaml.

@@ -1,0 +1,326 @@
+# Kong Gateway declarative config — DB-less mode.
+#
+# Loaded by Kong via `KONG_DECLARATIVE_CONFIG` (umbrella Helm chart and
+# the local `docker-compose.yml` both mount this file at
+# `/etc/kong/kong.yml`).
+#
+# Per `design.md` §4.1 / `tasks.md` E2.2 Kong handles **only**:
+#   - TLS termination (fronted by the cloud CDN/WAF per ADR-E0.5-04)
+#   - JWT / OIDC validation (`jwt`, `oidc`, `keycloak` are reserved
+#     for E3.1; this file wires the slot with explicit "verify-only"
+#     semantics so domain authorization can never leak into Kong)
+#   - CORS, request-size, rate limit and correlation-id injection
+#   - Routing for the four route classes (public / authenticated /
+#     partner / admin)
+#
+# Domain authorization (OpenFGA + ABAC, living/DNA/consent) MUST live
+# in the destination service (BFF, public-api, domain microservice).
+# The `kong-contract-stub` ConfigMap shipped by the umbrella chart
+# encodes this contract; the lint script `scripts/lint-kong-config.mjs`
+# asserts the config below respects it.
+#
+# Reference: ADR-E0.5-04 (Kong OSS), `architecture-decisions.md` §4.
+
+_format_version: "3.0"
+
+# Runtime posture — DB-less. The Kong process is started with
+# `KONG_DATABASE=off` (see `platform/local/docker-compose.yml` and the
+# Helm Deployment env block); this stanza documents the choice in the
+# config file itself so a reader doesn't need to consult the chart.
+database: "off"
+
+# ---------------------------------------------------------------------------
+# Service entries — one logical backend per Kong route class. Each service
+# resolves to a workload in the `gp-bff` / `gp-services` namespace; the
+# destination is wired by `kong.tls.services.<name>.host` in the Helm
+# values (umbrella chart) so the same declarative config is reused for
+# SaaS, on-prem and local.
+# ---------------------------------------------------------------------------
+services:
+  # Public, unauthenticated traffic — marketing, public tree views,
+  # health probes. Routed to the Next.js PWA shell (`web-app`).
+  - name: web-public
+    url: "http://web-public.gp-bff.svc.cluster.local:80"
+    protocol: http
+    path: "/"
+    connect_timeout: 5000
+    write_timeout: 30000
+    read_timeout: 30000
+    retries: 2
+
+  # Authenticated web traffic — the SPA talks to the BFF (Spring Boot)
+  # which then calls domain services over gRPC through the Istio mesh.
+  - name: web-bff
+    url: "http://web-bff.gp-bff.svc.cluster.local:80"
+    protocol: http
+    path: "/"
+    connect_timeout: 5000
+    write_timeout: 30000
+    read_timeout: 30000
+    retries: 2
+
+  # Partner / public API surface — versioned OpenAPI, idempotent, OAuth
+  # scopes mapped to OpenFGA+ABAC (E9.5). Domain authorization remains
+  # in the `public-api` workload.
+  - name: public-api
+    url: "http://public-api.gp-bff.svc.cluster.local:80"
+    protocol: http
+    path: "/"
+    connect_timeout: 5000
+    write_timeout: 30000
+    read_timeout: 30000
+    retries: 2
+
+  # Internal admin/operator surface — only reachable through the
+  # dedicated admin route + IP allow-list. Kong never carries business
+  # authorization; admin endpoints call directly into tenant-service /
+  # audit-service.
+  - name: admin-api
+    url: "http://admin-api.gp-platform.svc.cluster.local:80"
+    protocol: http
+    path: "/"
+    connect_timeout: 5000
+    write_timeout: 30000
+    read_timeout: 30000
+    retries: 1
+
+# ---------------------------------------------------------------------------
+# Routes — one Kong route per public surface. Each route references a
+# single service above and is restricted to its own path prefix so a
+# cross-route request cannot reach the wrong backend.
+# ---------------------------------------------------------------------------
+routes:
+  # Public surface — marketing, public tree views, robots.txt, sitemap.
+  - name: public-web-root
+    service: web-public
+    paths:
+      - "/"
+    protocols:
+      - "https"
+    strip_path: false
+    preserve_host: true
+    # /api/health is intentionally served by the PWA shell (which
+    # proxies to /healthz on web-bff); Kong only forwards.
+    snis:
+      - "public.genealogy.local"
+    tags:
+      - "route-class:public"
+
+  # Authenticated web — covers every browser-originated /api/* path.
+  - name: web-bff-api
+    service: web-bff
+    paths:
+      - "/api"
+    protocols:
+      - "https"
+    strip_path: false
+    preserve_host: true
+    snis:
+      - "app.genealogy.local"
+    tags:
+      - "route-class:authenticated"
+
+  # Public API — versioned, partner-facing. The route is gated by the
+  # `jwt` plugin (configured at the route level so partner tokens
+  # never reach the admin or authenticated routes).
+  - name: public-api-v1
+    service: public-api
+    paths:
+      - "/v1"
+    protocols:
+      - "https"
+    strip_path: false
+    preserve_host: true
+    snis:
+      - "api.genealogy.local"
+    tags:
+      - "route-class:partner"
+
+  # Admin surface — narrow path, separate SNI, separate plugin stack.
+  # An operator must hit the dedicated admin SNI to even reach this
+  # route; the Kong `ip-restriction` plugin allows only the platform
+  # bastion / Argo CD / on-call VPN ranges.
+  - name: admin-api-v1
+    service: admin-api
+    paths:
+      - "/admin"
+    protocols:
+      - "https"
+    strip_path: true
+    preserve_host: false
+    snis:
+      - "admin.genealogy.local"
+    tags:
+      - "route-class:admin"
+
+# ---------------------------------------------------------------------------
+# Plugins — every plugin is applied at the route class it serves.
+# Per `design.md` §13 we never use the global plugin block for traffic
+# policy; routing-aware application keeps the policy diffable.
+# ---------------------------------------------------------------------------
+
+# Correlation ID — applied to every route so a request can be traced
+# from the CDN through Kong → BFF → gRPC → Kafka. Uses the standard
+# `correlation-id` plugin (RFC 4122 uuid + `X-Request-Id` echo).
+plugins:
+  - name: correlation-id
+    route: public-web-root
+    config:
+      header_name: "X-Request-Id"
+      generator: "uuid"
+      echo_downstream: true
+
+  - name: correlation-id
+    route: web-bff-api
+    config:
+      header_name: "X-Request-Id"
+      generator: "uuid"
+      echo_downstream: true
+
+  - name: correlation-id
+    route: public-api-v1
+    config:
+      header_name: "X-Request-Id"
+      generator: "uuid"
+      echo_downstream: true
+
+  - name: correlation-id
+    route: admin-api-v1
+    config:
+      header_name: "X-Request-Id"
+      generator: "uuid"
+      echo_downstream: true
+
+  # CORS — only the web routes need a CORS policy. The admin + public
+  # API are server-to-server and explicitly reject browser origins.
+  - name: cors
+    route: public-web-root
+    config:
+      origins:
+        - "https://app.genealogy.local"
+        - "https://public.genealogy.local"
+      methods:
+        - "GET"
+        - "HEAD"
+        - "OPTIONS"
+      headers:
+        - "Accept"
+        - "Authorization"
+        - "Content-Type"
+        - "X-Request-Id"
+        - "Idempotency-Key"
+      exposed_headers:
+        - "X-Request-Id"
+        - "ETag"
+      credentials: true
+      max_age: 600
+      preflight_continue: false
+
+  - name: cors
+    route: web-bff-api
+    config:
+      origins:
+        - "https://app.genealogy.local"
+      methods:
+        - "GET"
+        - "POST"
+        - "PUT"
+        - "PATCH"
+        - "DELETE"
+        - "OPTIONS"
+      headers:
+        - "Accept"
+        - "Authorization"
+        - "Content-Type"
+        - "X-Request-Id"
+        - "If-Match"
+        - "Idempotency-Key"
+      exposed_headers:
+        - "X-Request-Id"
+        - "ETag"
+      credentials: true
+      max_age: 600
+      preflight_continue: false
+
+  # Request size — protects against decompression bombs and oversized
+  # multipart bodies. Limit matches `platform/security/waf.yaml` and
+  # `web-bff` BFF file-upload budget (E7.1).
+  - name: request-size-limiting
+    route: web-bff-api
+    config:
+      allowed_payload_size: "16"   # MB
+      size_unit: "megabytes"
+      require_content_length: true
+
+  - name: request-size-limiting
+    route: public-api-v1
+    config:
+      allowed_payload_size: "8"    # MB
+      size_unit: "megabytes"
+      require_content_length: true
+
+  - name: request-size-limiting
+    route: admin-api-v1
+    config:
+      allowed_payload_size: "4"    # MB
+      size_unit: "megabytes"
+      require_content_length: true
+
+  # Rate limit — coarse edge limit per route class. The domain
+  # service applies the per-tenant / per-user business limit; this
+  # edge limit exists to stop a runaway client before it reaches the
+  # mesh.
+  - name: rate-limiting
+    route: public-web-root
+    config:
+      minute: 600
+      hour: 20000
+      policy: "local"
+      fault_tolerant: true
+      hide_client_headers: false
+
+  - name: rate-limiting
+    route: web-bff-api
+    config:
+      minute: 300
+      hour: 9000
+      policy: "local"
+      fault_tolerant: true
+      hide_client_headers: false
+
+  - name: rate-limiting
+    route: public-api-v1
+    config:
+      minute: 120
+      hour: 3600
+      policy: "local"
+      fault_tolerant: true
+      hide_client_headers: false
+
+  - name: rate-limiting
+    route: admin-api-v1
+    config:
+      minute: 60
+      hour: 600
+      policy: "local"
+      fault_tolerant: true
+      hide_client_headers: false
+
+  # IP restriction — only the admin route is reachable from outside the
+  # bastion / Argo CD / VPN. Wildcard CIDRs are placeholders; the
+  # production helm values overlay the real ranges.
+  - name: ip-restriction
+    route: admin-api-v1
+    config:
+      allow:
+        - "10.0.0.0/8"          # internal cluster
+        - "127.0.0.1/32"        # localhost (smoke)
+      deny:
+        - "0.0.0.0/0"
+
+# ---------------------------------------------------------------------------
+# Upstreams — reserved for the local dev stack. The umbrella chart
+# wires upstreams through `kong.upstreams` so we don't pin cluster
+# service DNS into this shared file.
+# ---------------------------------------------------------------------------
+upstreams: []

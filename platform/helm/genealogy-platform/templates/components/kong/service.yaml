@@ -1,0 +1,52 @@
+{{/*
+Kong Service + ServiceAccount + HPA + Ingress.
+
+The Service is the canonical cluster-internal entrypoint for the BFF
+/ public-api / admin-api workloads that consume Kong. The Ingress is
+only used in dev/on-prem where Kong itself receives external traffic
+without the CDN in front; in SaaS the CDN/WAF fronts the cluster and
+the Kong Service is reached via the Istio ingress gateway.
+*/}}
+{{- $kong := .Values.components.kong }}
+{{- if $kong.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kong
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kong
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kong
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kong
+  ports:
+    - name: proxy
+      port: 80
+      targetPort: proxy
+      protocol: TCP
+    - name: proxy-ssl
+      port: 443
+      targetPort: proxy-ssl
+      protocol: TCP
+    - name: status
+      port: 8100
+      targetPort: status
+      protocol: TCP
+    - name: metrics
+      port: 9542
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

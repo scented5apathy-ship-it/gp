@@ -19,6 +19,8 @@ during development. Components included:
 - Valkey (Redis-compatible) and Flagsmith local container.
 - OTel Collector + Grafana OSS dashboards from
   `platform/observability/`.
+- Kong OSS 3.8 in DB-less mode (`platform/kong/kong.yml` mounted at
+  `/etc/kong/kong.yml`) — see [E2.2](#e22--kong-gateway-runtime-added-in-e22).
 
 Entrypoints (added in later epics): `make up`, `make down`,
 `make logs`, `make reset`. Owner: platform-primary.
@@ -46,3 +48,28 @@ local stack; `docker-compose.yml` is the Docker-Desktop / OrbStack
 
 Secrets come from `.env.local` (gitignored); the preflight script
 refuses any literal credential in `docker-compose.yml`.
+
+## E2.2 — Kong Gateway runtime (added in E2.2)
+
+Kong OSS 3.8 (per ADR-E0.5-01 / ADR-E0.5-04) runs in DB-less mode
+and mounts `platform/kong/kong.yml` at `/etc/kong/kong.yml`. The
+same declarative config ships to SaaS, on-prem and the local stack
+so route / plugin diffs stay in git.
+
+- Kong listens on `:8000` (proxy HTTP), `:8443` (proxy TLS) and
+  `:8100` (status / health).
+- Plugins enabled: `correlation-id`, `cors`, `request-size-limiting`,
+  `rate-limiting`, `ip-restriction`, `jwt` (slot reserved for E3.1),
+  `prometheus`.
+- Domain authorization plugins (`oauth2-introspection`, `mtls-auth`,
+  `key-auth`, `acl`, `basic-auth`, `ldap-auth`) are forbidden; the
+  preflight scripts (`scripts/lint-kong-config.mjs` /
+  `scripts/check-platform-baseline.mjs`) refuse a config that wires
+  any of them.
+
+Validation commands:
+
+- `pnpm lint:kong`
+- `pnpm check:platform:baseline`
+- `pnpm smoke:kong` (requires Kong up locally — the script skips
+  itself with a warning if not reachable).

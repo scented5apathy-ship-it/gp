@@ -28,6 +28,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.BASELINE_ROOT ? resolve(process.env.BASELINE_ROOT) : resolve(HERE, "..");
 const HELM_DIR = join(ROOT, "platform", "helm", "genealogy-platform");
 const LOCAL_DIR = join(ROOT, "platform", "local");
+const KONG_DIR = join(ROOT, "platform", "kong");
 const PROBE_CONTRACT = {
   live: "/healthz/live",
   ready: "/healthz/ready",
@@ -283,6 +284,91 @@ function finish() {
   console.log(
     `[baseline] clean — namespaces=${REQUIRED_NAMESPACES.length}, envs=${REQUIRED_ENV_VALUES.length}, versions=${versionMatrix.length}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// E2.2 — Kong runtime invariants (static check; `scripts/lint-kong-config.mjs`
+// runs the deep YAML validation).
+// ---------------------------------------------------------------------------
+const kongConfig = join(KONG_DIR, "kong.yml");
+const kongValues = join(KONG_DIR, "values.yaml");
+const kongTemplates = join(HELM_DIR, "templates", "components", "kong");
+const kongDeclarativeCm = join(kongTemplates, "declarative-configmap.yaml");
+const kongDeployment = join(kongTemplates, "deployment.yaml");
+const kongService = join(kongTemplates, "service.yaml");
+const kongNetPol = join(kongTemplates, "network-policy.yaml");
+
+if (!existsSync(kongConfig)) {
+  fail("kong declarative config missing — expected platform/kong/kong.yml (E2.2)");
+} else {
+  const kong = readFileSync(kongConfig, "utf8");
+  if (!/_format_version:\s*"3\.0"/.test(kong)) {
+    fail("kong.yml must declare _format_version: '3.0' (Kong 3.x DB-less)");
+  }
+  // The local profile uses `KONG_DATABASE: "off"` in docker-compose;
+  // the umbrella / Kong config uses `database: "off"`. Accept both.
+  if (!/KONG_DATABASE:\s*"off"/.test(kong) && !/database:\s*"off"/.test(kong)) {
+    fail("kong.yml / docker-compose must declare KONG_DATABASE: off or database: off");
+  }
+  for (const route of ["public-web-root", "web-bff-api", "public-api-v1", "admin-api-v1"]) {
+    if (!new RegExp(`name:\\s*${route}\\b`).test(kong)) {
+      fail(`kong.yml missing required route '${route}' (E2.2)`);
+    }
+  }
+  if (!/route-class:\s*public\b/.test(kong) ||
+      !/route-class:\s*authenticated\b/.test(kong) ||
+      !/route-class:\s*partner\b/.test(kong) ||
+      !/route-class:\s*admin\b/.test(kong)) {
+    fail("kong.yml must tag every route with 'route-class:<public|authenticated|partner|admin>'");
+  }
+  if (!/correlation-id/.test(kong) || !/rate-limiting/.test(kong)) {
+    fail("kong.yml must enable correlation-id and rate-limiting plugins");
+  }
+  if (!/cors/.test(kong)) {
+    fail("kong.yml must enable the cors plugin on the browser routes");
+  }
+  if (!/request-size-limiting/.test(kong)) {
+    fail("kong.yml must enable the request-size-limiting plugin on body-bearing routes");
+  }
+  if (!/ip-restriction/.test(kong)) {
+    fail("kong.yml must enable the ip-restriction plugin on the admin route");
+  }
+  // Domain authorization must never appear in Kong.
+  for (const forbidden of ["oauth2-introspection", "mtls-auth", "key-auth", "acl", "basic-auth", "ldap-auth"]) {
+    if (new RegExp(`-\\s*name:\\s*${forbidden}\\b`).test(kong)) {
+      fail(`kong.yml must not enable plugin '${forbidden}' — domain authorization belongs to the destination service`);
+    }
+  }
+}
+
+if (!existsSync(kongValues)) {
+  fail("platform/kong/values.yaml missing — E2.2 contract values file");
+} else {
+  const kv = readFileSync(kongValues, "utf8");
+  if (!/repository:\s*kong\b/.test(kv) || !/tag:\s*"3\.8/.test(kv)) {
+    fail("platform/kong/values.yaml must pin Kong 3.8.x (ADR-E0.5-01)");
+  }
+  if (!/database:\s*"off"/.test(kv)) {
+    fail("platform/kong/values.yaml must declare database: 'off' (DB-less)");
+  }
+}
+
+for (const tpl of [kongDeclarativeCm, kongDeployment, kongService, kongNetPol]) {
+  if (!existsSync(tpl)) {
+    fail(`kong helm template missing — ${relative(ROOT, tpl)}`);
+  }
+}
+
+// `domainAuthorizationInKong` must remain false in every per-env
+// values file — domain authorization is a service-side concern per
+// design.md §4.1.
+for (const envFile of REQUIRED_ENV_VALUES) {
+  const p = join(HELM_DIR, envFile);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, "utf8");
+  if (/domainAuthorizationInKong:\s*true/.test(text)) {
+    fail(`${envFile} must keep 'domainAuthorizationInKong: false' (E2.2 contract)`);
+  }
 }
 
 finish();
