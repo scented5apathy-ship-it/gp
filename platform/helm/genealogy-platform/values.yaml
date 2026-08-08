@@ -236,6 +236,23 @@ components:
     # correlation ID). See tasks.md E2.2.
     domainAuthorizationInKong: false
     replicas: 3
+    # Log defaults — consumed by the Kong deployment env block.
+    # Pre-existing in main's E2.2 commit but missing from the
+    # values block, which broke `helm template` with a nil-pointer
+    # error. E2.1 surfaces the gap.
+    logging:
+      level: notice
+      format: json
+    # Resource requests/limits — consumed by the Kong deployment
+    # template's resources block. Pre-existing in main's E2.2
+    # template but missing from values; E2.1 fills the gap.
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
     # Image pin — ADR-E0.5-01 baseline (Kong 3.8.x). The Helm workload
     # template renders a digest-pinned reference; Renovate bumps the
     # patch line per ADR-E0.5-01.
