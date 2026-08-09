@@ -1,0 +1,181 @@
+# platform/argo/argocd-server.yaml
+#
+# E2.9 — Argo CD + Argo Rollouts server posture
+# (config-as-code source-of-truth).
+#
+# Per `tasks.md` E2.9 + `architecture-decisions.md`
+# ADR-E0.5-01 (Argo CD 2.13.x, Argo Rollouts 1.7.x) +
+# `design.md` §13 (GitOps + progressive delivery) +
+# `ownership-catalog.md` §3 (Argo CD + Rollouts owner
+# = platform-primary, SLO 99.9 %, rollout decision < 60 s)
+# this file pins the platform-wide Argo CD + Argo Rollouts
+# controller posture.
+#
+# The Argo CD control plane renders the upstream
+# `argoproj/argocd` Deployment (server + repo-server +
+# application-controller + dex + notifications + redis) plus
+# the Argo Rollouts controller sidecar. The chart renders
+# the workloads whenever `components.gitOps.driver: argocd`;
+# customers running an external managed controller set the
+# driver to `external` and skip the workload.
+#
+# IMPORTANT: this file declares posture only — no literal
+# secret / token / password / API key / private key /
+# ssh-key. All credentials are resolved at runtime via ESO +
+# Vault (E2.6 contract).
+#
+# Privacy: Argo CD's audit log is exported to the platform
+# OTel Collector (E2.10) and labelled by `actor_pseudo_id`
+# only — never by raw user email / OIDC subject.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-server-config
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  argocd-server.yaml: |
+    # Argo CD + Argo Rollouts server configuration (E2.9 source-of-truth).
+    # The chart renders Argo CD whenever
+    # `components.gitOps.driver: argocd` is set; external
+    # managed controller sets `driver: external` and bypasses
+    # the workload.
+    argocd:
+      # ADR-E0.5-01 baseline — Argo CD 2.13.x (latest minor as of
+      # 2026-Q2). Renovate bumps the patch line per ADR-E0.5-01.
+      repo:
+        name: "quay.io/argoproj/argocd"
+        tag: "v2.13.4"
+        pullPolicy: IfNotPresent
+      # Argo Rollouts controller — same upstream registry.
+      rolloutsController:
+        name: "quay.io/argoproj/argocd-rollouts"
+        tag: "v1.7.2"
+        pullPolicy: IfNotPresent
+      # Redis — required for Argo CD ephemeral state.
+      redis:
+        name: "public.ecr.aws/docker/library/redis"
+        tag: "7.2-alpine"
+        pullPolicy: IfNotPresent
+        persistence:
+          size: "10Gi"
+      controller:
+        replicas: 3
+        server:
+          replicas: 2
+        repoServer:
+          replicas: 2
+        applicationController:
+          replicas: 3
+        # Sharding — disabled by default; per-tenant Argo CD
+        # sharding is FORBIDDEN (privacy-and-legal-gate.md §12).
+        sharding:
+          enabled: false
+          clustersPerShard: 0
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+    # RBAC — strict mode + Keycloak OIDC for human auth.
+    # The policyDefault role:readonly forces every identity
+    # to be granted explicitly via the AppProject policy CSV.
+    rbac:
+      policyDefault: "role:readonly"
+      policyCsvStrict: true
+      scopes:
+        - "[groups]"
+        - "[email]"
+    # Auth — anonymous access is FORBIDDEN; Keycloak OIDC SSO
+    # for human operators; --disable-admin forces the SSO path.
+    auth:
+      anonymousEnabled: false
+      disableAdmin: true
+      sessionTimeoutMinutes: 60
+      sso:
+        provider: keycloak
+        oidcIssuer: "https://keycloak.gp-platform.svc.cluster.local/realms/genealogy"
+        clientId: "argocd"
+        clientSecretSecretRef: "argocd-keycloak-client-secret"
+    # TLS minimum — TLS 1.2 minimum, TLS 1.3 preferred.
+    tls:
+      enabled: true
+      minVersion: "1.2"
+      certManagerIssuer: "letsencrypt-prod"
+    # Network policy — default deny Ingress + Egress; allow the
+    # in-cluster application-controller + repo-server + rollouts
+    # controller to communicate; allow Prometheus to scrape.
+    networkPolicy:
+      ingressAllowNamespaces:
+        - gp-platform
+        - gp-bff
+        - gp-services
+        - gp-workers
+        - gp-data
+        - gp-observability
+        - gp-argocd
+      egressAllowNamespaces:
+        - kube-system
+        - gp-observability
+        - gp-data
+        - gp-platform
+    # Telemetry — Prometheus metrics on 8083 + 8084 + 8082.
+    telemetry:
+      prometheusEnabled: true
+      metricsPort: 8083
+      otelCollectorHost: "otel-collector.gp-observability.svc.cluster.local"
+      otelCollectorPort: 4317
+    # Audit log — OTel Collector endpoint (E2.10). The
+    # auditFields list MUST include actor_pseudo_id and MUST
+    # NOT include raw email / OIDC subject.
+    audit:
+      enabled: true
+      endpoint: "http://otel-collector.gp-observability.svc.cluster.local:4318/v1/audit"
+      fields:
+        - actor_pseudo_id
+        - action
+        - resource_kind
+        - resource_name
+        - namespace
+        - decision
+        - timestamp
+    # Notifications — webhook to OTel Collector + (optional)
+    # Slack.
+    notifications:
+      enabled: true
+      triggers:
+        - on-deployed
+        - on-health-degraded
+        - on-deployed-failed
+        - on-sync-failed
+        - on-drift-detected
+      services:
+        slack:
+          enabled: false
+          webhookSecretRef: argocd-notifications-slack-secret
+        webhook:
+          enabled: true
+          endpoint: "http://otel-collector.gp-observability.svc.cluster.local:4318/v1/webhook"
+    # Secrets — referenced by name (no literal value). All
+    # resolved at runtime by ESO + Vault (E2.6 contract).
+    secrets:
+      adminPasswordSecretRef: argocd-admin-password
+      serverSecretRef: argocd-server-secret
+      signingKeySecretRef: argocd-signing-key
+      dexSigningKeySecretRef: argocd-dex-signing-key
+      gpgSigningKeySecretRef: argocd-gpg-signing-key
+      redisSecretRef: argocd-redis-secret
+    # Drift detection — resync every 180s; prune + self-heal
+    # enabled on production (drift = PR review required).
+    driftDetection:
+      enabled: true
+      resyncSeconds: 180
+      prune: true
+      selfHeal: true
+      applyOutOfSyncOnly: false

@@ -125,6 +125,27 @@ components:
       prometheus: 30d
       loki: 30d
       tempo: 14d
+  gitops:
+    # E2.9 — on-prem customer cluster runs the full Argo CD
+    # control plane with rollouts controller enabled. AppProject
+    # RBAC is enforced via Keycloak OIDC groups; the customer
+    # customer manages the four-eyes promotion gate (MFA
+    # required on release-approver).
+    driver: argocd
+    rolloutsEnabled: true
+    controller:
+      replicas: 2
+      server:
+        replicas: 2
+      repoServer:
+        replicas: 2
+      applicationController:
+        replicas: 2
+    rollouts:
+      replicas: 2
+    driftDetection:
+      enabled: true
+      resyncSeconds: 180
 
 # On-prem Istio profile (E2.5). Same posture as SaaS; the
 # umbrella chart renders the same four source-of-truth

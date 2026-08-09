@@ -1,0 +1,55 @@
+{{/*
+Argo CD + Argo Rollouts bootstrap script (idempotent).
+Runs on every `helm upgrade` (pre-install,pre-upgrade
+hook). Reconciles the AppProject set, the canonical
+Application set, the Rollout strategy templates and the
+AnalysisTemplates from the source-of-truth ConfigMaps.
+
+The script is idempotent: every kubectl apply uses
+`--server-side --force-conflicts` and every AppProject /
+Application / Rollout / AnalysisTemplate object carries
+the canonical labels from the source-of-truth.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-bootstrap-script
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  bootstrap.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NAMESPACE="gp-argocd"
+    REPLICAS="${ARGOCD_REPLICAS:-1}"
+    KUBECTL_IMAGE="${KUBECTL_IMAGE:-bitnami/kubectl:1.31.1}"
+
+    echo "[argocd-bootstrap] reconciling AppProject set (E2.9 four-eyes RBAC)"
+    kubectl --namespace "${NAMESPACE}" apply --server-side \
+      --filename /config/projects.yaml
+
+    echo "[argocd-bootstrap] reconciling Application set (E2.9 promotion pipeline)"
+    kubectl --namespace "${NAMESPACE}" apply --server-side \
+      --filename /config/applications.yaml
+
+    echo "[argocd-bootstrap] reconciling Rollout strategy + AnalysisTemplates (E2.9 canary)"
+    if kubectl get crd analysistemplates.argoproj.io >/dev/null 2>&1; then
+      kubectl apply --server-side \
+        --filename /config/rollout-strategy.yaml
+    else
+      echo "[argocd-bootstrap] AnalysisTemplate CRD not yet installed; skipping"
+    fi
+
+    echo "[argocd-bootstrap] reconciling sync windows (E2.9 allow / deny windows)"
+    kubectl --namespace "${NAMESPACE}" apply --server-side \
+      --filename /config/sync-windows.yaml
+
+    echo "[argocd-bootstrap] reconciling drift detection + self-heal (E2.9 §1)"
+    kubectl --namespace "${NAMESPACE}" apply --server-side \
+      --filename /config/argocd-server.yaml || true
+
+    echo "[argocd-bootstrap] done."

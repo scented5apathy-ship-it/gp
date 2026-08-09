@@ -602,4 +602,168 @@ data:
       - The audit environment is read-only — flag create / update / delete are
         blocked via Flagsmith RBAC. DPO + privacy team use this snapshot.
 {{- end }}
+{{- if eq $name "gitops" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitops-contract-stub
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: gitops
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Argo CD + Argo Rollouts contract (E2.9).
+    responsibilities:
+      - GitOps reconciliation (Application set + drift detection 180s)
+      - Progressive delivery (canary + blue-green) via Argo Rollouts
+      - AppProject RBAC with four-eyes principle (developer / config-reviewer / release-approver / platform-admin)
+      - Promotion pipeline dev → staging → production with release-approver + MFA gate
+      - Source-repo allowlist + destination-namespace allowlist per AppProject
+      - Audit log + notifications to OTel Collector
+      - TLS 1.2 minimum; anonymous access FORBIDDEN; Keycloak OIDC SSO
+      - Byte-identity mirror of source-of-truth files
+    app_projects:
+      - name: genealogy-platform-prod
+        source_repos:
+          - https://github.com/genealogy/platform-manifests
+          - https://github.com/genealogy/platform-helm-charts
+          - https://github.com/genealogy/service-charts
+        destinations:
+          - gp-edge / gp-bff / gp-services / gp-workers
+        roles:
+          - developer          # code PR + non-prod sync
+          - config-reviewer    # config change PR review
+          - release-approver   # production / staging promotion (MFA required)
+          - platform-admin     # AppProject / RBAC bootstrap + break-glass
+      - name: genealogy-platform-nonprod
+        source_repos:
+          - https://github.com/genealogy/platform-manifests
+          - https://github.com/genealogy/platform-helm-charts
+          - https://github.com/genealogy/service-charts
+        destinations:
+          - gp-edge-staging / gp-bff-staging / gp-services-staging / gp-workers-staging
+      - name: genealogy-platform-platform
+        source_repos:
+          - https://github.com/genealogy/platform-manifests
+          - https://github.com/genealogy/platform-helm-charts
+        destinations:
+          - gp-argocd / gp-platform / gp-observability / gp-data
+    promotion_pipeline:
+      dev:
+        cluster: in-cluster
+        autoPromote: true
+        requiresApproval: false
+      staging:
+        cluster: in-cluster
+        autoPromote: false
+        requiresApproval: true
+        approverRole: config-reviewer
+      production:
+        cluster: in-cluster
+        autoPromote: false
+        requiresApproval: true
+        approverRole: release-approver
+        requiresMfa: true
+    rollout_strategy:
+      canary:
+        maxSurge: "25%"
+        maxUnavailable: 0
+        traffic_routing: istio
+        steps:
+          - setWeight: 5
+          - pause: 2m
+          - analysis: [error-rate, latency-p95]
+          - setWeight: 15
+          - pause: 3m
+          - analysis: [error-rate, latency-p95, success-rate]
+          - setWeight: 35
+          - pause: 4m
+          - analysis: [error-rate, latency-p95, success-rate, saturation]
+          - setWeight: 60
+          - pause: 6m
+          - setWeight: 85
+          - pause: 8m
+          - setWeight: 100
+      analysis_templates:
+        - error-rate      # canary 5xx ratio < 1 %
+        - latency-p95     # canary p95 < 800 ms
+        - success-rate    # canary 2xx ratio > 99.5 %
+        - saturation      # canary CPU < 80 %
+      service_classes:
+        - stateless-api           # canary
+        - bff                     # canary
+        - domain-event-consumer   # blue-green
+        - async-worker            # blue-green
+    sync_windows:
+      allow:
+        - id: dev-auto-sync
+          schedule: 24/7
+          applications: ["*-dev"]
+        - id: staging-window
+          schedule: weekdays 06:00-20:00 UTC
+          applications: ["*-staging"]
+          approverRole: config-reviewer
+        - id: production-window
+          schedule: weekdays 08:00-18:00 UTC
+          applications: ["*-prod"]
+          approverRole: release-approver
+          requiresMfa: true
+      deny:
+        - id: weekend-blackout
+          schedule: Sat 00:00-24:00 UTC
+          applications: ["*-prod"]
+          manualSync: true
+          approverRole: release-approver
+          requiresMfa: true
+        - id: change-freeze-q4
+          schedule: Dec 20 - Jan 20
+          applications: ["*-prod"]
+          ticketRequired: true
+          ticketPattern: "^CHG-[0-9]{6}$"
+        - id: legal-hold-window
+          schedule: manual until rescinded
+          applications: ["*-prod"]
+          manualSync: false
+          approverRole: platform-admin
+        - id: dna-blackout
+          schedule: 24/7
+          applications: ["dna-*"]
+          manualSync: true
+          approverRole: release-approver
+          requiresMfa: true
+    reconciliation:
+      resyncSeconds: 180
+      prune: true
+      selfHeal: true
+      serverSideApply: true
+    forbidden:
+      - using a flag to skip OpenFGA authorization check (E2.8 contract)
+      - using a flag to skip ABAC redaction (E2.8 contract)
+      - using a flag to skip consent ledger entry (E2.8 contract)
+      - using a flag to skip audit logging (E2.8 contract)
+      - production sync without release-approver + MFA
+      - tenant-scoped canary weight (no per-tenant targeting)
+      - setting `setWeight: 100` without analysis gate
+      - maxSurge: 0 on stateless-api canary
+      - bypass of `gitops.rbacStrict` (forbidden in production)
+      - literal admin password / signing key / OAuth client secret / Redis password
+      - business authorization (living / DNA / consent) — service-owned
+    notes:
+      - Source-of-truth: platform/argo/{argocd-server,projects,applications,rollout-strategy,sync-windows}.yaml.
+      - Mirror: platform/helm/genealogy-platform/files/argo/*.yaml.
+      - Bootstrap Job: templates/components/argo/bootstrap-job.yaml.
+        Runs on every helm upgrade (pre-install,pre-upgrade hook).
+        Reconciles AppProject set + canonical Application set + Rollout strategy + AnalysisTemplate + sync windows.
+      - The Rollouts controller queries Prometheus directly for
+        AnalysisTemplate metrics (no in-memory state).
+      - Drift detection (180s resync) is the canonical source of truth;
+        a PR review is required to re-sync after a manual drift.
+      - Manual sync override is always logged to OTel audit sink with
+        `actor_pseudo_id` + `window_id` + `reason` + `ticket` fields.
+      - `dna-blackout` window enforces E10.2 isolation: a release-approver
+        + MFA human action is required to roll any DNA workload.
+{{- end }}
 {{- end }}

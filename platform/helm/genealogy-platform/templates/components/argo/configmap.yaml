@@ -1,0 +1,79 @@
+{{/*
+Argo CD config ConfigMaps — mirror the five source-of-truth
+files into the cluster. The chart never mutates the
+source-of-truth files; the contracts are enforced by the
+deep linter + the byte-identity check on the mirror.
+*/}}
+{{- $argo := .Values.components.gitOps }}
+{{- $sourceServer := printf "files/%s" ($argo.configPaths.serverConfig | default "argo/argocd-server.yaml") }}
+{{- $sourceProjects := printf "files/%s" ($argo.configPaths.projects | default "argo/projects.yaml") }}
+{{- $sourceApplications := printf "files/%s" ($argo.configPaths.applications | default "argo/applications.yaml") }}
+{{- $sourceRollout := printf "files/%s" ($argo.configPaths.rolloutStrategy | default "argo/rollout-strategy.yaml") }}
+{{- $sourceWindows := printf "files/%s" ($argo.configPaths.syncWindows | default "argo/sync-windows.yaml") }}
+{{- if and $argo.enabled (eq $argo.driver "argocd") }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-server-config
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  argocd-server.yaml: |-
+    {{- (.Files.Get $sourceServer) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-projects
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  projects.yaml: |-
+    {{- (.Files.Get $sourceProjects) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-applications
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  applications.yaml: |-
+    {{- (.Files.Get $sourceApplications) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-rollout-strategy
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argo-rollouts
+    gp.genealogy/contract-only: "true"
+data:
+  rollout-strategy.yaml: |-
+    {{- (.Files.Get $sourceRollout) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-sync-windows
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  sync-windows.yaml: |-
+    {{- (.Files.Get $sourceWindows) | nindent 4 }}
+{{- end }}

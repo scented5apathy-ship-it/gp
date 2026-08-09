@@ -1,0 +1,297 @@
+# platform/argo/applications.yaml
+#
+# E2.9 — Argo CD Application set (the canonical set of
+# managed workloads — config-as-code source-of-truth).
+#
+# Per `tasks.md` E2.9 ("GitOps Helm manifests, drift
+# detection và promotion theo môi trường") +
+# `architecture-decisions.md` ADR-E0.5-01 (Argo CD 2.13.x)
+# + `ownership-catalog.md` §3, this file declares the
+# canonical Application set. Per-environment promotion
+# follows dev → staging → production; per-env override is
+# driven by the `values-<env>.yaml` files (replica count +
+# image tag + CORS allowlist + resource sizing).
+#
+# The Application controller reconciles every Application
+# every 180 s (drift detection resync). Manual sync is
+# disabled on production by default; promotion is always
+# triggered by a release-approver human action.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-applications
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  applications.yaml: |
+    # Argo CD Application set (E2.9 source-of-truth).
+    metadata:
+      component: argocd
+      versionPolicy:
+        adr: ADR-E0.5-01
+        reviewDate: 2026-11-01
+    repo:
+      url: https://github.com/genealogy/platform-manifests
+      revision: HEAD
+      path: helm
+      helm:
+        valueFiles:
+          - values.yaml
+          - values-prod.yaml
+    defaults:
+      project: genealogy-platform-prod
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+          allowEmpty: false
+        syncOptions:
+          - CreateNamespace=false
+          - PrunePropagationPolicy=foreground
+          - PruneLast=true
+          - ApplyOutOfSyncOnly=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+      revisionHistoryLimit: 10
+      ignoreDifferences:
+        - group: argoproj.io
+          kind: Rollout
+          jsonPointers:
+            - /spec/replicas
+    promotionPipeline:
+      - name: dev
+        cluster: in-cluster
+        autoPromote: true
+        requiresApproval: false
+      - name: staging
+        cluster: in-cluster
+        autoPromote: false
+        requiresApproval: true
+        approverRole: config-reviewer
+      - name: production
+        cluster: in-cluster
+        autoPromote: false
+        requiresApproval: true
+        approverRole: release-approver
+        requiresMfa: true
+        promotionWindow:
+          start: "08:00"
+          end: "18:00"
+          timezone: UTC
+    applications:
+      - name: kong
+        namespace: gp-edge
+        project: genealogy-platform-prod
+        chart: kong
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: kong
+          targetRevision: "5.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-edge
+        syncWave: 0
+        rolloutStrategy: blue-green
+      - name: keycloak
+        namespace: gp-platform
+        project: genealogy-platform-platform
+        chart: keycloak
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: keycloak
+          targetRevision: "24.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-platform
+        syncWave: 1
+        rolloutStrategy: blue-green
+      - name: openfga
+        namespace: gp-platform
+        project: genealogy-platform-platform
+        chart: openfga
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: openfga
+          targetRevision: "1.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-platform
+        syncWave: 2
+        rolloutStrategy: canary
+      - name: kafka
+        namespace: gp-data
+        project: genealogy-platform-platform
+        chart: kafka
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: kafka
+          targetRevision: "30.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-data
+        syncWave: 3
+        rolloutStrategy: blue-green
+      - name: apicurio
+        namespace: gp-data
+        project: genealogy-platform-platform
+        chart: apicurio
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: apicurio-registry
+          targetRevision: "1.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-data
+        syncWave: 3
+        rolloutStrategy: blue-green
+      - name: temporal
+        namespace: gp-data
+        project: genealogy-platform-platform
+        chart: temporal
+        source:
+          repoUrl: https://github.com/genealogy/platform-helm-charts
+          path: charts/temporal
+          targetRevision: HEAD
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-data
+        syncWave: 3
+        rolloutStrategy: blue-green
+      - name: istiod
+        namespace: gp-platform
+        project: genealogy-platform-platform
+        chart: istiod
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: istiod
+          targetRevision: "1.23.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-platform
+        syncWave: 0
+        rolloutStrategy: blue-green
+      - name: vault
+        namespace: gp-platform
+        project: genealogy-platform-platform
+        chart: vault
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: vault
+          targetRevision: "0.30.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-platform
+        syncWave: 2
+        rolloutStrategy: blue-green
+      - name: minio
+        namespace: gp-data
+        project: genealogy-platform-platform
+        chart: minio
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: minio
+          targetRevision: "14.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-data
+        syncWave: 3
+        rolloutStrategy: blue-green
+      - name: valkey
+        namespace: gp-data
+        project: genealogy-platform-platform
+        chart: valkey
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: valkey
+          targetRevision: "1.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-data
+        syncWave: 3
+        rolloutStrategy: blue-green
+      - name: flagsmith
+        namespace: gp-platform
+        project: genealogy-platform-platform
+        chart: flagsmith
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: flagsmith
+          targetRevision: "1.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-platform
+        syncWave: 4
+        rolloutStrategy: canary
+      - name: grafana
+        namespace: gp-observability
+        project: genealogy-platform-platform
+        chart: grafana
+        source:
+          repoUrl: https://charts.bitnami.com/bitnami
+          chart: grafana
+          targetRevision: "12.0.0"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-observability
+        syncWave: 4
+        rolloutStrategy: blue-green
+      - name: genealogy-services
+        namespace: gp-services
+        project: genealogy-platform-prod
+        chart: genealogy-services
+        source:
+          repoUrl: https://github.com/genealogy/service-charts
+          path: charts/genealogy-services
+          targetRevision: HEAD
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-services
+        syncWave: 5
+        rolloutStrategy: canary
+      - name: web-bff
+        namespace: gp-bff
+        project: genealogy-platform-prod
+        chart: web-bff
+        source:
+          repoUrl: https://github.com/genealogy/service-charts
+          path: charts/web-bff
+          targetRevision: HEAD
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-bff
+        syncWave: 5
+        rolloutStrategy: canary
+      - name: web-public
+        namespace: gp-bff
+        project: genealogy-platform-prod
+        chart: web-public
+        source:
+          repoUrl: https://github.com/genealogy/service-charts
+          path: charts/web-public
+          targetRevision: HEAD
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: gp-bff
+        syncWave: 5
+        rolloutStrategy: canary
+    promotionGate:
+      preSyncChecks:
+        - name: drift-clean
+          timeoutSeconds: 30
+        - name: predecessor-deployed
+          timeoutSeconds: 600
+      postSyncChecks:
+        - name: analysis-template-green
+          timeoutSeconds: 300
+        - name: healthz-liveness
+          timeoutSeconds: 60
+        - name: healthz-readiness
+          timeoutSeconds: 60

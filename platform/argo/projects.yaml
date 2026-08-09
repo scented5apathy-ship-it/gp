@@ -1,0 +1,188 @@
+# platform/argo/projects.yaml
+#
+# E2.9 — Argo CD AppProject RBAC matrix
+# (config-as-code source-of-truth).
+#
+# Per `tasks.md` E2.9 ("Tách quyền merge code, đổi config
+# production và approve promotion") + `architecture-decisions.md`
+# ADR-E0.5-01 + `ownership-catalog.md` §3 (Argo CD + Rollouts
+# owner = platform-primary, AppSec partner), the AppProject
+# model enforces the **four-eyes principle** on production
+# promotion:
+#
+#   1. `developer`       — code PR + non-prod Application
+#                          sync + non-prod promotion.
+#   2. `config-reviewer` — config change PR review
+#                          (values-saas.yaml, featureFlags
+#                          taxonomy, Kong route, OpenFGA
+#                          policy).
+#   3. `release-approver` — production / staging
+#                          promotion approval (human, MFA,
+#                          JIT).
+#   4. `platform-admin`  — AppProject / RBAC bootstrap +
+#                          break-glass (Keycloak OIDC + MFA).
+#
+# No single identity can merge code, change production config
+# AND approve promotion. Each AppProject declaration below
+# carries the source-repo allowlist, destination cluster +
+# namespace allowlist, role bindings and resource quota.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-projects
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  projects.yaml: |
+    # Argo CD AppProject RBAC matrix (E2.9 source-of-truth).
+    metadata:
+      component: argocd
+      versionPolicy:
+        adr: ADR-E0.5-01
+        reviewDate: 2026-11-01
+    enforcement:
+      rbacStrict: true
+      fourEyesPrinciple: true
+      mfaRequired:
+        - production-promotion
+        - audit-environment-write
+      jitAccess:
+        ttlMinutes: 60
+        auditSink: opentelemetry
+    projects:
+      - name: genealogy-platform-prod
+        description: Production workloads (gp-edge, gp-bff, gp-services, gp-workers)
+        sourceRepos:
+          - https://github.com/genealogy/platform-manifests
+          - https://github.com/genealogy/platform-helm-charts
+          - https://github.com/genealogy/service-charts
+        destinations:
+          - server: https://kubernetes.default.svc
+            namespace: gp-edge
+          - server: https://kubernetes.default.svc
+            namespace: gp-bff
+          - server: https://kubernetes.default.svc
+            namespace: gp-services
+          - server: https://kubernetes.default.svc
+            namespace: gp-workers
+        clusterResourceWhitelist:
+          - group: ""
+            kind: Namespace
+        namespaceResourceWhitelist:
+          - group: ""
+            kind: ConfigMap
+          - group: ""
+            kind: Secret
+          - group: ""
+            kind: Service
+          - group: ""
+            kind: ServiceAccount
+          - group: "apps"
+            kind: Deployment
+          - group: "apps"
+            kind: StatefulSet
+          - group: "batch"
+            kind: Job
+          - group: "batch"
+            kind: CronJob
+          - group: "networking.k8s.io"
+            kind: NetworkPolicy
+          - group: "policy"
+            kind: PodDisruptionBudget
+          - group: "argoproj.io"
+            kind: Rollout
+          - group: "argoproj.io"
+            kind: AnalysisTemplate
+        roles:
+          - name: developer
+            policies:
+              - p, proj:genealogy-platform-prod:developer, applications, get, genealogy-platform-prod/*, allow
+              - p, proj:genealogy-platform-prod:developer, applications, sync, genealogy-platform-prod/*, deny
+            groups:
+              - "genealogy:developer"
+          - name: config-reviewer
+            policies:
+              - p, proj:genealogy-platform-prod:config-reviewer, applications, get, genealogy-platform-prod/*, allow
+              - p, proj:genealogy-platform-prod:config-reviewer, applications, sync, genealogy-platform-prod/non-prod-*, allow
+            groups:
+              - "genealogy:config-reviewer"
+          - name: release-approver
+            policies:
+              - p, proj:genealogy-platform-prod:release-approver, applications, get, genealogy-platform-prod/*, allow
+              - p, proj:genealogy-platform-prod:release-approver, applications, sync, genealogy-platform-prod/*, allow
+              - p, proj:genealogy-platform-prod:release-approver, applications, action/*, genealogy-platform-prod/*, allow
+            groups:
+              - "genealogy:release-approver"
+            requiresMfa: true
+          - name: platform-admin
+            policies:
+              - p, proj:genealogy-platform-prod:platform-admin, applications, *, genealogy-platform-prod/*, allow
+              - p, proj:genealogy-platform-prod:platform-admin, exec, create, genealogy-platform-prod/*, deny
+            groups:
+              - "genealogy:platform-admin"
+        syncWindows:
+          - kind: deny
+            schedule: "0 0 * * 6"
+            duration: 24h
+            applications:
+              - "*-prod"
+            manualSync: true
+        orphanedResources:
+          warn: true
+      - name: genealogy-platform-nonprod
+        description: Staging + dev workloads
+        sourceRepos:
+          - https://github.com/genealogy/platform-manifests
+          - https://github.com/genealogy/platform-helm-charts
+          - https://github.com/genealogy/service-charts
+        destinations:
+          - server: https://kubernetes.default.svc
+            namespace: gp-edge-staging
+          - server: https://kubernetes.default.svc
+            namespace: gp-bff-staging
+          - server: https://kubernetes.default.svc
+            namespace: gp-services-staging
+          - server: https://kubernetes.default.svc
+            namespace: gp-workers-staging
+        roles:
+          - name: developer
+            policies:
+              - p, proj:genealogy-platform-nonprod:developer, applications, get, genealogy-platform-nonprod/*, allow
+              - p, proj:genealogy-platform-nonprod:developer, applications, sync, genealogy-platform-nonprod/*, allow
+            groups:
+              - "genealogy:developer"
+              - "genealogy:config-reviewer"
+          - name: platform-admin
+            policies:
+              - p, proj:genealogy-platform-nonprod:platform-admin, applications, *, genealogy-platform-nonprod/*, allow
+            groups:
+              - "genealogy:platform-admin"
+      - name: genealogy-platform-platform
+        description: Argo CD + Argo Rollouts + platform workloads
+        sourceRepos:
+          - https://github.com/genealogy/platform-manifests
+          - https://github.com/genealogy/platform-helm-charts
+        destinations:
+          - server: https://kubernetes.default.svc
+            namespace: gp-argocd
+          - server: https://kubernetes.default.svc
+            namespace: gp-platform
+          - server: https://kubernetes.default.svc
+            namespace: gp-observability
+          - server: https://kubernetes.default.svc
+            namespace: gp-data
+        roles:
+          - name: platform-admin
+            policies:
+              - p, proj:genealogy-platform-platform:platform-admin, applications, *, genealogy-platform-platform/*, allow
+            groups:
+              - "genealogy:platform-admin"
+    requiredGroups:
+      - "genealogy:developer"
+      - "genealogy:config-reviewer"
+      - "genealogy:release-approver"
+      - "genealogy:platform-admin"

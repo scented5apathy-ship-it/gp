@@ -47,7 +47,7 @@
 > - [x] **E2.6** Vault + cloud KMS abstraction
 > - [x] **E2.7** S3/MinIO + Valkey
 > - [x] **E2.8** Flagsmith / OpenFeature
-> - [ ] **E2.9** Argo CD / Rollouts
+> - [x] **E2.9** Argo CD / Rollouts
 > - [ ] **E2.10** Grafana OSS stack (OTel Collector + Prometheus + Loki + Tempo + Grafana)
 
 ## 0. Cleanup / Uninstall (chạy TRƯỚC khi cài mới)
@@ -1357,11 +1357,52 @@ verify); cấm `tenant_id` / `user_id` / `email` / `raw_dna` /
 
 ### 4.8 E2.9 Argo CD / Rollouts
 
-**Trạng thái**: 🚧 planned. Chart đã có block `components.gitops`
-(driver: argocd, rolloutsEnabled: true, rbacStrict: true).
+**Trạng thái**: ✅ shipped. Chart đã có block `components.gitops`
+(driver: argocd, rolloutsEnabled: true, rbacStrict: true) +
+5 source-of-truth YAMLs trong `platform/argo/` + 9 Helm
+template trong `platform/helm/genealogy-platform/templates/components/argo/`
++ 9 alert rule trong `platform/observability/alerts/argo-rules.yaml`
++ runbook tại `runbook/argo.md`.
 
-**Sẽ có**: Argo CD install + Application CR cho genealogy-platform +
-Rollouts controller. Hiện tại chưa ship — theo dõi `tasks.md` E2.9.
+**Component đã ship**:
+
+- **Argo CD server / repo-server / application-controller /
+  notifications / redis** — pin `argoproj/argocd:v2.13.4`
+  (ADR-E0.5-01) + `public.ecr.aws/docker/library/redis:7.2-alpine`.
+- **Argo Rollouts controller** — pin
+  `argoproj/argocd-rollouts:v1.7.2`. Canary + blue-green
+  với Istio traffic routing + 4 AnalysisTemplates (error-rate
+  / latency-p95 / success-rate / saturation) + 4 service-class
+  template (stateless-api / bff / domain-event-consumer /
+  async-worker).
+- **AppProject RBAC** — 3 AppProject (production / non-prod /
+  platform) + four-eyes principle (developer / config-reviewer
+  / release-approver / platform-admin) + production promotion
+  bắt buộc `release-approver` + MFA.
+- **Sync windows** — 5 cửa sổ bắt buộc (dev / staging /
+  production / weekend-blackout / change-freeze-q4) + 2
+  optional (legal-hold / dna-blackout). Mọi override đều có
+  audit log (`actor_pseudo_id` only).
+- **Bootstrap Job** — `argocd-bootstrap` Helm-hook
+  (`pre-install,pre-upgrade`) apply AppProject + Application
+  + Rollout + AnalysisTemplate + sync windows từ 5
+  ConfigMap mirror.
+
+**Không tự xây**: thay vì viết GitOps engine + progressive
+delivery controller riêng, ta dùng upstream Argo CD 2.13.x
++ Argo Rollouts 1.7.x (Apache-2.0, không AGPL, không
+license cost).
+
+**Deep linter**: `pnpm lint:argo` (script
+`scripts/lint-argo-config.mjs`) enforce 9 quy tắc:
+3 AppProject + four-eyes + production MFA + 4 AnalysisTemplate
++ 4 service-class + 5 sync windows + mirror byte-identity +
+no literal secret.
+
+**Runbook**: `runbook/argo.md` (9 alert playbook + manual
+override procedure + backup / restore + on-call escalation).
+
+**Evidence**: `.kiro/specs/genealogy-platform/evidence/E2.9.md`
 
 ### 4.9 E2.10 Grafana OSS stack (OTel + Prometheus + Loki + Tempo + Grafana)
 
@@ -1390,9 +1431,10 @@ pnpm lint:vault
 pnpm lint:s3
 pnpm check:s3:compat
 pnpm lint:flagsmith
+pnpm lint:argo
 pnpm check:platform:baseline
 pnpm test:scripts
-# Kỳ vọng: tất cả clean, 68/68 tests pass (61 cũ + 7 E2.8)
+# Kỳ vọng: tất cả clean, 75/75 tests pass (68 cũ + 7 E2.9)
 
 # 2. Helm render check (xác nhận chart không lỗi)
 docker run --rm -v "${PWD}:/src:ro" -w /src alpine/helm:3.16.3 \
@@ -1407,6 +1449,7 @@ pnpm smoke:istio         # E2.5
 pnpm smoke:vault         # E2.6
 pnpm smoke:s3            # E2.7
 pnpm smoke:flagsmith     # E2.8
+pnpm smoke:argo          # E2.9
 # Kỳ vọng: tất cả PASS
 
 # 4. Resource counts per environment

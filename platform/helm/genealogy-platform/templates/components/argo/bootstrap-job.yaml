@@ -1,0 +1,121 @@
+{{/*
+Argo CD + Argo Rollouts bootstrap Job (Helm-hook
+`pre-install,pre-upgrade`). Runs the idempotent bootstrap
+script that reconciles the AppProject set, the canonical
+Application set, the Rollout strategy templates, the
+AnalysisTemplates and the sync windows from the
+source-of-truth ConfigMaps.
+
+The Job waits for the ExternalSecret objects to be
+Ready=True before declaring success (ESO + Vault per
+E2.6 contract). The Job is rendered whenever
+`components.gitOps.driver: argocd`.
+*/}}
+{{- $argo := .Values.components.gitOps }}
+{{- if and $argo.enabled (eq $argo.driver "argocd") }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: argocd-bootstrap
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/name: argocd-bootstrap
+    gp.genealogy/contract-only: "true"
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: argocd
+        app.kubernetes.io/name: argocd-bootstrap
+        gp.genealogy/contract-only: "true"
+    spec:
+      serviceAccountName: argocd
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: bitnami/kubectl:1.31.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "[argocd-bootstrap] waiting for ExternalSecret objects to be Ready"
+              for i in $(seq 1 30); do
+                not_ready=$(kubectl get externalsecret -n gp-argocd -o json 2>/dev/null \
+                  | jq '[.items[] | select(.status.conditions[]?.status != "True" and .status.conditions[]?.type == "Ready")] | length')
+                if [ "${not_ready}" = "0" ]; then
+                  echo "[argocd-bootstrap] all ExternalSecrets Ready"
+                  break
+                fi
+                echo "[argocd-bootstrap] waiting for ${not_ready} ExternalSecret(s) to be Ready"
+                sleep 5
+              done
+              /scripts/bootstrap.sh
+          volumeMounts:
+            - name: bootstrap
+              mountPath: /scripts/bootstrap.sh
+              subPath: bootstrap.sh
+              readOnly: true
+            - name: config
+              mountPath: /config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: bootstrap
+          configMap:
+            name: argocd-bootstrap-script
+            defaultMode: 0755
+        - name: config
+          projected:
+            sources:
+              - configMap:
+                  name: genea-argocd-server-config
+                  items:
+                    - key: argocd-server.yaml
+                      path: argocd-server.yaml
+              - configMap:
+                  name: genea-argocd-projects
+                  items:
+                    - key: projects.yaml
+                      path: projects.yaml
+              - configMap:
+                  name: genea-argocd-applications
+                  items:
+                    - key: applications.yaml
+                      path: applications.yaml
+              - configMap:
+                  name: genea-argocd-rollout-strategy
+                  items:
+                    - key: rollout-strategy.yaml
+                      path: rollout-strategy.yaml
+              - configMap:
+                  name: genea-argocd-sync-windows
+                  items:
+                    - key: sync-windows.yaml
+                      path: sync-windows.yaml
+{{- end }}

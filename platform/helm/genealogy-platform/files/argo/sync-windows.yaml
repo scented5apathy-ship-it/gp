@@ -1,0 +1,139 @@
+# platform/argo/sync-windows.yaml
+#
+# E2.9 — Argo CD sync windows + blackout windows
+# (config-as-code source-of-truth).
+#
+# Per `tasks.md` E2.9 ("drift detection và promotion theo môi
+# trường") + `architecture-decisions.md` ADR-E0.5-01 +
+# `privacy-and-legal-gate.md` §14 (legal hold + data residency
+# change freeze window), this file declares:
+#
+#   1. The canonical sync windows per environment (dev,
+#      staging, production) — when automated sync + canary
+#      promotion is allowed.
+#   2. The blackout windows — when NO sync is allowed
+#      (regulatory freeze + platform change freeze + critical
+#      SLO incident).
+#   3. The manual-sync exception — every blackout window can
+#      be overridden by a release-approver human action with
+#      an audit trail (E2.6 audit sink + E2.10 OTel).
+#
+# Privacy: every override MUST be audited with
+# `actor_pseudo_id`; raw email / OIDC subject is NEVER
+# recorded in the audit log.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-sync-windows
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+data:
+  sync-windows.yaml: |
+    # Argo CD sync windows + blackout windows (E2.9 source-of-truth).
+    metadata:
+      component: argocd
+      versionPolicy:
+        adr: ADR-E0.5-01
+        reviewDate: 2026-11-01
+    timezone: UTC
+    defaults:
+      allowManualSync: true
+      auditOverride: true
+      auditSink: opentelemetry
+      auditFields:
+        - actor_pseudo_id
+        - window_id
+        - reason
+        - ticket
+    windows:
+      - id: dev-auto-sync
+        kind: allow
+        schedule: "0 0 * * *"
+        duration: 24h
+        applications:
+          - "*-dev"
+        automatedSync: true
+        manualSync: true
+        approverRole: developer
+      - id: staging-window
+        kind: allow
+        schedule: "0 6 * * 1-5"
+        duration: 14h
+        applications:
+          - "*-staging"
+        automatedSync: false
+        manualSync: true
+        approverRole: config-reviewer
+      - id: production-window
+        kind: allow
+        schedule: "0 8 * * 1-5"
+        duration: 10h
+        applications:
+          - "*-prod"
+        automatedSync: false
+        manualSync: true
+        approverRole: release-approver
+        requiresMfa: true
+      - id: weekend-blackout
+        kind: deny
+        schedule: "0 0 * * 6"
+        duration: 24h
+        applications:
+          - "*-prod"
+        manualSync: true
+        approverRole: release-approver
+        requiresMfa: true
+      - id: change-freeze-q4
+        kind: deny
+        schedule: "0 0 20 12 *"
+        duration: 720h
+        applications:
+          - "*-prod"
+        manualSync: true
+        approverRole: release-approver
+        requiresMfa: true
+        ticketRequired: true
+        ticketPattern: "^CHG-[0-9]{6}$"
+      - id: legal-hold-window
+        kind: deny
+        schedule: "manual"
+        duration: until-rescinded
+        applications:
+          - "*-prod"
+        manualSync: false
+        approverRole: platform-admin
+        ticketRequired: true
+        ticketPattern: "^LEGAL-HOLD-[0-9]{6}$"
+      - id: dna-blackout
+        kind: deny
+        schedule: "0 0 * * *"
+        duration: 24h
+        applications:
+          - "dna-*"
+        manualSync: true
+        approverRole: release-approver
+        requiresMfa: true
+        reason: "DNA isolation; promotion requires explicit override per E10.2"
+    reconciliation:
+      resyncSeconds: 180
+      pruneByDefault: true
+      selfHealByDefault: true
+      serverSideApply: true
+      retry:
+        limit: 5
+        backoff:
+          duration: 5s
+          factor: 2
+          maxDuration: 3m
+    notifications:
+      onSyncSucceeded: false
+      onSyncFailed: true
+      onHealthDegraded: true
+      onDriftDetected: true
+      onRolloutAborted: true
+      sink: opentelemetry
+      endpoint: "http://otel-collector.gp-observability.svc.cluster.local:4318/v1/webhook"

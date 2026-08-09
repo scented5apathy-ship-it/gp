@@ -165,7 +165,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - SDK phải có safe default khi Flagsmith unavailable.
   - Cấm dùng flag để bỏ qua authorization hoặc consent.
 
-- [ ] E2.9 Cấu hình Argo CD/Rollouts
+- [x] E2.9 Cấu hình Argo CD/Rollouts
 
   - GitOps Helm manifests, drift detection và promotion theo môi trường.
   - Canary dựa trên error rate/latency; tự abort và rollback khi vượt threshold.

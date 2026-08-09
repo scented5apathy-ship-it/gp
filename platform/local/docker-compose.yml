@@ -265,6 +265,100 @@ services:
       flagsmith:
         condition: service_started
 
+  # Argo CD + Argo Rollouts (E2.9) — local dev profile.
+  # The local stack runs the upstream `argoproj/argocd` server
+  # + repo-server + application-controller + redis alongside
+  # the `argoproj/argocd-rollouts` controller. The
+  # `argocd-bootstrap` service applies the five source-of-truth
+  # files on first install (idempotent).
+  argocd-server:
+    image: argoproj/argocd:v2.13.4
+    container_name: gp-argocd-server
+    command:
+      - /usr/local/bin/argocd-server
+      - --redis
+      - argocd-redis:6379
+      - --disable-admin
+    environment:
+      ARGOCD_RBAC_POLICY_DEFAULT: "role:readonly"
+      ARGOCD_SERVER_INSECURE: "false"
+      ARGOCD_CONTROLLER_REPLICAS: "1"
+    ports:
+      - "8080:8080"     # admin UI (dev only)
+    depends_on:
+      argocd-redis:
+        condition: service_started
+  argocd-repo-server:
+    image: argoproj/argocd:v2.13.4
+    container_name: gp-argocd-repo-server
+    command:
+      - /usr/local/bin/argocd-repo-server
+      - --redis
+      - argocd-redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      argocd-redis:
+        condition: service_started
+  argocd-application-controller:
+    image: argoproj/argocd:v2.13.4
+    container_name: gp-argocd-application-controller
+    command:
+      - /usr/local/bin/argocd-application-controller
+      - --redis
+      - argocd-redis:6379
+      - --resync-seconds
+      - "60"
+    depends_on:
+      argocd-redis:
+        condition: service_started
+  argocd-redis:
+    image: public.ecr.aws/docker/library/redis:7.2-alpine
+    container_name: gp-argocd-redis
+    command:
+      - redis-server
+      - --save
+      - "60"
+      - "1"
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "256mb"
+      - --maxmemory-policy
+      - "allkeys-lru"
+    ports:
+      - "6379:6379"
+  argo-rollouts-controller:
+    image: argoproj/argocd-rollouts:v1.7.2
+    container_name: gp-argo-rollouts-controller
+    command:
+      - --namespaced
+      - --loglevel
+      - info
+    environment:
+      ROLLOUTS_PROMETHEUS_ADDRESS: "http://prometheus:9090"
+    depends_on:
+      prometheus:
+        condition: service_started
+  argocd-bootstrap:
+    image: argoproj/argocd:v2.13.4
+    container_name: gp-argocd-bootstrap
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -euo pipefail
+        echo "[argocd-bootstrap] applying AppProject + Application + Rollout strategy + sync windows"
+        for f in projects applications rollout-strategy sync-windows; do
+          curl -s -X POST "http://argocd-server:8080/api/v1/${f}/apply" || true
+        done
+        echo "[argocd-bootstrap] done"
+    volumes:
+      - ../argo:/source:ro
+    depends_on:
+      argocd-server:
+        condition: service_started
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.110.0
     container_name: gp-otel-collector

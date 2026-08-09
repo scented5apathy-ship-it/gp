@@ -1278,4 +1278,122 @@ if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// E2.9 — Argo CD + Argo Rollouts runtime invariants (static
+// check; `scripts/lint-argo-config.mjs` runs the deep YAML
+// validation).
+// ---------------------------------------------------------------------------
+const ARGO_DIR = join(ROOT, "platform", "argo");
+const ARGO_FILES = [
+  join(ARGO_DIR, "argocd-server.yaml"),
+  join(ARGO_DIR, "projects.yaml"),
+  join(ARGO_DIR, "applications.yaml"),
+  join(ARGO_DIR, "rollout-strategy.yaml"),
+  join(ARGO_DIR, "sync-windows.yaml"),
+];
+const argoTemplates = join(HELM_DIR, "templates", "components", "argo");
+const REQUIRED_ARGO_TEMPLATES = [
+  "statefulset.yaml",
+  "rollouts-controller.yaml",
+  "services.yaml",
+  "serviceaccounts.yaml",
+  "secrets.yaml",
+  "configmap.yaml",
+  "bootstrap-configmap.yaml",
+  "bootstrap-job.yaml",
+  "network-policies.yaml",
+];
+
+for (const f of ARGO_FILES) {
+  if (!existsSync(f)) {
+    fail(`E2.9 source-of-truth file missing — ${relative(ROOT, f)}`);
+  }
+}
+
+for (const tpl of REQUIRED_ARGO_TEMPLATES) {
+  const p = join(argoTemplates, tpl);
+  if (!existsSync(p)) {
+    fail(`E2.9 argo helm template missing — ${relative(ROOT, p)}`);
+  }
+}
+
+if (existsSync(valuesPath)) {
+  const v = readFileSync(valuesPath, "utf8");
+  // ADR-E0.5-01 baseline pin (Argo CD 2.13.4).
+  if (!/argoproj\/argocd[\s\S]*?v2\.13\.\d+/.test(v)) {
+    fail("values.yaml must pin Argo CD image to v2.13.x (ADR-E0.5-01)");
+  }
+  // ADR-E0.5-01 baseline pin (Argo Rollouts 1.7.2).
+  if (!/argoproj\/argocd-rollouts[\s\S]*?v1\.7\.\d+/.test(v)) {
+    fail("values.yaml must pin Argo Rollouts image to v1.7.x (ADR-E0.5-01)");
+  }
+  // GitOps component block declared.
+  if (!/^  gitops:/m.test(v)) {
+    fail("values.yaml must declare a 'gitops' component block (E2.9 §1)");
+  }
+  // rbacStrict + rolloutsEnabled.
+  if (!/rbacStrict:\s*true/.test(v)) {
+    fail("values.yaml must declare gitops.rbacStrict: true (E2.9 §1 four-eyes)");
+  }
+  if (!/rolloutsEnabled:\s*true/.test(v)) {
+    fail("values.yaml must declare gitops.rolloutsEnabled: true (E2.9 §1)");
+  }
+  // Anonymous access + RBAC policy.
+  if (!/anonymousEnabled:\s*false/.test(v)) {
+    fail("values.yaml must declare gitops.auth.anonymousEnabled: false (E2.9 §1)");
+  }
+  if (!/policyDefault:\s*"role:readonly"/.test(v)) {
+    fail("values.yaml must declare gitops.rbac.policyDefault: 'role:readonly' (E2.9 §1)");
+  }
+  // Source-of-truth ConfigMap paths.
+  for (const path of [
+    "serverConfig:",
+    "projects:",
+    "applications:",
+    "rolloutStrategy:",
+    "syncWindows:",
+  ]) {
+    if (!new RegExp(`${path}\\s*argo/`).test(v)) {
+      fail(`values.yaml must declare components.gitOps.configPaths.${path} (E2.9 §1)`);
+    }
+  }
+}
+
+// Alert rules must cover the 4 E2.9 signal classes.
+if (!existsSync(ALERTS_DIR) || !existsSync(join(ALERTS_DIR, "argo-rules.yaml"))) {
+  fail("platform/observability/alerts/argo-rules.yaml missing (E2.9 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR, "argo-rules.yaml"), "utf8");
+  for (const alert of [
+    "ArgoCdSyncFailed",
+    "ArgoCdDriftDetected",
+    "ArgoCdHealthDegraded",
+    "ArgoRolloutAborted",
+    "ArgoRolloutStuck",
+    "ArgoRolloutAnalysisFailed",
+    "ArgoControllerDown",
+    "ArgoControllerHighErrorRate",
+    "ArgoBootstrapJobFailed",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/argo-rules.yaml missing alert '${alert}' (E2.9)`);
+    }
+  }
+}
+
+// Profile.yaml must pin the ADR-E0.5-01 Argo CD + Argo Rollouts images.
+if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
+  const p = readFileSync(join(LOCAL_DIR, "profile.yaml"), "utf8");
+  if (!/image:\s*argoproj\/argocd:v2\.13\.\d+/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin Argo CD image to v2.13.x (ADR-E0.5-01)",
+    );
+  }
+  if (!/image:\s*argoproj\/argocd-rollouts:v1\.7\.\d+/.test(p) && !/rolloutsImage:\s*argoproj\/argocd-rollouts:v1\.7\.\d+/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin Argo Rollouts image to v1.7.x (ADR-E0.5-01)",
+    );
+  }
+}
+
 finish();

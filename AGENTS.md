@@ -96,6 +96,9 @@ Every change must respect:
       contract test — E2.7)
 - [ ] `pnpm lint:flagsmith` passes (Flagsmith + OpenFeature
       config-as-code + safe-default rule validator — E2.8)
+- [ ] `pnpm lint:argo` passes (Argo CD + Argo Rollouts
+      config-as-code + AppProject RBAC + canary strategy +
+      sync-windows validator — E2.9)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

@@ -1,0 +1,424 @@
+{{/*
+Argo CD server + repo-server + application-controller +
+dex + notifications + redis StatefulSets. Per ADR-E0.5-01
+the pinned image is `quay.io/argoproj/argocd:v2.13.4`.
+
+Per `tasks.md` E2.9 + `design.md` §13 +
+`ownership-catalog.md` §3 (Argo CD + Rollouts owner =
+platform-primary, SLO 99.9 %, rollout decision < 60 s) the
+chart renders Argo CD whenever
+`components.gitOps.driver: argocd` is set; customers
+running an external managed controller set the driver to
+`external` and bypass the workload.
+
+The chart ships the upstream Argo CD components in a
+single Deployment per component (server / repo-server /
+application-controller / dex / notifications) + a
+StatefulSet for redis (a single-replica, in-memory data
+store used as ephemeral cache + leader election).
+*/}}
+{{- $argo := .Values.components.gitOps }}
+{{- if and $argo.enabled (eq $argo.driver "argocd") }}
+{{- $ns := "gp-argocd" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-server
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/version: {{ $argo.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  replicas: {{ $argo.controller.server.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: argocd
+      app.kubernetes.io/name: argocd-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: argocd
+        app.kubernetes.io/name: argocd-server
+        app.kubernetes.io/version: {{ $argo.image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8083"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: argocd
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: argocd-server
+          image: {{ include "genealogy-platform.image" (dict "image" $argo.image) }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - /usr/local/bin/argocd-server
+            - --redis
+            - argocd-redis:6379
+            - --disable-admin
+            - --insecure
+          ports:
+            - name: server
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ARGOCD_SERVER_REPLICAS
+              value: {{ $argo.controller.server.replicas | quote }}
+            - name: ARGOCD_CONTROLLER_REPLICAS
+              value: {{ $argo.controller.applicationController.replicas | quote }}
+            # RBAC — strict mode + Keycloak OIDC for human auth.
+            - name: ARGOCD_RBAC_POLICY_DEFAULT
+              value: {{ $argo.rbac.policyDefault | quote }}
+            - name: ARGOCD_RBAC_POLICY_MATRIX
+              value: {{ $argo.rbac.policyCsvStrict | quote }}
+            - name: ARGOCD_RBAC_SCOPES
+              value: {{ join "," $argo.rbac.scopes | quote }}
+            # Anonymous access — FORBIDDEN. The chart never starts
+            # the server with `--enable-gzip=true --disable-auth=false`.
+            - name: ARGOCD_SERVER_INSECURE
+              value: "false"
+            # OIDC — Keycloak SSO for human operators.
+            - name: ARGOCD_OIDC_ISSUER
+              value: {{ $argo.auth.sso.oidcIssuer | quote }}
+            - name: ARGOCD_OIDC_CLIENT_ID
+              value: {{ $argo.auth.sso.clientId | quote }}
+            - name: ARGOCD_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: argocd-keycloak-client-secret
+                  key: clientSecret
+            # TLS minimum — TLS 1.2 minimum, TLS 1.3 preferred.
+            - name: ARGOCD_TLS_MIN_VERSION
+              value: {{ $argo.tls.minVersion | quote }}
+            # Audit log — OTel Collector endpoint (E2.10).
+            - name: ARGOCD_AUDIT_LOG_ENDPOINT
+              value: {{ $argo.audit.endpoint | quote }}
+            # Drift detection — resync every 180s.
+            - name: ARGOCD_CONTROLLER_REPLICAS
+              value: {{ $argo.controller.applicationController.replicas | quote }}
+            # Secrets — resolved at runtime by ESO from Vault.
+            - name: ARGOCD_SERVER_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $argo.secrets.adminPasswordSecretRef }}
+                  key: password
+            - name: ARGOCD_SERVER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $argo.secrets.serverSecretRef }}
+                  key: secret
+            - name: ARGOCD_GPG_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $argo.secrets.gpgSigningKeySecretRef }}
+                  key: signingKey
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: server
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: server
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $argo.controller.resources | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/version: {{ $argo.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  replicas: {{ $argo.controller.repoServer.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: argocd
+      app.kubernetes.io/name: argocd-repo-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: argocd
+        app.kubernetes.io/name: argocd-repo-server
+        app.kubernetes.io/version: {{ $argo.image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8084"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: argocd
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: argocd-repo-server
+          image: {{ include "genealogy-platform.image" (dict "image" $argo.image) }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - /usr/local/bin/argocd-repo-server
+            - --redis
+            - argocd-redis:6379
+          ports:
+            - name: repo-server
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: ARGOCD_EXEC_TIMEOUT
+              value: "3m"
+            - name: ARGOCD_GIT_ATTEMPTS_COUNT
+              value: "3"
+            - name: ARGOCD_GIT_LFS_ENABLED
+              value: "true"
+          readinessProbe:
+            tcpSocket:
+              port: repo-server
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: repo-server
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $argo.controller.resources | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-application-controller
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/version: {{ $argo.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  replicas: {{ $argo.controller.applicationController.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: argocd
+      app.kubernetes.io/name: argocd-application-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: argocd
+        app.kubernetes.io/name: argocd-application-controller
+        app.kubernetes.io/version: {{ $argo.image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: argocd
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: argocd-application-controller
+          image: {{ include "genealogy-platform.image" (dict "image" $argo.image) }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - /usr/local/bin/argocd-application-controller
+            - --redis
+            - argocd-redis:6379
+            - --status-processors
+            - "20"
+            - --operation-processors
+            - "10"
+            - --self-heal-timeout-seconds
+            - "0"
+            - --repo-server-timeout-seconds
+            - "60"
+            - --resync-seconds
+            - {{ $argo.driftDetection.resyncSeconds | quote }}
+          env:
+            - name: ARGOCD_CONTROLLER_REPLICAS
+              value: {{ $argo.controller.applicationController.replicas | quote }}
+            - name: ARGOCD_CONTROLLER_SHARDING_ENABLED
+              value: {{ $argo.controller.sharding.enabled | quote }}
+            - name: ARGOCD_APPLICATION_CONTROLLER_STATUS_PROCESSORS
+              value: "20"
+            - name: ARGOCD_APPLICATION_CONTROLLER_OPERATION_PROCESSORS
+              value: "10"
+          ports:
+            - name: metrics
+              containerPort: 8082
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $argo.controller.resources | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: argocd-redis
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/version: {{ $argo.redis.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  serviceName: argocd-redis
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: argocd
+      app.kubernetes.io/name: argocd-redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: argocd
+        app.kubernetes.io/name: argocd-redis
+        app.kubernetes.io/version: {{ $argo.redis.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: argocd
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: redis
+          image: {{ $argo.redis.registry | default "public.ecr.aws/docker/library" }}/{{ $argo.redis.repository }}:{{ $argo.redis.tag }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - redis-server
+            - --save
+            - "60"
+            - "1"
+            - --appendonly
+            - "yes"
+            - --maxmemory
+            - "256mb"
+            - --maxmemory-policy
+            - "allkeys-lru"
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+            limits:
+              cpu: "500m"
+              memory: 512Mi
+      volumes: []
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: genealogy-platform
+          app.kubernetes.io/component: argocd
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp-data-ssd
+        resources:
+          requests:
+            storage: {{ $argo.redis.persistence.size | default "10Gi" }}
+{{- end }}

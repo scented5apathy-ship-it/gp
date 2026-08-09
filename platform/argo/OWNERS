@@ -1,0 +1,71 @@
+# OWNERS — platform/argo (E2.9 Argo CD + Argo Rollouts)
+#
+# Per `tasks.md` E0.6 + `ownership-catalog.md` §3 (Argo CD
+# + Rollouts owner = platform-primary, on-call sre-primary,
+# SLO 99.9 %, rollout decision < 60 s) + ADR §C #3, this
+# file mirrors `config/teams.yaml` and labels the primary
+# owner, secondary reviewer and on-call lead for the
+# GitOps + progressive delivery platform component.
+#
+# The four-eyes principle is enforced at the AppProject
+# layer (`platform/argo/projects.yaml`):
+#   developer          — code PR + non-prod sync
+#   config-reviewer    — config change PR review
+#   release-approver   — production / staging promotion
+#                        approval (MFA required)
+#   platform-admin     — AppProject / RBAC bootstrap +
+#                        break-glass (Keycloak OIDC + MFA)
+primary: platform-primary
+secondary: "@genealogy/platform"
+on-call: sre-primary
+review-cadence: quarterly
+components:
+  - id: argocd
+    name: Argo CD (server + repo-server + application-controller + dex + notifications + redis)
+    primary: platform-primary
+    secondary: "@genealogy/platform"
+    on-call: sre-primary
+    syncs:
+      - dependency: web-bff
+        direction: "reads deployment state + applies Rollout when CR updated"
+        contract: "E2.9 AppProject RBAC + four-eyes promotion"
+      - dependency: services (11)
+        direction: "reads deployment state via Application controller"
+        contract: "E2.9 AppProject RBAC + drift detection 180s"
+      - dependency: workers (5)
+        direction: "reads deployment state via Application controller"
+        contract: "E2.9 AppProject RBAC + drift detection 180s"
+      - dependency: kong / keycloak / openfga / vault / minio / valkey / flagsmith / grafana
+        direction: "managed as Application per project (non-prod / prod)"
+        contract: "E2.9 AppProject source-repo + destination-namespace allowlist"
+      - dependency: audit
+        direction: "publishes app_sync / rollout_aborted / drift_detected events"
+        contract: "E2.10 audit sink (OTel) + actor_pseudo_id only"
+  - id: argo-rollouts
+    name: Argo Rollouts controller + Rollout CR + AnalysisTemplate
+    primary: platform-primary
+    secondary: "@genealogy/platform"
+    on-call: sre-primary
+    syncs:
+      - dependency: prometheus
+        direction: "reads RED metrics for canary analysis gate"
+        contract: "E2.9 AnalysisTemplate + Prometheus query contract"
+      - dependency: istio
+        direction: "traffic split via Istio VirtualService"
+        contract: "E2.5 mesh contract + E2.9 trafficRouting.istio"
+      - dependency: services (11)
+        direction: "rolls Deployment → Rollout + runs AnalysisTemplate"
+        contract: "E2.9 canary steps + abort / rollback contract"
+      - dependency: audit
+        direction: "publishes rollout_aborted / rollout_succeeded events"
+        contract: "E2.10 audit sink"
+version-policy:
+  - component: argocd
+    pin: "2.13.4"
+    review: "2026-11-01"
+  - component: argocd-rollouts
+    pin: "1.7.2"
+    review: "2026-11-01"
+  - component: argocd-redis
+    pin: "7.2-alpine"
+    review: "2026-11-01"

@@ -1,0 +1,215 @@
+# Prometheus alert rules for Argo CD + Argo Rollouts.
+#
+# Per `tasks.md` E2.9 + `design.md` §1 + §13 +
+# `ownership-catalog.md` §3 (Argo CD + Rollouts owner =
+# platform-primary, SLO 99.9 %, rollout decision < 60 s)
+# the platform declares 9 alerts across 4 rule groups.
+#
+# Labels follow the platform convention:
+#   severity: critical | warning
+#   component: gitops
+#   owner: @genealogy/platform
+#   runbook: runbook/argo.md
+#
+# All metrics are pseudonymous — never raw tenant / user IDs.
+#
+# Per `agent-execution.md` §4.5 these alerts are validated
+# by `scripts/check-platform-baseline.mjs` (E2.9 invariants).
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-argo-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: gitops
+    prometheus: kubernetes
+    role: alert-rules
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # Argo CD Application sync + drift
+    # ----------------------------------------------------------------
+    - name: argo.cd-sync
+      interval: 30s
+      rules:
+        - alert: ArgoCdSyncFailed
+          expr: |
+            increase(argocd_app_sync_total{phase="Failed"}[15m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo CD Application sync failed"
+            description: |
+              An Argo CD Application failed to sync in the last
+              15 minutes. Possible cause: invalid manifest, RBAC
+              permission denied, or webhook delivery failure. See
+              runbook/argo.md §sync-failed.
+        - alert: ArgoCdDriftDetected
+          expr: |
+            argocd_app_health_status{health_status="Degraded"} == 1
+          for: 10m
+          labels:
+            severity: warning
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo CD drift detected on {{ $labels.name }}"
+            description: |
+              Argo CD detected a Degraded health status on the
+              {{ $labels.name }} Application for 10 minutes. The
+              Application is either out-of-sync or the rollout is
+              stuck. Verify the source repo + the canary analysis
+              gate. See runbook/argo.md §drift-detected.
+        - alert: ArgoCdHealthDegraded
+          expr: |
+            argocd_app_health_status{health_status="Degraded"} == 1
+          for: 15m
+          labels:
+            severity: critical
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo CD Application {{ $labels.name }} degraded for 15m"
+            description: |
+              The {{ $labels.name }} Application has been in a
+              Degraded health state for 15 minutes. Check the
+              source repo, the rollout analysis gate, and the
+              Prometheus metrics endpoint. See runbook/argo.md
+              §health-degraded.
+
+    # ----------------------------------------------------------------
+    # Argo Rollouts canary + abort
+    # ----------------------------------------------------------------
+    - name: argo.rollouts
+      interval: 30s
+      rules:
+        - alert: ArgoRolloutAborted
+          expr: |
+            increase(argocd_rollout_aborted_total[15m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo Rollout aborted"
+            description: |
+              An Argo Rollout was aborted in the last 15 minutes
+              (canary error rate / latency / saturation breach).
+              Verify the AnalysisTemplate thresholds + the rollout
+              abortScaleDownDelaySeconds. See runbook/argo.md
+              §rollout-aborted.
+        - alert: ArgoRolloutStuck
+          expr: |
+            argocd_rollout_phase{phase="Paused"} == 1
+          for: 30m
+          labels:
+            severity: warning
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo Rollout {{ $labels.name }} paused for 30m"
+            description: |
+              The {{ $labels.name }} Rollout has been Paused for
+              30 minutes. Either the canary analysis is failing
+              or the release-approver has not promoted. Verify the
+              approval workflow. See runbook/argo.md §rollout-stuck.
+        - alert: ArgoRolloutAnalysisFailed
+          expr: |
+            increase(argocd_rollout_analysis_failed_total[15m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo Rollout analysis failed"
+            description: |
+              An Argo Rollout AnalysisTemplate failed in the last
+              15 minutes. Verify the Prometheus query + the
+              successCondition / failureCondition thresholds. See
+              runbook/argo.md §analysis-failed.
+
+    # ----------------------------------------------------------------
+    # Argo CD controller health
+    # ----------------------------------------------------------------
+    - name: argo.controller
+      interval: 30s
+      rules:
+        - alert: ArgoControllerDown
+          expr: |
+            up{job="argocd-application-controller"} == 0
+            or
+            up{job="argocd-server"} == 0
+            or
+            up{job="argocd-repo-server"} == 0
+            or
+            up{job="argo-rollouts-controller"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo CD / Rollouts controller unreachable for 2m"
+            description: |
+              One of the Argo CD or Argo Rollouts controllers has
+              been unreachable for 2 minutes. Application sync
+              and Rollout reconciliation are blocked. See
+              runbook/argo.md §controller-down.
+        - alert: ArgoControllerHighErrorRate
+          expr: |
+            sum(rate(grpc_server_handled_total{job="argocd-application-controller",grpc_code!~"OK|NotFound|InvalidArgument"}[5m]))
+            /
+            sum(rate(grpc_server_handled_total{job="argocd-application-controller"}[5m]))
+            > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo CD controller 5xx ratio > 5%"
+            description: |
+              The Argo CD application-controller 5xx ratio is
+              above 5% for 10 minutes. Possible cause: downstream
+              API server error, network policy misconfiguration,
+              or vault / keycloak unreachable. See runbook/argo.md
+              §controller-errors.
+
+    # ----------------------------------------------------------------
+    # Bootstrap Job
+    # ----------------------------------------------------------------
+    - name: argo.bootstrap
+      interval: 60s
+      rules:
+        - alert: ArgoBootstrapJobFailed
+          expr: |
+            kube_job_status_failed{job_name=~"argocd-bootstrap-.*"} > 0
+          for: 0m
+          labels:
+            severity: critical
+            component: gitops
+            owner: "@genealogy/platform"
+            runbook: runbook/argo.md
+          annotations:
+            summary: "Argo CD bootstrap Job failed"
+            description: |
+              The argocd-bootstrap Helm-hook Job failed on the
+              latest helm upgrade. Likely cause: drift between
+              platform/argo/*.yaml and the live AppProject /
+              Application / Rollout / AnalysisTemplate set. See
+              runbook/argo.md §bootstrap-failed.

@@ -104,6 +104,27 @@ components:
       - https://api.genealogy.local
       - https://public-api.genealogy.local
       - https://admin.genealogy.local
+  gitops:
+    # E2.9 — SaaS runs the full Argo CD control plane in the
+    # cluster (per-region, per-tenant-class). Rollouts
+    # controller enabled; canary drills run against the
+    # production cluster. The deep linter still asserts the
+    # source-of-truth files are present in `platform/argo/`.
+    driver: argocd
+    rolloutsEnabled: true
+    controller:
+      replicas: 3
+      server:
+        replicas: 3
+      repoServer:
+        replicas: 3
+      applicationController:
+        replicas: 3
+    rollouts:
+      replicas: 3
+    driftDetection:
+      enabled: true
+      resyncSeconds: 180
   observability:
     retention:
       prometheus: 90d

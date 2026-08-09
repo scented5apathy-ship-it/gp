@@ -362,6 +362,39 @@ flagsmith:
       - platform/featureflags/safe-defaults.yaml
       - platform/featureflags/sdk-config.yaml
 
+# Argo CD + Argo Rollouts (E2.9) — local dev profile.
+# The local stack DOES NOT run the heavy Argo CD control plane
+# (server + repo-server + application-controller + dex +
+# notifications + redis); the five source-of-truth files
+# (`platform/argo/*.yaml`) are mirrored into
+# `platform/helm/genealogy-platform/files/argo/` and the
+# `argocd-bootstrap` Job applies them on `helm upgrade` on
+# the integration kind cluster. The profile below documents
+# the image pin + the bootstrap Job image so the integration
+# tests have a single source of truth.
+gitops:
+  # Image pin — ADR-E0.5-01 baseline (Argo CD 2.13.x).
+  image: argoproj/argocd:v2.13.4
+  # Argo Rollouts controller image — ADR-E0.5-01 baseline
+  # (Argo Rollouts 1.7.x).
+  rolloutsImage: argoproj/argocd-rollouts:v1.7.2
+  # Redis image — ADR-E0.5-01 baseline (Redis 7.2-alpine).
+  redisImage: public.ecr.aws/docker/library/redis:7.2-alpine
+  # RBAC — strict mode.
+  rbacStrict: true
+  # Drift detection — 60s on dev to keep the loop tight.
+  driftDetection:
+    resyncSeconds: 60
+  # Bootstrap source-of-truth references.
+  bootstrap:
+    enabled: true
+    sourceOfTruth:
+      - platform/argo/argocd-server.yaml
+      - platform/argo/projects.yaml
+      - platform/argo/applications.yaml
+      - platform/argo/rollout-strategy.yaml
+      - platform/argo/sync-windows.yaml
+
 # Observability — OTel Collector + Grafana + Prometheus + Loki + Tempo.
 observability:
   otelCollector:

@@ -1,0 +1,132 @@
+{{/*
+Argo CD + Argo Rollouts Services.
+
+The Argo CD server Service (port 443) is the canonical
+endpoint consumed by humans (admin UI) and by the
+application-controller (server-side API). It is reachable
+only from the `platform-primary` / `sre-primary`
+workstation via the bastion VPN + from the in-cluster
+application-controller — never from the public ingress.
+
+The repo-server Service (port 8081) is consumed only by
+the application-controller (in-cluster).
+
+The application-controller metrics Service (port 8082) is
+scraped by the platform Prometheus (E2.10).
+
+The redis Service (port 6379) is consumed only by the
+Argo CD control plane (server / repo-server /
+application-controller).
+*/}}
+{{- $argo := .Values.components.gitOps }}
+{{- if and $argo.enabled (eq $argo.driver "argocd") }}
+{{- $ns := "gp-argocd" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-server
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/name: argocd-server
+  ports:
+    - name: server
+      port: 443
+      targetPort: server
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-repo-server
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/name: argocd-repo-server
+  ports:
+    - name: repo-server
+      port: 8081
+      targetPort: repo-server
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-application-controller
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/name: argocd-application-controller
+  ports:
+    - name: metrics
+      port: 8082
+      targetPort: metrics
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-redis
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argocd
+    app.kubernetes.io/name: argocd-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+{{- if $argo.rolloutsEnabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argo-rollouts-controller
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argo-rollouts
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argo-rollouts
+    app.kubernetes.io/name: argo-rollouts-controller
+  ports:
+    - name: metrics
+      port: 8082
+      targetPort: metrics
+      protocol: TCP
+{{- end }}
+{{- end }}

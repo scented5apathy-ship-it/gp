@@ -1,0 +1,98 @@
+{{/*
+Argo Rollouts controller Deployment. Per ADR-E0.5-01 the
+pinned image is `quay.io/argoproj/argocd-rollouts:v1.7.2`.
+
+The Rollouts controller watches Rollout CRs in the cluster
+and orchestrates canary / blue-green promotion via the
+AnalysisTemplate. It is rendered whenever
+`components.gitOps.rolloutsEnabled: true`.
+
+The controller is a stateless controller; no PVC.
+*/}}
+{{- $argo := .Values.components.gitOps }}
+{{- if and $argo.enabled (eq $argo.driver "argocd") $argo.rolloutsEnabled }}
+{{- $ns := "gp-argocd" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argo-rollouts-controller
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argo-rollouts
+    app.kubernetes.io/version: {{ $argo.rolloutsController.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  replicas: {{ $argo.rollouts.replicas | default 2 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: argo-rollouts
+      app.kubernetes.io/name: argo-rollouts-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: argo-rollouts
+        app.kubernetes.io/name: argo-rollouts-controller
+        app.kubernetes.io/version: {{ $argo.rolloutsController.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: argo-rollouts
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: argo-rollouts-controller
+          image: {{ $argo.rolloutsController.registry | default "quay.io" }}/{{ $argo.rolloutsController.repository }}:{{ $argo.rolloutsController.tag }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - --namespaced
+            - --loglevel
+            - info
+          ports:
+            - name: metrics
+              containerPort: 8082
+              protocol: TCP
+          env:
+            - name: ARGOCD_CONTROLLER_REPLICAS
+              value: {{ $argo.controller.applicationController.replicas | quote }}
+            # Prometheus address used by AnalysisTemplate metrics
+            # queries (E2.9 rollout-strategy.yaml.analysisTemplates).
+            - name: ROLLOUTS_PROMETHEUS_ADDRESS
+              value: {{ $argo.rollouts.metrics.address | default "http://prometheus.gp-observability.svc.cluster.local:9090" | quote }}
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $argo.rollouts.resources | nindent 12 }}
+{{- end }}

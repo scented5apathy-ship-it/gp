@@ -1,0 +1,257 @@
+# platform/argo/rollout-strategy.yaml
+#
+# E2.9 — Argo Rollouts progressive delivery strategy
+# (config-as-code source-of-truth).
+#
+# Per `tasks.md` E2.9 ("Canary dựa trên error rate / latency;
+# tự abort và rollback khi vượt threshold") +
+# `design.md` §13 ("Argo Rollouts thực hiện canary dựa trên
+# SLI và tự abort / rollback khi vượt ngưỡng") +
+# `architecture-decisions.md` ADR-E0.5-01 (Argo Rollouts
+# 1.7.x) + `scale-and-slo.md` §11 (latency / availability
+# SLOs), this file declares:
+#
+#   1. The canonical Rollout strategy template (canary with
+#      traffic-split + AnalysisTemplate + abort / rollback).
+#   2. The signal contract — Prometheus queries + thresholds
+#      for error-rate, latency, success-rate, saturation.
+#   3. The forbidden strategy shapes (no mesh retry
+#      amplification; no silent canary without analysis;
+#      no `setWeight: 100` without prior canary).
+#   4. The 4 service-class templates — stateless API, BFF,
+#      domain-event consumer, async worker.
+#
+# Privacy: rollouts MUST never roll tenant-scoped features
+# without an analysis gate; the `canaryTrafficSplit` is
+# percentage-only (no per-tenant targeting).
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-argocd-rollout-strategy
+  namespace: gp-argocd
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: argo-rollouts
+    gp.genealogy/contract-only: "true"
+data:
+  rollout-strategy.yaml: |
+    # Argo Rollouts progressive delivery strategy (E2.9 source-of-truth).
+    metadata:
+      component: argo-rollouts
+      versionPolicy:
+        adr: ADR-E0.5-01
+        argoRollouts: 1.7.2
+        reviewDate: 2026-11-01
+    metrics:
+      provider: prometheus
+      address: http://prometheus.gp-observability.svc.cluster.local:9090
+    defaultStrategy:
+      canary:
+        maxSurge: "25%"
+        maxUnavailable: 0
+        canaryService: "{{ template \"rollout.canaryService\" . }}"
+        stableService: "{{ template \"rollout.stableService\" . }}"
+        trafficRouting:
+          istio:
+            virtualService:
+              name: "{{ template \"rollout.fullName\" . }}"
+              routes:
+                - primary
+        steps:
+          - setWeight: 5
+          - pause:
+              duration: 2m
+          - analysis:
+              templates:
+                - name: error-rate
+                - name: latency-p95
+              startingStep: 2
+          - setWeight: 15
+          - pause:
+              duration: 3m
+          - analysis:
+              templates:
+                - name: error-rate
+                - name: latency-p95
+                - name: success-rate
+          - setWeight: 35
+          - pause:
+              duration: 4m
+          - analysis:
+              templates:
+                - name: error-rate
+                - name: latency-p95
+                - name: success-rate
+                - name: saturation
+          - setWeight: 60
+          - pause:
+              duration: 6m
+          - setWeight: 85
+          - pause:
+              duration: 8m
+          - setWeight: 100
+        abortScaleDownDelaySeconds: 30
+        progressDeadlineSeconds: 900
+    analysisTemplates:
+      - name: error-rate
+        metrics:
+          - name: error-rate-canary
+            interval: 30s
+            count: 5
+            successCondition: result[0] < 0.01
+            failureCondition: result[0] > 0.05
+            failureLimit: 2
+            provider:
+              prometheus:
+                address: http://prometheus.gp-observability.svc.cluster.local:9090
+                query: |
+                  sum(rate(
+                    http_requests_total{
+                      app="{{template \"rollout.name\" .}}",
+                      canary="true",
+                      status=~"5.."
+                    }[2m]
+                  ))
+                  /
+                  clamp_min(
+                    sum(rate(
+                      http_requests_total{
+                        app="{{template \"rollout.name\" .}}",
+                        canary="true"
+                      }[2m]
+                    )),
+                    1
+                  )
+      - name: latency-p95
+        metrics:
+          - name: latency-p95-canary
+            interval: 30s
+            count: 5
+            successCondition: result[0] < 800
+            failureCondition: result[0] > 2000
+            failureLimit: 2
+            provider:
+              prometheus:
+                address: http://prometheus.gp-observability.svc.cluster.local:9090
+                query: |
+                  histogram_quantile(0.95,
+                    sum by (le) (
+                      rate(
+                        http_request_duration_seconds_bucket{
+                          app="{{template \"rollout.name\" .}}",
+                          canary="true"
+                        }[2m]
+                      )
+                    )
+                  )
+      - name: success-rate
+        metrics:
+          - name: success-rate-canary
+            interval: 30s
+            count: 5
+            successCondition: result[0] > 0.995
+            failureCondition: result[0] < 0.98
+            failureLimit: 2
+            provider:
+              prometheus:
+                address: http://prometheus.gp-observability.svc.cluster.local:9090
+                query: |
+                  sum(rate(
+                    http_requests_total{
+                      app="{{template \"rollout.name\" .}}",
+                      canary="true",
+                      status=~"2.."
+                    }[2m]
+                  ))
+                  /
+                  clamp_min(
+                    sum(rate(
+                      http_requests_total{
+                        app="{{template \"rollout.name\" .}}",
+                        canary="true"
+                      }[2m]
+                    )),
+                    1
+                  )
+      - name: saturation
+        metrics:
+          - name: cpu-saturation-canary
+            interval: 60s
+            count: 3
+            successCondition: result[0] < 0.80
+            failureCondition: result[0] > 0.92
+            failureLimit: 2
+            provider:
+              prometheus:
+                address: http://prometheus.gp-observability.svc.cluster.local:9090
+                query: |
+                  avg(
+                    rate(
+                      container_cpu_usage_seconds_total{
+                        pod=~"{{template \"rollout.name\" .}}-canary-.*"
+                      }[2m]
+                    )
+                  )
+    serviceClasses:
+      - name: stateless-api
+        description: Stateless read API (BFF, public-api, search)
+        defaultStrategy: canary
+        scale:
+          replicas: 3
+          maxSurge: "25%"
+          maxUnavailable: 0
+        progressDeadlineSeconds: 900
+        abortScaleDownDelaySeconds: 30
+        analysisIntervalSeconds: 30
+      - name: bff
+        description: Web BFF / PWA backend
+        defaultStrategy: canary
+        scale:
+          replicas: 3
+          maxSurge: "25%"
+          maxUnavailable: 0
+        progressDeadlineSeconds: 900
+        abortScaleDownDelaySeconds: 30
+        analysisIntervalSeconds: 30
+      - name: domain-event-consumer
+        description: Kafka consumer with outbox + idempotency
+        defaultStrategy: blue-green
+        scale:
+          replicas: 2
+          maxSurge: "100%"
+          maxUnavailable: 0
+        progressDeadlineSeconds: 1800
+        abortScaleDownDelaySeconds: 60
+        analysisIntervalSeconds: 60
+      - name: async-worker
+        description: Temporal worker / media pipeline / DNA worker
+        defaultStrategy: blue-green
+        scale:
+          replicas: 2
+          maxSurge: "100%"
+          maxUnavailable: 0
+        progressDeadlineSeconds: 1800
+        abortScaleDownDelaySeconds: 60
+        analysisIntervalSeconds: 60
+    forbiddenStrategies:
+      - description: "setWeight: 100 without analysis gate"
+        pattern: 'setWeight:\s*100\s*$'
+      - description: "no analysis template wired into canary"
+        pattern: 'analysis:\s*$'
+      - description: "maxSurge: 0 on stateless-api canary"
+        pattern: 'serviceClass:\s*stateless-api[\s\S]*?maxSurge:\s*"0%"'
+      - description: "tenant-scoped canary weight (no per-tenant targeting)"
+        pattern: 'canaryByTenant:\s*true'
+    rollbackContract:
+      onFailure:
+        - abortRollout: true
+        - scaleDownCanary: true
+        - notify:
+            sink: otel
+            severity: high
+        - audit:
+            action: rollout_aborted
+            actor: argo-rollouts
+      requiresHumanApproval: false
+      automaticRollback: true

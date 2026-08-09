@@ -164,9 +164,39 @@ components:
       loki: 7d
       tempo: 3d
   gitops:
+    # E2.9 — dev profile runs the full Argo CD control plane
+    # locally with rollouts controller enabled (canary drills
+    # on the dev cluster). Replica counts and resources are
+    # sized for a single-node dev kind cluster.
     driver: argocd
-    replicas: 1
-    rolloutsEnabled: false
+    rolloutsEnabled: true
+    controller:
+      replicas: 1
+      server:
+        replicas: 1
+      repoServer:
+        replicas: 1
+      applicationController:
+        replicas: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: "500m"
+          memory: 512Mi
+    rollouts:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    driftDetection:
+      enabled: true
+      resyncSeconds: 60
 
 # Per-env overrides for the Istio mesh (E2.5).
 # Dev profile keeps the four source-of-truth files but enables a
