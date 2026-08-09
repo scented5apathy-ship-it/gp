@@ -237,7 +237,7 @@ _Requirements: NFR1–NFR8_
     - DoD: unit test invariants + `pnpm lint:events` + `node scripts/test-contracts.mjs`
       PASS cho Avro namespace prefix và forbidden field check.
 
-  - [ ] E3.2c Application services + Keycloak subject mapping + outbox
+  - [x] E3.2c Application services + Keycloak subject mapping + outbox
 
     - `TenantCommandService.create / update / suspend / restore / delete`
       và `MembershipCommandService.invite / activate / revoke` với

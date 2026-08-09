@@ -113,6 +113,11 @@ dependencies {
     implementation(project(":libs:platform-feature-flags"))
 
     implementation(libs.bundles.spring.runtime)
+    // E3.2c needs JdbcTemplate + @Transactional + AspectJ for the
+    // RLS TxInterceptor; the platform starter does not pull these
+    // in (it stays minimal so web-only services don't pay the cost).
+    implementation(libs.spring.boot.starter.jdbc)
+    implementation(libs.spring.boot.starter.aop)
     implementation(libs.bundles.observability)
 
     // Database migration
