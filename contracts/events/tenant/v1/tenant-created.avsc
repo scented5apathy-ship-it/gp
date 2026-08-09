@@ -1,0 +1,56 @@
+{
+  "type": "record",
+  "name": "TenantCreated",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Emitted when a tenant aggregate is created (R1 acceptance criterion 1). Compatibility policy = BACKWARD per ADR-E0.5-08. The actorId is the Keycloak subject of the user who triggered the create — typically the first OWNER. downstream consumers (search-service E8, audit-service E3.6) read this to seed their projections.",
+  "fields": [
+    {
+      "name": "tenantId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Server-issued opaque tenant id (regex ^[A-Za-z0-9_-]{8,64}$)."
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "doc": "Human-readable slug, globally unique per ADR-E0.5-02 + V2 migration UNIQUE index. Regex ^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$."
+    },
+    {
+      "name": "displayName",
+      "type": "string",
+      "doc": "Display name, length 1-120."
+    },
+    {
+      "name": "plan",
+      "type": "com.genealogy.platform.events.tenant.v1.TenantPlan",
+      "doc": "Subscription plan at creation. Defaults to FREE for self-serve sign-up; ENTERPRISE requires sales-led onboarding."
+    },
+    {
+      "name": "defaultLocale",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "BCP-47 locale tag, e.g. en-US. Null when the caller accepted the platform default."
+    },
+    {
+      "name": "defaultTimezone",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "IANA timezone id, e.g. Europe/Helsinki. Null when the caller accepted the platform default."
+    },
+    {
+      "name": "defaultCalendar",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Calendar identifier per ADR-E0.5-14: GREGORIAN/HEBREW/HIJRI/ETHIOPIAN/CUSTOM."
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Keycloak subject of the user who triggered the create (pseudonymised)."
+    },
+    {
+      "name": "createdAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

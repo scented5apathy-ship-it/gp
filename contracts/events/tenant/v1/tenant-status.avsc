@@ -1,0 +1,7 @@
+{
+  "type": "enum",
+  "name": "TenantStatus",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Tenant lifecycle state. Compatibility policy = FULL: removing a symbol requires bumping to v2. Mirrors the gRPC TenantStatus enum in contracts/protobuf/tenant/v1/tenant_service.proto.",
+  "symbols": ["ACTIVE", "SUSPENDED", "DELETED"]
+}

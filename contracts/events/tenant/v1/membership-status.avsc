@@ -1,0 +1,7 @@
+{
+  "type": "enum",
+  "name": "MembershipStatus",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Per-membership lifecycle state. Compatibility policy = FULL: removing a symbol requires bumping to v2. Mirrors the gRPC MembershipStatus enum. INVITED requires invited_at != null; ACTIVE requires joined_at != null; SUSPENDED requires suspended_at != null; REVOKED requires revoked_at != null.",
+  "symbols": ["INVITED", "ACTIVE", "SUSPENDED", "REVOKED"]
+}

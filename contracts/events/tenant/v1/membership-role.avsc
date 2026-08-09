@@ -1,0 +1,7 @@
+{
+  "type": "enum",
+  "name": "MembershipRole",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Per-tenant membership role. Compatibility policy = FULL: removing a symbol requires bumping to v2. Mirrors the gRPC MembershipRole enum in contracts/protobuf/tenant/v1/tenant_service.proto. Per ADR-E0.5-05, Keycloak federated groups MUST NOT force-sync into this role — only the OWNER (E3.2c invite flow) can assign a role.",
+  "symbols": ["OWNER", "ADMIN", "MEMBER", "AUDITOR", "BILLING_ADMIN"]
+}

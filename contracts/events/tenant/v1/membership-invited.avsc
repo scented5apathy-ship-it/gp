@@ -1,0 +1,52 @@
+{
+  "type": "record",
+  "name": "MembershipInvited",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Emitted when a tenant owner/admin invites a user (R1 acceptance criterion 2). Compatibility policy = BACKWARD per ADR-E0.5-08. The invitation token is NEVER carried in the event — only the tokenHash; raw tokens live in the invite email and are single-use. downstream consumers (notification-service E11.1, search-service E8 for membership projection) read this to render the invite and seed the membership row.",
+  "fields": [
+    {
+      "name": "tenantId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "membershipId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Server-issued membership id. Status starts at INVITED; the membership row exists in tenant_service.memberships at this point so the invite flow can recover after a crash."
+    },
+    {
+      "name": "invitationId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "email",
+      "type": "string",
+      "doc": "Recipient email (RFC 5322). PII by design — audit hook MUST redact before forwarding to third-party sinks."
+    },
+    {
+      "name": "role",
+      "type": "com.genealogy.platform.events.tenant.v1.MembershipRole",
+      "doc": "Role the invitee will hold after acceptance. OWNER promotion requires an existing OWNER (the Keycloak-subject mapping never auto-promotes per ADR-E0.5-05)."
+    },
+    {
+      "name": "invitedByUserId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Keycloak subject of the inviter. Audit trail."
+    },
+    {
+      "name": "tokenHash",
+      "type": "string",
+      "doc": "Salted hash of the invite token. The raw token is sent by email and never persisted."
+    },
+    {
+      "name": "expiresAt",
+      "type": "string",
+      "logicalType": "timestamp-millis",
+      "doc": "Invite expiry. R1 §2 requires the invite to be revocable; the relay enforces expiry at acceptance time."
+    },
+    {
+      "name": "invitedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

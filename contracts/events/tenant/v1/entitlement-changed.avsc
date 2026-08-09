@@ -1,0 +1,56 @@
+{
+  "type": "record",
+  "name": "EntitlementChanged",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Emitted when a tenant's plan/quota entitlement changes (R1 acceptance criterion 4 — SaaS billing adapter path). Compatibility policy = BACKWARD per ADR-E0.5-08. Quota numeric fields are DRAFT pending E0.6 sign-off (architecture-decisions.md §A) and may be ignored by downstream consumers until they ship a quota-enforcement story.",
+  "fields": [
+    {
+      "name": "tenantId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "plan",
+      "type": "com.genealogy.platform.events.tenant.v1.TenantPlan"
+    },
+    {
+      "name": "memberLimit",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Maximum number of active memberships. 0 = unlimited. DRAFT — see architecture-decisions.md §A."
+    },
+    {
+      "name": "treeLimit",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Maximum number of trees the tenant may own. 0 = unlimited. DRAFT — see architecture-decisions.md §A."
+    },
+    {
+      "name": "storageLimitMb",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Maximum media storage in MB. 0 = unlimited. DRAFT — see architecture-decisions.md §A."
+    },
+    {
+      "name": "retentionDays",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Data retention in days for soft-deleted resources. 0 = unlimited / indefinite. DRAFT — see architecture-decisions.md §A."
+    },
+    {
+      "name": "billingExternalId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "External billing-system id (Stripe customer id, on-prem license id). Null for FREE tenants."
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Keycloak subject who triggered the change (system actor for billing-driven changes, OWNER for self-serve upgrades)."
+    },
+    {
+      "name": "changedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

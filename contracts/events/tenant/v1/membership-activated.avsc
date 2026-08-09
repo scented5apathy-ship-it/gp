@@ -1,0 +1,35 @@
+{
+  "type": "record",
+  "name": "MembershipActivated",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Emitted when an invited user accepts and the membership transitions INVITED -> ACTIVE (R1 acceptance criterion 2 + ADR-E0.5-05). Compatibility policy = BACKWARD per ADR-E0.5-08. The userId is the Keycloak subject resolved at acceptance time — note that the invite flow stores the email; the activation links the email to a concrete Keycloak subject.",
+  "fields": [
+    {
+      "name": "tenantId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "membershipId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "userId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Keycloak subject that accepted the invite."
+    },
+    {
+      "name": "role",
+      "type": "com.genealogy.platform.events.tenant.v1.MembershipRole"
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Keycloak subject who triggered the activation. Equal to userId for self-service; equals an ADMIN userId for admin-driven activation."
+    },
+    {
+      "name": "joinedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

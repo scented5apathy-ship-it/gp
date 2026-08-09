@@ -1,0 +1,41 @@
+{
+  "type": "record",
+  "name": "MembershipRevoked",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Emitted when a membership is revoked (R1 acceptance criterion 2 last clause + R2 access-revocation flow). Compatibility policy = BACKWARD per ADR-E0.5-08. downstream consumers (genealogy-service E4 invalidates the user's tokens in its projection, audit-service E3.6 records the revocation, media-service E7 revokes delivery access per ownership-catalog.md §2.5, dna-service E10 enforces consent revocation). Per ownership-catalog.md the propagation deadline is the SLO for the slowest consumer (currently 60s per consent-revocation scale-and-slo draft).",
+  "fields": [
+    {
+      "name": "tenantId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "membershipId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "userId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "previousStatus",
+      "type": "com.genealogy.platform.events.tenant.v1.MembershipStatus",
+      "doc": "Status before the revocation (ACTIVE / SUSPENDED). The transition is always -> REVOKED."
+    },
+    {
+      "name": "reason",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Free-text reason from the actor. PII — audit hook MUST redact before forwarding to third-party sinks."
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Keycloak subject who triggered the revocation. Equal to userId for self-service leave; equals an OWNER/ADMIN for forced revocation."
+    },
+    {
+      "name": "revokedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

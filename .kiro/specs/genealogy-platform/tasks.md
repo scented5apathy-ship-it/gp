@@ -219,7 +219,7 @@ _Requirements: NFR1–NFR8_
       `SET app.tenant_id = 'other'; SELECT * FROM tenant_service.tenants;`
       trả 0 row ngay cả khi user có quyền SELECT.
 
-  - [ ] E3.2b Domain model + 5 event Avro schemas
+  - [x] E3.2b Domain model + 5 event Avro schemas
 
     - Aggregate `Tenant` với state machine `ACTIVE → SUSPENDED → DELETED`,
       value object `TenantId`, `Slug`, `Etiquette`, invariants (slug regex,

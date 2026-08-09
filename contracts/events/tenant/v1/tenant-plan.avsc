@@ -1,0 +1,7 @@
+{
+  "type": "enum",
+  "name": "TenantPlan",
+  "namespace": "com.genealogy.platform.events.tenant.v1",
+  "doc": "Tenant subscription plan. Compatibility policy = FULL: removing a symbol requires bumping to v2. Numeric defaults are DRAFT pending E0.6 sign-off (architecture-decisions.md §A).",
+  "symbols": ["FREE", "FAMILY", "PRO", "ENTERPRISE"]
+}
