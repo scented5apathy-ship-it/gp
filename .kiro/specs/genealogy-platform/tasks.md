@@ -202,6 +202,85 @@ _Requirements: NFR1–NFR8_
   - Đồng bộ Keycloak subject, nhưng giữ Person và User tách biệt.
   - Thiết lập `tenant_id`, repository guard, PostgreSQL RLS và audit.
 
+  Phạm vi E3.2 được chia thành 5 subtask nhỏ, mỗi subtask có evidence riêng
+  và có thể merge độc lập. Epic E3.2 chỉ đánh `[x]` khi cả 5 subtask `[x]`.
+
+  - [x] E3.2a Flyway V2 schema + PostgreSQL RLS + jOOQ datasource role
+
+    - Migration `V2__tenant_aggregate.sql` tạo schema `tenant_service`, các bảng
+      `tenants`, `memberships`, `invitations`, `entitlements`, `outbox_events`
+      với khóa chính opaque, `tenant_id`, timestamps, version và audit columns.
+    - Bật Row-Level Security trên mọi bảng tenant-scoped với policy
+      `tenant_isolation` dùng `current_setting('app.tenant_id', true)`.
+    - Cấu hình datasource role riêng cho tenant-service theo ADR-E0.5-02
+      (schema-per-service); quyền `SELECT/INSERT/UPDATE/DELETE` chỉ trong
+      `tenant_service`, không cross-schema.
+    - DoD: Testcontainers Postgres boot + IT chứng minh
+      `SET app.tenant_id = 'other'; SELECT * FROM tenant_service.tenants;`
+      trả 0 row ngay cả khi user có quyền SELECT.
+
+  - [ ] E3.2b Domain model + 5 event Avro schemas
+
+    - Aggregate `Tenant` với state machine `ACTIVE → SUSPENDED → DELETED`,
+      value object `TenantId`, `Slug`, `Etiquette`, invariants (slug regex,
+      displayName 1–120, plan enum).
+    - Aggregate `Membership` với role enum OWNER/ADMIN/MEMBER/AUDITOR/BILLING_ADMIN,
+      status INVITED/ACTIVE/SUSPENDED/REVOKED; `Person` và `User` giữ tách biệt
+      (Membership.userId = Keycloak sub opaque, Membership.personId nullable).
+    - Aggregate `Invitation` với expiry + idempotency key.
+    - Entity `Entitlement` với plan enum FREE/FAMILY/PRO/ENTERPRISE + quota map
+      (memberLimit, treeLimit, storageLimitMb, retentionDays); giá trị DRAFT
+      theo architecture-decisions.md §A, ghi ADR exception trong evidence.
+    - 5 Avro schemas (BACKWARD compatibility per ADR-E0.5-08):
+      `tenant-created`, `membership-invited`, `membership-activated`,
+      `membership-revoked`, `entitlement-changed`.
+    - DoD: unit test invariants + `pnpm lint:events` + `node scripts/test-contracts.mjs`
+      PASS cho Avro namespace prefix và forbidden field check.
+
+  - [ ] E3.2c Application services + Keycloak subject mapping + outbox
+
+    - `TenantCommandService.create / update / suspend / restore / delete`
+      và `MembershipCommandService.invite / activate / revoke` với
+      optimistic concurrency (ETag) và audit hook (E3.6 contract).
+    - `KeycloakSubjectMirror` interface + in-memory implementation cho E3.2;
+      adapter pattern cho phép thay bằng real Keycloak admin API call trong
+      E3.5 mà không sửa domain code.
+    - `OutboxEvent` được ghi cùng transaction aggregate (per design.md §7.3);
+      relay publish sang Kafka là việc của E4.7, E3.2 chỉ chịu trách nhiệm ghi.
+    - DoD: unit + IT happy-path create-tenant → invite-member → activate-membership
+      → revoke-membership; outbox row xuất hiện cho mỗi mutation.
+
+  - [ ] E3.2d REST controllers honoring OpenAPI contract
+
+    - `TenantController` chuẩn RFC 9457 (problem+json), `Idempotency-Key`,
+      `If-Match`, ETag, cursor pagination cho list, `X-Correlation-Id`.
+    - `MembershipController` nested dưới `/api/v1/tenants/{tenantId}/memberships`
+      với invite/list/revoke.
+    - Cross-tenant negative test: request với `X-Tenant-Id=A` truy cập
+      resource thuộc tenant `B` phải trả 404 (không 403, để tránh leak).
+    - DoD: `pnpm lint:openapi` PASS + mở rộng `TenantServiceApplicationIT`
+      với happy-path + cross-tenant negative; OpenAPI contract stable.
+
+  - [ ] E3.2e gRPC stub + runbook + evidence + Plan/Quota DRAFT note
+
+    - `TenantGrpcService` chỉ là Spring `@Component` với TODO note; KHÔNG
+      wire `com.google.protobuf` plugin (đợi E4.x fix enum collisions
+      trong `tenant_service.proto` / `person_service.proto` per build.gradle.kts
+      header). REST surface là contract chính trong E3.2.
+    - `runbook/tenant-service.md` với: capacity skeleton từ
+      `scale-and-slo.yml::tenant` (defer E13.3), on-call tier-1/Tier-2,
+      dependency map Keycloak + Postgres + audit topic, dashboards
+      `grafana/dashboards/tenant-service.json` (defer E2.10/E13.1),
+      alert rules `alerts/tenant-service.yaml` (defer E13.2).
+    - Plan/Quota numerics ghi DRAFT trong evidence/E3.2e.md, tham chiếu
+      architecture-decisions.md §A và đánh dấu chờ E0.6 sign-off; service
+      KHÔNG chặn mutation dựa trên quota trong E3.2 (gate per ADR exception).
+    - 5 evidence file: `evidence/E3.2a.md` … `evidence/E3.2e.md` với Status
+      DONE từng phần; chỉ flip epic `[x]` khi cả 5 evidence DONE.
+    - DoD: `pnpm check:boundary` + `pnpm lint:openapi` + `pnpm lint:protobuf`
+      + `pnpm lint:events` + `./gradlew :services:tenant-service:test`
+      PASS; không mở rộng scope ngoài 4 subtask trên.
+
 - [ ] E3.3 Thiết kế OpenFGA model
 
   - Mô hình user/group→tenant/tree/branch/resource và các role mặc định.
