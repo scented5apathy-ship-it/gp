@@ -1,0 +1,78 @@
+{{/*
+Temporal UI Deployment — read-only companion to the server. The UI
+is restricted to platform-primary on-call operators via NetworkPolicy
+(E2.4 §6); no PII or sensitive payload is exposed because every
+query is pseudonymised at the worker boundary per ADR-E0.5-07.
+*/}}
+{{- $temporal := .Values.components.temporal }}
+{{- if and $temporal.enabled $temporal.ui.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal-ui
+    app.kubernetes.io/version: {{ $temporal.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: temporal-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: temporal-ui
+        app.kubernetes.io/version: {{ $temporal.image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+    spec:
+      serviceAccountName: temporal-ui
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: temporal-ui
+          image: {{ include "genealogy-platform.image" (dict "image" $temporal.ui.image) }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: "temporal.{{ $temporal.namespace }}.svc.cluster.local:7233"
+            - name: TEMPORAL_CSRF_COOKIE_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: {{ .Values.baseline.probes.readiness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.readiness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.readiness.initialDelaySeconds }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: {{ .Values.baseline.probes.liveness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.liveness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.liveness.initialDelaySeconds }}
+          resources:
+            requests:
+              cpu: {{ $temporal.ui.resources.requests.cpu | quote }}
+              memory: {{ $temporal.ui.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ $temporal.ui.resources.limits.cpu | quote }}
+              memory: {{ $temporal.ui.resources.limits.memory | quote }}
+{{- end }}

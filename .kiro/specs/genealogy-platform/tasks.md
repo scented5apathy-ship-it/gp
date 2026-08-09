@@ -135,7 +135,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - Thiết lập schema compatibility, artifact naming và access control trong Apicurio.
   - Alert under-replicated partitions, disk, consumer lag và registry failures.
 
-- [ ] E2.4 Cấu hình Temporal
+- [x] E2.4 Cấu hình Temporal
 
   - Triển khai namespace, retention, task queues, worker identity và visibility policy.
   - Định nghĩa timeout/retry/heartbeat mặc định; cấm PII trong search attributes.

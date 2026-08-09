@@ -1,0 +1,179 @@
+# Source-of-truth Temporal dynamic configuration — E2.4.
+#
+# Per `tasks.md` E2.4 + ADR-E0.5-07 the dynamic config below pins:
+#   - per-namespace retention defaults (30d, DNA = 365d);
+#   - the visibility attribute whitelist (the search-attributes
+#     schema in `search-attrs.yaml`);
+#   - per-namespace activity defaults: schedule-to-close timeout,
+#     start-to-close timeout, heartbeat timeout, retry policy;
+#   - the global workflow defaults for `WorkflowTaskTimeout`,
+#     `WorkflowRunTimeout`, `WorkerTaskSlotsPerPoller`,
+#     `WorkerEnableSessionWorker`;
+#   - the standard visibility / archival / history archival config.
+#
+# The file is rendered into the umbrella chart via
+# `templates/components/temporal/dynamic-config.yaml` ConfigMap and
+# mounted into the `temporal-frontend` + `temporal-history` +
+# `temporal-matching` deployments at runtime. The Temporal server
+# reads the file on `SIGHUP`; the chart ships a kubectl rollout that
+# bounces the StatefulSets on every config change (a Helm hook
+# annotation documents the dependency).
+#
+# Format: Temporal dynamic config is a YAML file with a flat key
+# namespace `system.<component>.<key>`. The schema below mirrors the
+# `temporal` server's `dynamicconfig.MemoryMutableProvider` and is
+# what `temporal/temporal` v1.26.x consumes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-temporal-dynamic-config
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: "1.26"
+    gp.genealogy/contract-only: "true"
+data:
+  # The actual config file delivered to the Temporal pods. Temporal
+  # expects a single YAML document with `system.*` keys.
+  config.yaml: |
+    # -----------------------------------------------------------------
+    # System-wide workflow defaults. E2.4 §2 + ADR-E0.5-07.
+    # Workflows MUST be deterministic; the platform exposes only
+    # the documented defaults below. Domain services override per
+    # workflow type via `WorkflowOptions` if needed.
+    # -----------------------------------------------------------------
+    system:
+      workflow:
+        # Default `WorkflowExecutionTimeout` for every workflow when
+        # the caller does not specify one. Matches the 24h ceiling
+        # in ADR-E0.5-07 (saga must not exceed a single operator
+        # shift).
+        default:
+          workflow:
+            execution:
+              timeout: "24h"
+        # `WorkflowTaskTimeout` is the per-decision turnaround. The
+        # default (10s) is the Temporal upstream default; we keep
+        # it so workflow decision latency stays bounded.
+        workflowTaskTimeout: "10s"
+        # `ReapplyExcludeTypes` keeps the workflow replayer from
+        # re-applying side-effect-producing events.
+        reapplyExcludeTypes: ["SignalExternalWorkflowExecutionInitiated", "WorkflowExecutionSignaled"]
+
+      # -----------------------------------------------------------------
+      # Activity defaults. E2.4 §2: per-namespace defaults below are
+      # consumed by every activity that does not pass its own
+      # `ActivityOptions`. Heartbeats are mandatory for activities
+      # longer than 30s.
+      # -----------------------------------------------------------------
+      activity:
+        # `default.scheduleToCloseTimeout` = 60s; most activities
+        # are bounded HTTP calls and finish quickly. Long-running
+        # media / DNA activities pass an explicit per-activity
+        # timeout.
+        scheduleToCloseTimeout: "60s"
+        # `default.heartbeatTimeout` = 10s. Heartbeat-required for
+        # every activity that runs > 30s. The retry policy below
+        # gives 3 attempts with exponential backoff.
+        heartbeatTimeout: "10s"
+        # `maxAttempts` and `initialInterval` define the retry
+        # policy used by every activity that does not pass its own.
+        maxAttempts: 3
+        initialInterval: "1s"
+        maximumInterval: "30s"
+        backoffCoefficient: 2.0
+        # Non-retryable error classes bubble up to the workflow
+        # immediately so the saga can compensate.
+        nonRetryableErrorTypes:
+          - "InvalidArgument"
+          - "NotFound"
+          - "PermissionDenied"
+
+      # -----------------------------------------------------------------
+      # Visibility attribute whitelist — E2.4 §3 + ADR-E0.5-07 §privacy.
+      # Any `searchAttributes` name not in the list is rejected by
+      # the server. Field types come from
+      # `temporal.api.enums.v1.IndexedValueType`.
+      # -----------------------------------------------------------------
+      visibility:
+        attribute:
+          - name: TenantId
+            type: 4        # IndexedValueTypeCustomString = 4
+          - name: WorkflowType
+            type: 5        # IndexedValueTypeCustomKeyword = 5
+          - name: TaskQueue
+            type: 5
+          - name: Attempt
+            type: 3        # IndexedValueTypeCustomInt = 3
+          - name: AggregateType
+            type: 5
+          - name: AggregateId
+            type: 4
+          - name: MediaAssetId
+            type: 4
+          - name: TransferJobId
+            type: 4
+          - name: ConsentId
+            type: 4
+        # The 9 fields above are the only writable indexed fields.
+        # Anything else is rejected at `StartWorkflowExecution`.
+
+      # -----------------------------------------------------------------
+      # Per-namespace overrides. E2.4 §1 mandates `genea-dna` carries
+      # 365-day retention; every other namespace stays at the 30-day
+      # default. The Temporal server merges these overrides with the
+      # defaults at namespace registration time.
+      # -----------------------------------------------------------------
+      namespace:
+        default:
+          retention: "30d"
+          historyArchivalState: "disabled"
+          visibilityArchivalState: "disabled"
+        replication:
+          # No cross-region replication. ADR-E0.5-07 forbids cross-
+          # region Temporal namespace transfer by default; multi-
+          # region is an explicit ADR.
+          enabled: false
+
+    # -----------------------------------------------------------------
+    # History / matching / frontend defaults. The key namespace is
+    # `frontend.*`, `history.*`, `matching.*` — Temporal parses the
+    # dynamic config with this exact prefix map.
+    # -----------------------------------------------------------------
+    frontend:
+      # `FrontendMaxConcurrentTaskQueuePollers` = 8; the worker
+      # pool scales horizontally instead of vertically.
+      maxConcurrentTaskQueuePollers: 8
+      # `FrontendMaxOutstandingWorkflowTasks` caps the per-RPC
+      # back-pressure so a slow history pod does not exhaust
+      # frontend memory.
+      maxOutstandingWorkflowTasks: 2000
+
+    history:
+      # Number of workflow task slots per history shard.
+      # Bumping this requires re-sharding; tracked separately.
+      numWorkflowTaskToScheduleInAIteration: 4
+      # `HistoryMaxAutoResetPoints` = 20 — matches the upstream
+      # default and bounds the per-workflow memory.
+      maxAutoResetPoints: 20
+
+    matching:
+      # Poller pool for the task-queue dispatch path. Matches
+      # `frontend.maxConcurrentTaskQueuePollers` so the matching
+      # service does not fall behind.
+      maxConcurrentTaskQueuePollers: 8
+
+    # -----------------------------------------------------------------
+    # Worker defaults. These are enforced in the worker SDK template
+    # (`libs/platform-temporal-worker`); the dynamic config here is
+    # only the server-side caps.
+    # -----------------------------------------------------------------
+    worker:
+      # Per-worker `TaskSlotsPerPoller`. The default upstream is 10;
+      # the platform standardises on 10 to keep horizontal scaling
+      # numbers predictable.
+      taskSlotsPerPoller: 10
+      # `EnableSessionWorker` is FALSE — the platform does not yet
+      # rely on sessions (E14 evolution path).
+      enableSessionWorker: false

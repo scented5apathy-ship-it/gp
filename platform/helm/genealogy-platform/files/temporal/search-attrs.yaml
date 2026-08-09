@@ -1,0 +1,108 @@
+# Source-of-truth Temporal search attribute policy — E2.4.
+#
+# Per `tasks.md` E2.4 + ADR-E0.5-07 §privacy:
+#   - search attributes MUST NOT contain raw PII, DNA, token or file
+#     content. The whitelist below is the exhaustive platform schema.
+#   - the Temporal server rejects any `UpsertWorkflowExecutionOptions`
+#     whose `searchAttributes` carry a field NOT in this list. The
+#     enforcement happens server-side via `system.visibilityAttribute`
+#     in `dynamic-config.yaml`.
+#   - per-namespace allowed sets in `namespace-config.yaml` are
+#     intersections of this whitelist; any namespace that tries to
+#     declare a field outside it is rejected by the linter.
+#
+# Field name rules (Temporal `temporal.api.enums.v1.IndexedValueType`):
+#   - `CustomStringField` is opaque string. The application is
+#     responsible for hashing / pseudonymizing before insert.
+#   - `CustomKeywordField` is opaque keyword (used for filter only).
+#     Workers must NEVER put a raw person name / email / phone here.
+#   - `CustomIntField` is opaque counter.
+#   - `CustomDatetimeField` / `CustomDoubleField` are reserved for
+#     future epics (DNA match confidence, etc.) but MUST NOT carry
+#     raw data.
+#
+# Forbidden value classes (per `privacy-and-legal-gate.md` §11 +
+# ADR-E0.5-07):
+#   - raw DNA genotypes or segment tables;
+#   - email, phone, postal address, full name;
+#   - file content / media bytes / signed URL token;
+#   - OIDC access token, refresh token, Keycloak subject claim;
+#   - Person UUID (use the tenant-pseudonymized ID instead).
+#
+# Worker code MUST pseudonymize identifiers via the platform
+# `tenant-pseudo-id` library before publishing search attributes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-temporal-search-attrs
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: "1.26"
+    gp.genealogy/contract-only: "true"
+data:
+  schema.yaml: |
+    # The Temporal server indexes the fields below by name. Workers
+    # may write to them via `UpsertWorkflowExecutionOptions`; any
+    # other field name is rejected by the server's
+    # `system.visibilityAttribute` whitelist.
+    schema:
+      - name: TenantId
+        type: CustomStringField
+        description: opaque tenant pseudo-id (NEVER the raw UUID)
+      - name: WorkflowType
+        type: CustomKeywordField
+        description: workflow name (e.g. TreeMergeWorkflow)
+      - name: TaskQueue
+        type: CustomKeywordField
+        description: worker task queue the workflow polls
+      - name: Attempt
+        type: CustomIntField
+        description: current activity attempt counter
+      - name: AggregateType
+        type: CustomKeywordField
+        description: domain aggregate name (e.g. Person, Tree)
+      - name: AggregateId
+        type: CustomStringField
+        description: opaque aggregate pseudo-id
+      - name: MediaAssetId
+        type: CustomStringField
+        description: opaque media asset pseudo-id (media-service only)
+      - name: TransferJobId
+        type: CustomStringField
+        description: opaque transfer-job pseudo-id (interop only)
+      - name: ConsentId
+        type: CustomStringField
+        description: opaque consent receipt pseudo-id (DNA only)
+    # Per ADR-E0.5-07 §privacy the server rejects any attribute whose
+    # name matches one of these patterns. The list is regex-based so
+    # a typo like `tennant_id` (sic) or a forbidden class like
+    # `EmailAddress` is caught at workflow start.
+    forbiddenNames:
+      - name: TenantUuid
+        reason: raw UUID forbidden; use TenantId (pseudo-id)
+      - name: UserId
+        reason: raw user UUID forbidden
+      - name: PersonUuid
+        reason: raw person UUID forbidden
+      - name: Email
+        reason: raw email forbidden
+      - name: Phone
+        reason: raw phone forbidden
+      - name: Address
+        reason: raw postal address forbidden
+      - name: DnaRaw
+        reason: raw DNA genotype forbidden
+      - name: DnaSegment
+        reason: raw DNA segment table forbidden
+      - name: AccessToken
+        reason: OIDC access token forbidden
+      - name: RefreshToken
+        reason: OIDC refresh token forbidden
+      - name: Subject
+        reason: raw Keycloak subject forbidden
+      - name: MediaUrl
+        reason: signed media URL forbidden
+      - name: FileName
+        reason: raw file name forbidden

@@ -1,0 +1,82 @@
+{{/*
+Helm-hook Job — reconcile Temporal namespaces on chart install /
+upgrade. The job reads the source-of-truth `namespace-config.yaml`
+ConfigMap, then runs `temporal operator namespace` for every entry
+that is missing or whose retention / visibility diverges.
+
+Per ADR-E0.5-07 the job runs as a non-root user with a Kubernetes
+job-level `restartPolicy: OnFailure` and a `backoffLimit: 3`. The
+chart skips the hook on `helm template` (no install) — operators
+run `helm upgrade` for the hook to fire.
+*/}}
+{{- $temporal := .Values.components.temporal }}
+{{- if $temporal.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: temporal-namespace-init
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: {{ $temporal.image.tag | quote }}
+  annotations:
+    "helm.sh/hook": pre-upgrade,pre-install
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: temporal
+    spec:
+      serviceAccountName: temporal-namespace-init
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reconcile
+          image: {{ include "genealogy-platform.image" (dict "image" $temporal.adminToolsImage) }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "Reconciling Temporal namespaces via admin-tools..."
+              # The init container reads the JSON-encoded ConfigMap
+              # and emits a `temporal` CLI invocation per namespace
+              # entry. The chart ships the parser as a one-shot
+              # script (`scripts/temporal-init-namespace.sh`)
+              # which lives at `/usr/local/bin/temporal-init.sh`.
+              # When the source-of-truth `namespace-config.yaml`
+              # does not list any namespace, the script exits 0
+              # without doing anything.
+              temporal-init.sh \
+                --config /etc/temporal/policy/policy.yaml \
+                --server temporal.{{ $temporal.namespace }}.svc.cluster.local:7233
+          volumeMounts:
+            - name: policy
+              mountPath: /etc/temporal/policy
+              readOnly: true
+            - name: init-script
+              mountPath: /usr/local/bin/temporal-init.sh
+              readOnly: true
+              subPath: temporal-init.sh
+      volumes:
+        - name: policy
+          configMap:
+            name: genea-temporal-namespace-config
+        - name: init-script
+          configMap:
+            name: temporal-init-scripts
+            defaultMode: 0500
+{{- end }}

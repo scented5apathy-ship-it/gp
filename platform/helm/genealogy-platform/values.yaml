@@ -384,11 +384,65 @@ components:
     jmxPort: 9999
   temporal:
     enabled: true
-    replicasFrontend: 3
-    replicasWorker: 4
-    replicasHistory: 1
-    replicasMatching: 2
-    replicasVisibility: 2
+    # Per `tasks.md` E2.4 + ADR-E0.5-07 the Temporal cluster is
+    # self-hosted on-prem AND on SaaS. SaaS only swaps to Temporal
+    # Cloud with an in-region + on-prem-parity contract (tracked
+    # in the ADR). The chart renders the self-hosted layout.
+    namespace: gp-data
+    # Image pin — ADR-E0.5-01 baseline (Temporal 1.26.x).
+    # The umbrella chart ships the all-in-one `temporalio/temporal`
+    # image (front-end + history + matching + worker on distinct
+    # ports) — same binary the upstream `temporalio/temporal` Helm
+    # chart uses. Renovate bumps the patch line per ADR-E0.5-01.
+    image:
+      repository: temporalio/temporal
+      tag: "1.26.2"
+      registry: docker.io
+    # Admin-tools image — used by the two Helm-hook Jobs that
+    # reconcile namespaces + task queues. Same upstream
+    # `temporalio/admin-tools` chart default.
+    adminToolsImage:
+      repository: temporalio/admin-tools
+      tag: "1.26.2"
+      registry: docker.io
+    # Default namespace — every domain namespace in
+    # `platform/temporal/namespace-config.yaml` is created by the
+    # `temporal-namespace-init` Helm-hook Job.
+    defaultNamespace: genea-default
+    # PostgreSQL persistence — uses the chart's gp-data cluster.
+    # The Helm pre-install hook from E2.1 provisions the database
+    # + role; the chart only references the secret.
+    persistence:
+      postgresHost: postgres.gp-data.svc.cluster.local
+      postgresPort: "5432"
+      database: genea_temporal
+      secretName: temporal-postgres-credentials
+      cacheStorageClass: gp-data-ssd
+      cacheSize: 10Gi
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    # UI is read-only and restricted to platform-primary on-call
+    # operators per ADR-E0.5-07 §privacy. The UI is exposed via
+    # the chart's `gp-platform` ingress with SSO; nothing is
+    # public.
+    ui:
+      enabled: true
+      image:
+        repository: temporalio/ui
+        tag: "2.5.0"
+        registry: docker.io
+      resources:
+        requests:
+          cpu: "100m"
+          memory: 128Mi
+        limits:
+          cpu: "500m"
+          memory: 512Mi
   istio:
     enabled: true
     profile: default

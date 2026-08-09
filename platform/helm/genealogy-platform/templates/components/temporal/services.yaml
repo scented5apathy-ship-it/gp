@@ -1,0 +1,62 @@
+{{/*
+Temporal services — ClusterIPs for the four Temporal services and
+the UI. All ClusterIPs are internal-only; only the UI is reachable
+from inside the mesh (NetworkPolicy gates access per E2.4 §6).
+*/}}
+{{- $temporal := .Values.components.temporal }}
+{{- if $temporal.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+  ports:
+    - name: frontend-grpc
+      port: 7233
+      targetPort: 7233
+      protocol: TCP
+    - name: history-grpc
+      port: 7234
+      targetPort: 7234
+      protocol: TCP
+    - name: matching-grpc
+      port: 7235
+      targetPort: 7235
+      protocol: TCP
+    - name: worker-grpc
+      port: 7239
+      targetPort: 7239
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+---
+{{- if $temporal.ui.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal-ui
+spec:
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal-ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+{{- end }}
+{{- end }}

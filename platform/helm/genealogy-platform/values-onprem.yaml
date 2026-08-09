@@ -45,11 +45,19 @@ components:
   apicurio:
     replicas: 2
   temporal:
-    replicasFrontend: 2
-    replicasWorker: 4
-    replicasHistory: 1
-    replicasMatching: 2
-    replicasVisibility: 2
+    # On-prem profile mirrors SaaS (single StatefulSet running the
+    # all-in-one `temporal-server`). Horizontal scaling is via the
+    # `addCacheCapacity` chart knob once the size envelopes grow
+    # (out of scope for E2.4 — tracked separately).
+    persistence:
+      postgresHost: postgres.gp-data.svc.cluster.local
+      postgresPort: "5432"
+      database: genea_temporal
+      secretName: temporal-postgres-credentials
+      cacheStorageClass: gp-data-ssd
+      cacheSize: 20Gi
+    ui:
+      enabled: true
   vault:
     replicas: 3
     # On-prem Vault seals against a customer-managed KMS (HSM,

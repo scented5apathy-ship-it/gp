@@ -84,6 +84,8 @@ Every change must respect:
       Kong runtime invariants — E2.2)
 - [ ] `pnpm lint:kong` passes (Kong declarative config validator — E2.2)
 - [ ] `pnpm lint:kafka` passes (Strimzi Kafka + Apicurio config validator — E2.3)
+- [ ] `pnpm lint:temporal` passes (Temporal namespace / search-attribute /
+      dynamic-config / task-queue validator — E2.4)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

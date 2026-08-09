@@ -1,0 +1,139 @@
+# Prometheus alert rules for Temporal (E2.4).
+#
+# Per `tasks.md` E2.4 + ADR-E0.5-07 the Temporal cluster must be
+# observable. The SLI sources are:
+#   - Temporal server Prometheus metrics on port 9090
+#     (`temporal_request`, `temporal_task_queue_polls`,
+#     `temporal_workflow_start`, `temporal_workflow_failures`,
+#     `temporal_activity_failures`, `temporal_history_size`).
+#   - PostgreSQL `pg_stat_activity` for the `genea_temporal`
+#     database (background).
+#
+# The rules below mirror the kafka + apicurio rule groups in
+# `platform/observability/alerts/kafka-rules.yaml`: severity ladder
+# (warning → critical), `for:` clause tuned per severity, and
+# `runbook_url` pointing at `runbook/temporal.md`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-temporal-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: "1.26"
+    gp.genealogy/contract-only: "true"
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    # -----------------------------------------------------------------
+    # Temporal server availability — the canonical SLO SLI from
+    # ADR-E0.5-07 (99.9% / month, workflow start p95 < 400 ms).
+    # -----------------------------------------------------------------
+    - name: temporal.availability
+      interval: 30s
+      rules:
+        - alert: TemporalServerDown
+          expr: up{job="temporal"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: temporal
+            slo: temporal.availability
+          annotations:
+            summary: "Temporal server is unreachable"
+            description: "Prometheus has not been able to scrape the Temporal server for 2m. Workflow starts will fail."
+            runbook_url: "https://runbooks.genealogy.local/temporal#server-down"
+        - alert: TemporalWorkflowStartLatencyHigh
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (
+                rate(temporal_request_latency_seconds_bucket{operation="StartWorkflowExecution"}[5m])
+              )
+            ) > 0.4
+          for: 10m
+          labels:
+            severity: warning
+            component: temporal
+            slo: temporal.availability
+          annotations:
+            summary: "Temporal workflow start p95 latency > 400 ms"
+            description: "p95 of StartWorkflowExecution exceeds the 400 ms SLO target (ADR-E0.5-07)."
+            runbook_url: "https://runbooks.genealogy.local/temporal#start-latency"
+    # -----------------------------------------------------------------
+    # Workflow / activity failure rate.
+    # -----------------------------------------------------------------
+    - name: temporal.failures
+      interval: 30s
+      rules:
+        - alert: TemporalWorkflowFailureRateHigh
+          expr: |
+            sum(rate(temporal_workflow_failed[5m]))
+              /
+            sum(rate(temporal_workflow_completed[5m]) + rate(temporal_workflow_failed[5m]))
+              > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            component: temporal
+            slo: temporal.workflow_failure_rate
+          annotations:
+            summary: "Temporal workflow failure rate > 5%"
+            description: "More than 5% of workflows are failing over the last 5m. Inspect the DLQ + the temporal_workflow_failed metric labels."
+            runbook_url: "https://runbooks.genealogy.local/temporal#workflow-failure-rate"
+        - alert: TemporalActivityFailureRateHigh
+          expr: |
+            sum(rate(temporal_activity_failed[5m]))
+              /
+            sum(rate(temporal_activity_completed[5m]) + rate(temporal_activity_failed[5m]))
+              > 0.1
+          for: 10m
+          labels:
+            severity: warning
+            component: temporal
+            slo: temporal.activity_failure_rate
+          annotations:
+            summary: "Temporal activity failure rate > 10%"
+            description: "More than 10% of activities are failing over the last 5m. The downstream service is likely degraded."
+            runbook_url: "https://runbooks.genealogy.local/temporal#activity-failure-rate"
+    # -----------------------------------------------------------------
+    # Task queue depth — workers must keep up; an unbounded depth
+    # signals worker starvation.
+    # -----------------------------------------------------------------
+    - name: temporal.task_queue
+      interval: 30s
+      rules:
+        - alert: TemporalTaskQueueDepthHigh
+          expr: |
+            sum by (task_queue) (temporal_task_queue_pending_tasks) > 1000
+          for: 10m
+          labels:
+            severity: warning
+            component: temporal
+            slo: temporal.task_queue_depth
+          annotations:
+            summary: "Temporal task queue depth > 1000"
+            description: "Task queue {{ $labels.task_queue }} has > 1000 pending tasks for 10m. Scale the worker pool or check activity timeouts."
+            runbook_url: "https://runbooks.genealogy.local/temporal#task-queue-depth"
+    # -----------------------------------------------------------------
+    # Namespace / task-queue reconciliation — the Helm-hook Jobs
+    # surface their result via a dedicated `temporal_init_status`
+    # metric. The alert fires if the Job has been failing for > 5m.
+    # -----------------------------------------------------------------
+    - name: temporal.reconciliation
+      interval: 1m
+      rules:
+        - alert: TemporalReconciliationFailed
+          expr: |
+            kube_job_status_failed{job_name=~"temporal-(namespace|task-queue)-init"} > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: temporal
+            slo: temporal.reconciliation
+          annotations:
+            summary: "Temporal namespace/task-queue reconcile Job failing"
+            description: "The {{ $labels.job_name }} Job has been failing for 5m. Check the Helm-hook logs."
+            runbook_url: "https://runbooks.genealogy.local/temporal#reconciliation"

@@ -1,0 +1,185 @@
+# Source-of-truth Temporal namespace policy — E2.4.
+#
+# Per `tasks.md` E2.4 + `architecture-decisions.md` ADR-E0.5-07 the
+# Temporal cluster is self-hosted everywhere (SaaS may swap to
+# Temporal Cloud only when the in-region + on-prem parity clauses are
+# met — see ADR-E0.5-07). This file declares every Temporal namespace
+# the platform pre-creates plus the visibility + retention policy
+# attached to each one.
+#
+# Naming: `<tenant-class>-<domain>` or `default-<domain>` for the
+# shared cluster fallback namespace (E2.4 §1). Tenant-scoped
+# namespaces follow `<tenantClass>-<domain>-v<n>` so a breaking
+# schema/workflow change can roll forward without disturbing the
+# previous generation.
+#
+# The list is rendered into the umbrella chart via
+# `templates/components/temporal/namespace-config.yaml` (a Helm hook
+# job that runs `temporal operator namespace` against the bundled
+# `temporal-admintools` image). Domain services MAY register a new
+# namespace via a PR to this file — the chart picks the change up on
+# the next `helm upgrade` without requiring admin shell access.
+#
+# Search attributes (ADR-E0.5-07 §privacy): namespaces MUST NOT carry
+# raw PII, DNA, token or file content in their search attributes. The
+# `search-attrs.yaml` companion file restricts the schema to opaque
+# IDs only. The Temporal UI is read-only for namespace data; operators
+# query via the `temporal` CLI which goes through the same gRPC
+# surface as the application workers.
+#
+# Retention: E2.4 mandates 30 days default (ADR-E0.5-07). DNA worker
+# uses 365 days so revocation evidence survives the legal hold window
+# (`privacy-and-legal-gate.md` §14). Custom retention per namespace is
+# declared below.
+#
+# This file is the contract; runtime reconciliation lives in the
+# umbrella chart's `templates/components/temporal/namespace-config.yaml`
+# Helm hook. The deep linter (`scripts/lint-temporal-config.mjs`)
+# enforces structure, retention buckets, and PII-forbidden content.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-temporal-namespaces
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: "1.26"
+    gp.genealogy/contract-only: "true"
+data:
+  policy.yaml: |
+    # Namespace layout — E2.4 §1
+    #   - one namespace per `<domain>` aggregate owner, NOT per tenant
+    #     (Temporal Cloud charges per-action; per-tenant namespaces would
+    #     explode cost and break the visibility cache locality).
+    #   - every namespace declares retention + history archival +
+    #     active-cluster name. The active cluster is `genea-temporal`
+    #     in gp-data (chart-managed).
+    #   - `customSearchAttributes` MUST be opaque IDs only (the
+    #     `search-attrs.yaml` companion file enforces the schema).
+    #
+    # Visibility policy:
+    #   - `visibility.indexedFields` is the platform whitelist of
+    #     searchable columns (CustomStringField / CustomIntField /
+    #     CustomKeywordField). The Temporal server denies any
+    #     non-whitelisted field via `dynamic-config.yaml`.
+    #
+    # Worker identity:
+    #   - per `ownership-catalog.md` §3 every worker registers its
+    #     `WorkerIdentityStamp` from a Kubernetes downward-API env
+    #     var (`POD_NAME`, `POD_NAMESPACE`) plus a workload-identity
+    #     JWT minted by the mesh. The chart ships the helper.
+    namespaces:
+      - name: genea-default
+        description: shared fallback namespace for ad-hoc workflows
+        ownerService: platform
+        retentionDays: 30
+        historyArchival: false
+        visibilityArchival: false
+        customSearchAttributeAllowed:
+          - CustomStringField: TenantId
+          - CustomKeywordField: WorkflowType
+          - CustomKeywordField: TaskQueue
+          - CustomIntField: Attempt
+      - name: genea-genealogy
+        description: tree merge + outbox relay workflows
+        ownerService: genealogy-service
+        retentionDays: 30
+        historyArchival: false
+        visibilityArchival: false
+        customSearchAttributeAllowed:
+          - CustomStringField: TenantId
+          - CustomKeywordField: WorkflowType
+          - CustomKeywordField: TaskQueue
+          - CustomIntField: Attempt
+          - CustomKeywordField: AggregateType
+          - CustomStringField: AggregateId
+      - name: genea-media
+        description: media scan + derivative pipelines
+        ownerService: media-service
+        retentionDays: 30
+        historyArchival: true
+        visibilityArchival: false
+        customSearchAttributeAllowed:
+          - CustomStringField: TenantId
+          - CustomKeywordField: WorkflowType
+          - CustomKeywordField: TaskQueue
+          - CustomIntField: Attempt
+          - CustomStringField: MediaAssetId
+      - name: genea-search
+        description: authorized + public search projection rebuilds
+        ownerService: search-service
+        retentionDays: 30
+        historyArchival: false
+        visibilityArchival: false
+        customSearchAttributeAllowed:
+          - CustomStringField: TenantId
+          - CustomKeywordField: WorkflowType
+          - CustomKeywordField: TaskQueue
+          - CustomIntField: Attempt
+      - name: genea-interop
+        description: GEDCOM transfer + export bundle workflows
+        ownerService: import-export-service
+        retentionDays: 30
+        historyArchival: true
+        visibilityArchival: false
+        customSearchAttributeAllowed:
+          - CustomStringField: TenantId
+          - CustomKeywordField: WorkflowType
+          - CustomKeywordField: TaskQueue
+          - CustomIntField: Attempt
+          - CustomStringField: TransferJobId
+      - name: genea-notify
+        description: notification dispatch + retry workflows
+        ownerService: notification-service
+        retentionDays: 30
+        historyArchival: false
+        visibilityArchival: false
+        customSearchAttributeAllowed:
+          - CustomStringField: TenantId
+          - CustomKeywordField: WorkflowType
+          - CustomKeywordField: TaskQueue
+          - CustomIntField: Attempt
+      - name: genea-reporting
+        description: report generation + dashboard projection refresh
+        ownerService: reporting-service
+        retentionDays: 30
+        historyArchival: false
+        visibilityArchival: false
+        customSearchAttributeAllowed:
+          - CustomStringField: TenantId
+          - CustomKeywordField: WorkflowType
+          - CustomKeywordField: TaskQueue
+          - CustomIntField: Attempt
+      - name: genea-dna
+        description: DNA match + revocation workflows (legal hold)
+        ownerService: dna-service
+        # 365-day retention per `privacy-and-legal-gate.md` §14 —
+        # revocation evidence must survive the longest legal hold
+        # window the platform supports at GA. Bump only via ADR.
+        retentionDays: 365
+        historyArchival: true
+        visibilityArchival: false
+        # DNA namespace forbids raw PII / DNA / token in search
+        # attributes per ADR-E0.5-07 §privacy. The allowed field
+        # list is the platform-wide whitelist — no DNA-specific
+        # fields are exposed.
+        customSearchAttributeAllowed:
+          - CustomStringField: TenantId
+          - CustomKeywordField: WorkflowType
+          - CustomKeywordField: TaskQueue
+          - CustomIntField: Attempt
+          - CustomStringField: ConsentId
+    # Visibility policy — every namespace inherits the same indexed
+    # field set. The Temporal server enforces this whitelist via the
+    # `dynamic-config.yaml` (`system.visibilityAttribute` block).
+    visibility:
+      indexedFields:
+        - name: TenantId
+          type: CustomStringField
+        - name: WorkflowType
+          type: CustomKeywordField
+        - name: TaskQueue
+          type: CustomKeywordField
+        - name: Attempt
+          type: CustomIntField

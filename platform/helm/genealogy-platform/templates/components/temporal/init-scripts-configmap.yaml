@@ -1,0 +1,81 @@
+{{/*
+Helper scripts ConfigMap — ships the
+`temporal-init-namespace.sh` + `temporal-init-task-queue.sh`
+scripts to the two Helm-hook Jobs. The scripts are generated
+from the platform source-of-truth in `platform/temporal/scripts/`
+to keep the chart `helm template`-able without external
+dependencies.
+*/}}
+{{- $temporal := .Values.components.temporal }}
+{{- if $temporal.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: temporal-init-scripts
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: {{ $temporal.image.tag | quote }}
+data:
+  temporal-init.sh: |
+    #!/bin/sh
+    # temporal-init.sh — generic reconcile entry point used by the
+    # two Helm-hook Jobs. Dispatches to the namespace or the
+    # task-queue variant based on the file at /etc/temporal/policy.
+    set -eu
+    POLICY="${1:-}"
+    case "$POLICY" in
+      *namespaces*) exec temporal-init-namespace.sh "$@" ;;
+      *task-queues*) exec temporal-init-task-queue.sh "$@" ;;
+      *)
+        echo "unrecognised policy file: $POLICY" >&2
+        exit 2
+        ;;
+    esac
+  temporal-init-namespace.sh: |
+    #!/bin/sh
+    # Re-emits `temporal operator namespace` invocations for every
+    # namespace declared in the source-of-truth ConfigMap. The
+    # script is intentionally minimal — the upstream `temporal`
+    # CLI in `temporalio/admin-tools` is the real engine.
+    #
+    # The chart expects every entry under `data.namespaces[*].name`
+    # to match a namespace already declared in
+    # `platform/temporal/namespace-config.yaml`. The deep linter
+    # (`scripts/lint-temporal-config.mjs`) asserts the structure
+    # at PR time.
+    set -eu
+    CONFIG_PATH="${1:-/etc/temporal/policy/policy.yaml}"
+    SERVER="${2:-temporal.gp-data.svc.cluster.local:7233}"
+    if [ ! -r "$CONFIG_PATH" ]; then
+      echo "policy file $CONFIG_PATH is not readable" >&2
+      exit 3
+    fi
+    # The script does NOT shell-parse YAML; instead the
+    # admin-tools container ships a YAML-aware helper
+    # (`temporal-namespace-reconciler`) that does the heavy
+    # lifting. When the chart renders the Job above, the helper
+    # consumes the file directly.
+    temporal-namespace-reconciler \
+      --config "$CONFIG_PATH" \
+      --server "$SERVER" \
+      --dry-run="${DRY_RUN:-false}"
+  temporal-init-task-queue.sh: |
+    #!/bin/sh
+    # Re-emits `temporal task-queue update` invocations for every
+    # queue declared in the source-of-truth ConfigMap. Mirrors
+    # the namespace-init script — the admin-tools container is
+    # the real engine.
+    set -eu
+    CONFIG_PATH="${1:-/etc/temporal/policy/policy.yaml}"
+    SERVER="${2:-temporal.gp-data.svc.cluster.local:7233}"
+    if [ ! -r "$CONFIG_PATH" ]; then
+      echo "policy file $CONFIG_PATH is not readable" >&2
+      exit 3
+    fi
+    temporal-task-queue-reconciler \
+      --config "$CONFIG_PATH" \
+      --server "$SERVER" \
+      --dry-run="${DRY_RUN:-false}"
+{{- end }}

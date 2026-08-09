@@ -1,0 +1,149 @@
+{{/*
+NetworkPolicy — default-deny Ingress + Egress for the Temporal
+namespace, then open only what the platform needs:
+  - Ingress: gp-services (domain workers), gp-workers (worker pool),
+    gp-platform (platform-primary / admin-tools), gp-observability
+    (Prometheus scrape).
+  - Egress: gp-data (PostgreSQL), kube-system (DNS).
+*/}}
+{{- $temporal := .Values.components.temporal }}
+{{- if $temporal.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: temporal-default-deny
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: temporal-allow
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: temporal
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+      ports:
+        - protocol: TCP
+          port: 7233
+        - protocol: TCP
+          port: 9090
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+      ports:
+        - protocol: TCP
+          port: 7233
+        - protocol: TCP
+          port: 9090
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - protocol: TCP
+          port: 7233
+        - protocol: TCP
+          port: 9090
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- if $temporal.ui.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: temporal-ui-allow
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal-ui
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: temporal-ui
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # UI is restricted to the platform-primary on-call operator's
+    # workstation per ADR-E0.5-07. The chart grants ingress only
+    # from `gp-platform`; the platform team fronts the UI with
+    # a SSO-protected BFF route (E3.5) before opening the public
+    # edge.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+      ports:
+        - protocol: TCP
+          port: 7233
+{{- end }}
+{{- end }}

@@ -1,0 +1,19 @@
+{{/*
+Task-queue ConfigMap — rendered into the chart so `helm template`
+does not need to read outside the chart root. The Helm-hook Job
+(`task-queue-init.yaml`) consumes this ConfigMap via the
+`temporal-task-queue-init` service-account mounted volume.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-temporal-task-queue-config
+  namespace: {{ .Values.global.namespace | default "gp-data" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: {{ .Values.components.temporal.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  policy.yaml: |-
+{{ .Files.Get "files/temporal/task-queues.yaml" | indent 4 }}

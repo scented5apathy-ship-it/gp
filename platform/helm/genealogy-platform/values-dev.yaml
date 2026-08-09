@@ -61,11 +61,24 @@ components:
     image:
       tag: "3.3"
   temporal:
-    replicasFrontend: 1
-    replicasWorker: 1
-    replicasHistory: 1
-    replicasMatching: 1
-    replicasVisibility: 1
+    # Dev runs the all-in-one `temporal-server` as a single
+    # StatefulSet replica (the umbrella chart already collapses the
+    # four upstream services into a single pod per ADR-E0.5-07).
+    # StorageClass stays `standard` because kind cluster cannot
+    # provision `gp-data-ssd` (local-path provisioner only).
+    persistence:
+      postgresHost: postgres.gp-data.svc.cluster.local
+      postgresPort: "5432"
+      database: genea_temporal
+      secretName: temporal-postgres-credentials
+      cacheStorageClass: standard
+      cacheSize: 2Gi
+    # UI off in dev — the contract test suite asserts visibility
+    # attribute + namespace + task-queue reconciliation via the
+    # admin-tools image (the Helm-hook Jobs). The UI is only
+    # useful for live debugging.
+    ui:
+      enabled: false
   vault:
     replicas: 1
     # Local dev runs Vault in `dev` mode with auto-unseal; the

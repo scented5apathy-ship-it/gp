@@ -1,0 +1,20 @@
+{{/*
+Dynamic-config ConfigMap — the file that the Temporal server reads
+on `SIGHUP`. Per ADR-E0.5-07 the file is rendered from the platform
+source-of-truth `platform/temporal/dynamic-config.yaml` so SaaS /
+on-prem / dev reconcile against the same workflow / activity /
+visibility defaults.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-temporal-dynamic-config
+  namespace: {{ .Values.global.namespace | default "gp-data" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: {{ .Values.components.temporal.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+{{ .Files.Get "files/temporal/dynamic-config.yaml" | indent 4 }}

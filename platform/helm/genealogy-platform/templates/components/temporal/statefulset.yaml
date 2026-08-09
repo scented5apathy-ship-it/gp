@@ -1,0 +1,177 @@
+{{/*
+Temporal server — StatefulSet running the all-in-one `temporal-server`
+container (front-end + history + matching + worker services on
+distinct ports). The `temporalio/temporal` upstream image is the
+production binary. Persistence is PostgreSQL via the chart's
+existing gp-data cluster (`genea_pg_temporal` schema, see
+`platform/temporal/secret-stub.yaml` for the credential mount).
+
+Per ADR-E0.5-07 the deployment is self-hosted on-prem AND on SaaS
+(unless an in-region Temporal Cloud contract is signed). The same
+chart renders both environments; per-env values file picks the
+auth mode (self-hosted) or the cloud connection (managed).
+*/}}
+{{- $temporal := .Values.components.temporal }}
+{{- if $temporal.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: temporal
+  namespace: {{ $temporal.namespace }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: {{ $temporal.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  serviceName: temporal
+  replicas: 1
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: temporal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: temporal
+        app.kubernetes.io/version: {{ $temporal.image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: temporal
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: temporal
+          image: {{ include "genealogy-platform.image" (dict "image" $temporal.image) }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - "start"
+            - "--config=/etc/temporal/config/dynamicconfig/config.yaml"
+            - "--env"
+            - "config"
+            - "--zone"
+            - "default"
+            - "--log-level"
+            - "info"
+            - "--metrics-prometheus-listen-address"
+            - "0.0.0.0:9090"
+          env:
+            - name: DB
+              value: "postgresql"
+            - name: DB_POSTGRES_HOST
+              value: {{ $temporal.persistence.postgresHost | quote }}
+            - name: DB_POSTGRES_PORT
+              value: {{ $temporal.persistence.postgresPort | quote }}
+            - name: DB_POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $temporal.persistence.secretName }}
+                  key: username
+            - name: DB_POSTGRES_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $temporal.persistence.secretName }}
+                  key: password
+            - name: DB_POSTGRES_SEEDS
+              value: {{ $temporal.persistence.postgresHost | quote }}
+            - name: DB_POSTGRES_DATABASE
+              value: {{ $temporal.persistence.database | quote }}
+            # Front-end / history / matching bind to distinct ports.
+            - name: FRONTEND_SERVICE_PORT
+              value: "7233"
+            - name: HISTORY_SERVICE_PORT
+              value: "7234"
+            - name: MATCHING_SERVICE_PORT
+              value: "7235"
+            - name: WORKER_SERVICE_PORT
+              value: "7239"
+            # Default namespace flag — every namespace in
+            # `namespace-config.yaml` is created by the
+            # `temporal-namespace-init` Helm-hook Job; the server
+            # itself does not auto-create.
+            - name: DEFAULT_NAMESPACE
+              value: {{ $temporal.defaultNamespace | quote }}
+            - name: SKIP_DEFAULT_NAMESPACE_CREATION
+              value: "false"
+          ports:
+            - name: frontend-grpc
+              containerPort: 7233
+              protocol: TCP
+            - name: history-grpc
+              containerPort: 7234
+              protocol: TCP
+            - name: matching-grpc
+              containerPort: 7235
+              protocol: TCP
+            - name: worker-grpc
+              containerPort: 7239
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: frontend-grpc
+            failureThreshold: {{ .Values.baseline.probes.readiness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.readiness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.readiness.initialDelaySeconds }}
+          livenessProbe:
+            tcpSocket:
+              port: frontend-grpc
+            failureThreshold: {{ .Values.baseline.probes.liveness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.liveness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.liveness.initialDelaySeconds }}
+          startupProbe:
+            tcpSocket:
+              port: frontend-grpc
+            failureThreshold: {{ .Values.baseline.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.startup.timeoutSeconds }}
+          resources:
+            requests:
+              cpu: {{ $temporal.resources.requests.cpu | quote }}
+              memory: {{ $temporal.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ $temporal.resources.limits.cpu | quote }}
+              memory: {{ $temporal.resources.limits.memory | quote }}
+          volumeMounts:
+            - name: dynamic-config
+              mountPath: /etc/temporal/config/dynamicconfig
+              readOnly: true
+      volumes:
+        - name: dynamic-config
+          configMap:
+            name: genea-temporal-dynamic-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: genealogy-platform
+          app.kubernetes.io/component: temporal
+      spec:
+        # Temporal server stores history in PostgreSQL (gp-data
+        # cluster) so this volume is reserved for local caches
+        # only — keep it small.
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ $temporal.persistence.cacheStorageClass | default "gp-data-ssd" }}
+        resources:
+          requests:
+            storage: {{ $temporal.persistence.cacheSize | default "10Gi" }}
+{{- end }}

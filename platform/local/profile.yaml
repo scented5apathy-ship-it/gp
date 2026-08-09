@@ -165,13 +165,69 @@ apicurio:
       type: AVRO
       compatibility: BACKWARD
 
-# Temporal dev server + namespace.
+# Temporal dev server + namespace (E2.4).
 temporal:
   image: temporalio/auto-setup:1.26.2
+  adminToolsImage: temporalio/admin-tools:1.26.2
   port: 7233
   uiPort: 8088
   namespace: genea-default
   retentionDays: 7
+  # Local profile mirrors the canonical namespace list from
+  # `platform/temporal/namespace-config.yaml` so contract tests can
+  # use the same names. The chart-side list is the source of truth;
+  # this profile is a documentation hint for `scripts/local-up.sh`.
+  namespaces:
+    - name: genea-default
+      retentionDays: 7
+    - name: genea-genealogy
+      retentionDays: 7
+    - name: genea-media
+      retentionDays: 7
+    - name: genea-search
+      retentionDays: 7
+    - name: genea-interop
+      retentionDays: 7
+    - name: genea-notify
+      retentionDays: 7
+    - name: genea-reporting
+      retentionDays: 7
+    - name: genea-dna
+      retentionDays: 365
+  # Local profile mirrors the canonical task-queue list from
+  # `platform/temporal/task-queues.yaml`.
+  taskQueues:
+    - genea-genealogy-main
+    - genea-genealogy-outbox
+    - genea-media-scan
+    - genea-media-derive
+    - genea-search-rebuild
+    - genea-interop-transfer
+    - genea-notify-dispatch
+    - genea-reporting-gen
+    - genea-dna-match
+    - genea-dna-revoke
+  # Search attribute whitelist (ADR-E0.5-07 §privacy) — opaque IDs
+  # only. The auto-setup image accepts these as env vars.
+  searchAttributes:
+    - name: TenantId
+      type: CustomStringField
+    - name: WorkflowType
+      type: CustomKeywordField
+    - name: TaskQueue
+      type: CustomKeywordField
+    - name: Attempt
+      type: CustomIntField
+    - name: AggregateType
+      type: CustomKeywordField
+    - name: AggregateId
+      type: CustomStringField
+    - name: MediaAssetId
+      type: CustomStringField
+    - name: TransferJobId
+      type: CustomStringField
+    - name: ConsentId
+      type: CustomStringField
 
 # MinIO + bucket layout.
 minio:

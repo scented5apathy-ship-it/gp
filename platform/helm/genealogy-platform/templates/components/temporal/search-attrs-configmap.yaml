@@ -1,0 +1,20 @@
+{{/*
+Visibility attribute schema + forbidden-name whitelist — rendered
+into the chart so `helm template` does not need to read outside the
+chart root. The dynamic-config.yaml ConfigMap below refers to the
+field whitelist by NAME only; the worker SDK template reads this
+file to validate search attribute inserts at runtime.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-temporal-search-attrs
+  namespace: {{ .Values.global.namespace | default "gp-data" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    app.kubernetes.io/version: {{ .Values.components.temporal.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  schema.yaml: |-
+{{ .Files.Get "files/temporal/search-attrs.yaml" | indent 4 }}

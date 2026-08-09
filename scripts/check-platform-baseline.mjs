@@ -119,10 +119,14 @@ if (!existsSync(valuesPath)) {
     fail("PodDisruptionBudget.minAvailable default missing");
   }
 
-  if (!new RegExp(`live:\\s*${PROBE_CONTRACT.live.replace(/\//g, "\\/")}`).test(values) ||
-      !new RegExp(`ready:\\s*${PROBE_CONTRACT.ready.replace(/\//g, "\\/")}`).test(values) ||
-      !new RegExp(`startup:\\s*${PROBE_CONTRACT.startup.replace(/\//g, "\\/")}`).test(values)) {
-    fail(`probe path contract not enforced — expected ${PROBE_CONTRACT.live}, ${PROBE_CONTRACT.ready}, ${PROBE_CONTRACT.startup}`);
+  if (
+    !new RegExp(`live:\\s*${PROBE_CONTRACT.live.replace(/\//g, "\\/")}`).test(values) ||
+    !new RegExp(`ready:\\s*${PROBE_CONTRACT.ready.replace(/\//g, "\\/")}`).test(values) ||
+    !new RegExp(`startup:\\s*${PROBE_CONTRACT.startup.replace(/\//g, "\\/")}`).test(values)
+  ) {
+    fail(
+      `probe path contract not enforced — expected ${PROBE_CONTRACT.live}, ${PROBE_CONTRACT.ready}, ${PROBE_CONTRACT.startup}`,
+    );
   }
 
   // Secret hygiene: no literal `password:`, `token:`, `apiKey:` etc.
@@ -132,7 +136,9 @@ if (!existsSync(valuesPath)) {
   for (const key of ["password", "apiKey", "token", "private_key"]) {
     const literalRegex = new RegExp(`^\\s*${key}\\s*:\\s*"?[A-Za-z0-9]{8,}"?\\s*$`, "m");
     if (literalRegex.test(values)) {
-      fail(`literal secret-like value for '${key}' found in values.yaml — use Vault / External Secrets`);
+      fail(
+        `literal secret-like value for '${key}' found in values.yaml — use Vault / External Secrets`,
+      );
     }
   }
 
@@ -316,22 +322,28 @@ if (!existsSync(kongConfig)) {
   // top-level `database: "off"` key in the config file is a Kong
   // parse error — the linter rejects it.
   if (/^database:\s*"off"/.test(kong)) {
-    fail("kong.yml must not declare a top-level 'database' key — use KONG_DATABASE=off in the runtime env");
+    fail(
+      "kong.yml must not declare a top-level 'database' key — use KONG_DATABASE=off in the runtime env",
+    );
   }
   // `allowed_payload_size` must be an integer (Kong 3.x rejects
   // string values even when `size_unit` is set).
   if (/"allowed_payload_size":\s*"[0-9]/.test(kong)) {
-    fail("kong.yml request-size-limiting.allowed_payload_size must be an integer (not a quoted string)");
+    fail(
+      "kong.yml request-size-limiting.allowed_payload_size must be an integer (not a quoted string)",
+    );
   }
   for (const route of ["public-web-root", "web-bff-api", "public-api-v1", "admin-api-v1"]) {
     if (!new RegExp(`name:\\s*${route}\\b`).test(kong)) {
       fail(`kong.yml missing required route '${route}' (E2.2)`);
     }
   }
-  if (!/route-class:\s*public\b/.test(kong) ||
-      !/route-class:\s*authenticated\b/.test(kong) ||
-      !/route-class:\s*partner\b/.test(kong) ||
-      !/route-class:\s*admin\b/.test(kong)) {
+  if (
+    !/route-class:\s*public\b/.test(kong) ||
+    !/route-class:\s*authenticated\b/.test(kong) ||
+    !/route-class:\s*partner\b/.test(kong) ||
+    !/route-class:\s*admin\b/.test(kong)
+  ) {
     fail("kong.yml must tag every route with 'route-class:<public|authenticated|partner|admin>'");
   }
   if (!/correlation-id/.test(kong) || !/rate-limiting/.test(kong)) {
@@ -347,9 +359,18 @@ if (!existsSync(kongConfig)) {
     fail("kong.yml must enable the ip-restriction plugin on the admin route");
   }
   // Domain authorization must never appear in Kong.
-  for (const forbidden of ["oauth2-introspection", "mtls-auth", "key-auth", "acl", "basic-auth", "ldap-auth"]) {
+  for (const forbidden of [
+    "oauth2-introspection",
+    "mtls-auth",
+    "key-auth",
+    "acl",
+    "basic-auth",
+    "ldap-auth",
+  ]) {
     if (new RegExp(`-\\s*name:\\s*${forbidden}\\b`).test(kong)) {
-      fail(`kong.yml must not enable plugin '${forbidden}' — domain authorization belongs to the destination service`);
+      fail(
+        `kong.yml must not enable plugin '${forbidden}' — domain authorization belongs to the destination service`,
+      );
     }
   }
 }
@@ -433,7 +454,9 @@ if (existsSync(KAFKA_CR)) {
   // explicitly references the string to document why it is removed.
   const strippedK = k.replace(/^\s*#.*$/gm, "");
   if (/StaticQuotaCallback/.test(strippedK)) {
-    fail("kafka.yaml must NOT enable Strimzi StaticQuotaCallback — forbidden-list still active in 0.45.x; tracked in ADR-E0.5-08");
+    fail(
+      "kafka.yaml must NOT enable Strimzi StaticQuotaCallback — forbidden-list still active in 0.45.x; tracked in ADR-E0.5-08",
+    );
   }
   if (!/kind:\s*Kafka\b/.test(k)) {
     fail("kafka.yaml must declare a Strimzi 'Kafka' resource");
@@ -458,7 +481,9 @@ if (existsSync(KAFKA_TOPICS)) {
   // Strimzi 0.43 still requires `spec.zookeeper` block even when
   // KRaft metadataVersion is set. Enforce presence.
   if (!/zookeeper:[\s\S]*?replicas:\s*\d+[\s\S]*?storage:/.test(kcr)) {
-    fail(`kafka.yaml must declare a zookeeper block with replicas and storage (Strimzi 0.43 schema)`);
+    fail(
+      `kafka.yaml must declare a zookeeper block with replicas and storage (Strimzi 0.43 schema)`,
+    );
   }
 }
 
@@ -471,7 +496,9 @@ if (existsSync(KAFKA_USERS)) {
     }
   }
   if (/authType:\s*scram-sha-512/i.test(u)) {
-    fail("kafka users.yaml must not declare scram-sha-512 (no literal credentials per ADR-E0.5-01)");
+    fail(
+      "kafka users.yaml must not declare scram-sha-512 (no literal credentials per ADR-E0.5-01)",
+    );
   }
   if (!/genea-kafka-admin/.test(u)) {
     fail("kafka users.yaml must declare the 'genea-kafka-admin' super-user");
@@ -483,7 +510,9 @@ if (existsSync(KAFKA_USERS)) {
 if (existsSync(APICURIO_CFG)) {
   const a = readFileSync(APICURIO_CFG, "utf8");
   if (!/registry\.storage\.kind=sql/.test(a)) {
-    fail("apicurio registry-config.yaml must keep registry.storage.kind=sql (in-memory forbidden in production)");
+    fail(
+      "apicurio registry-config.yaml must keep registry.storage.kind=sql (in-memory forbidden in production)",
+    );
   }
   if (!/registry\.apis\.confluent\.enabled=false/.test(a)) {
     fail("apicurio must keep 'registry.apis.confluent.enabled=false' (license compliance)");
@@ -531,6 +560,137 @@ for (const tpl of [
   }
 }
 
+// ---------------------------------------------------------------------------
+// E2.4 — Temporal runtime invariants (static check;
+// `scripts/lint-temporal-config.mjs` runs the deep YAML validation).
+// ---------------------------------------------------------------------------
+const TEMPORAL_DIR = join(ROOT, "platform", "temporal");
+const TEMPORAL_FILES = [
+  join(TEMPORAL_DIR, "namespace-config.yaml"),
+  join(TEMPORAL_DIR, "search-attrs.yaml"),
+  join(TEMPORAL_DIR, "dynamic-config.yaml"),
+  join(TEMPORAL_DIR, "task-queues.yaml"),
+];
+const temporalTemplates = join(HELM_DIR, "templates", "components", "temporal");
+const REQUIRED_TEMPORAL_TEMPLATES = [
+  "statefulset.yaml",
+  "ui-deployment.yaml",
+  "services.yaml",
+  "serviceaccounts.yaml",
+  "namespace-init-job.yaml",
+  "task-queue-init-job.yaml",
+  "init-scripts-configmap.yaml",
+  "namespace-configmap.yaml",
+  "search-attrs-configmap.yaml",
+  "dynamic-config-configmap.yaml",
+  "task-queue-configmap.yaml",
+  "network-policies.yaml",
+];
+const ALERTS_DIR_E24 = join(ROOT, "platform", "observability", "alerts");
+
+for (const f of TEMPORAL_FILES) {
+  if (!existsSync(f)) {
+    fail(`E2.4 source-of-truth file missing — ${relative(ROOT, f)}`);
+  }
+}
+
+for (const tpl of REQUIRED_TEMPORAL_TEMPLATES) {
+  const p = join(temporalTemplates, tpl);
+  if (!existsSync(p)) {
+    fail(`E2.4 helm template missing — ${relative(ROOT, p)}`);
+  }
+}
+
+if (existsSync(valuesPath)) {
+  const v = readFileSync(valuesPath, "utf8");
+  // ADR-E0.5-01 baseline pin (Temporal 1.26.x) plus the
+  // admin-tools image the Helm-hook Jobs use.
+  if (!/tag:\s*"1\.26\.2"/.test(v)) {
+    fail("values.yaml must pin Temporal image tag to 1.26.2 (ADR-E0.5-01)");
+  }
+  if (!/adminToolsImage:/.test(v)) {
+    fail("values.yaml must declare components.temporal.adminToolsImage (E2.4 Helm-hook Jobs)");
+  }
+  if (!/ui:\s*\n\s*enabled:\s*true/.test(v)) {
+    fail("values.yaml must enable the Temporal UI block (E2.4 §6); dev/onprem values may override");
+  }
+  // The dynamic-config.yaml ConfigMap must mount into the StatefulSet.
+  if (!/dynamic-config/.test(readFileSync(join(temporalTemplates, "statefulset.yaml"), "utf8"))) {
+    fail("E2.4 statefulset.yaml must mount the dynamic-config ConfigMap (E2.4 §2)");
+  }
+  // The dynamic-config source-of-truth file must carry the
+  // 9 visibility attributes. The chart mounts the file via
+  // ConfigMap; the linter enforces the source.
+  const dynPath = join(TEMPORAL_DIR, "dynamic-config.yaml");
+  if (existsSync(dynPath)) {
+    const dyn = readFileSync(dynPath, "utf8");
+    const requiredAttrs = [
+      "TenantId",
+      "WorkflowType",
+      "TaskQueue",
+      "Attempt",
+      "AggregateType",
+      "AggregateId",
+      "MediaAssetId",
+      "TransferJobId",
+      "ConsentId",
+    ];
+    for (const attr of requiredAttrs) {
+      if (!new RegExp(`-\\s*name:\\s*${attr}\\b`).test(dyn)) {
+        fail(`dynamic-config.yaml missing visibility attribute '${attr}' (E2.4 §3)`);
+      }
+    }
+  }
+  // The source-of-truth namespace-config.yaml must declare the
+  // `genea-dna` namespace with 365-day retention (ADR-E0.5-07 +
+  // `privacy-and-legal-gate.md` §14).
+  const nsPath = join(TEMPORAL_DIR, "namespace-config.yaml");
+  if (existsSync(nsPath)) {
+    const ns = readFileSync(nsPath, "utf8");
+    if (!/- name:\s*genea-dna\b/.test(ns)) {
+      fail("namespace-config.yaml must declare the 'genea-dna' namespace (E2.4 §1)");
+    }
+    // Best-effort retention assertion — the linter already
+    // enforces this structurally.
+    if (!/genea-dna[\s\S]*?retentionDays:\s*365/.test(ns)) {
+      fail("namespace-config.yaml must declare 'genea-dna' retentionDays: 365");
+    }
+  }
+}
+
+// Alert rules must cover the 4 E2.4 signal classes.
+if (!existsSync(ALERTS_DIR_E24) || !existsSync(join(ALERTS_DIR_E24, "temporal-rules.yaml"))) {
+  fail("platform/observability/alerts/temporal-rules.yaml missing (E2.4 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR_E24, "temporal-rules.yaml"), "utf8");
+  for (const alert of [
+    "TemporalServerDown",
+    "TemporalWorkflowStartLatencyHigh",
+    "TemporalWorkflowFailureRateHigh",
+    "TemporalActivityFailureRateHigh",
+    "TemporalTaskQueueDepthHigh",
+    "TemporalReconciliationFailed",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/temporal-rules.yaml missing alert '${alert}' (E2.4)`);
+    }
+  }
+}
+
+// Profile.yaml + docker-compose must declare the Temporal dev
+// service with the ADR-E0.5-01 pinned image.
+if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
+  const p = readFileSync(join(LOCAL_DIR, "profile.yaml"), "utf8");
+  if (!/image:\s*temporalio\/auto-setup:1\.26\.2/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin Temporal image to temporalio/auto-setup:1.26.2 (ADR-E0.5-01)",
+    );
+  }
+  if (!/adminToolsImage:\s*temporalio\/admin-tools:1\.26\.2/.test(p)) {
+    fail("platform/local/profile.yaml must pin Temporal admin-tools image (E2.4 Helm-hook Jobs)");
+  }
+}
+
 // values.yaml must pin Kafka 3.8.x + Apicurio 3.x (ADR-E0.5-01
 // supersession — bumped Strimzi 0.43.0 → 0.45.2 to fix entity-operator
 // Admin API bug + KRaft stability; bumped Apicurio 2.6.x → 3.3.x after
@@ -541,7 +701,9 @@ if (existsSync(valuesPath)) {
     fail("values.yaml must pin Kafka image tag to 0.45.2-kafka-3.8.0 (ADR-E0.5-01 supersession)");
   }
   if (!/tag:\s*"?3\.3/.test(v)) {
-    fail("values.yaml must pin Apicurio image tag to 3.x (ADR-E0.5-01 supersession; Docker Hub dropped 2.6.x)");
+    fail(
+      "values.yaml must pin Apicurio image tag to 3.x (ADR-E0.5-01 supersession; Docker Hub dropped 2.6.x)",
+    );
   }
   if (!/defaultCompatibility:\s*BACKWARD/.test(v)) {
     fail("values.yaml must set apicurio.defaultCompatibility to BACKWARD (ADR-E0.5-08)");

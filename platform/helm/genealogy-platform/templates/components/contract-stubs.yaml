@@ -137,6 +137,64 @@ data:
         via `scripts/seed-apicurio.mjs`.
       - JMX exporter sidecar feeds the registry-availability alert.
 {{- end }}
+{{- if eq $name "temporal" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: temporal-contract-stub
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: temporal
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Temporal runtime contract (E2.4).
+    responsibilities:
+      - durable workflow + saga orchestration
+      - namespace + retention policy
+      - per-queue worker identity
+      - visibility / search attribute whitelist
+    namespaces:
+      - genea-default
+      - genea-genealogy
+      - genea-media
+      - genea-search
+      - genea-interop
+      - genea-notify
+      - genea-reporting
+      - genea-dna
+    defaults:
+      workflowExecutionTimeout: 24h
+      activityScheduleToCloseTimeout: 60s
+      activityHeartbeatTimeout: 10s
+      activityMaxAttempts: 3
+    visibility_attribute_whitelist:
+      - TenantId
+      - WorkflowType
+      - TaskQueue
+      - Attempt
+      - AggregateType
+      - AggregateId
+      - MediaAssetId
+      - TransferJobId
+      - ConsentId
+    forbidden_search_attributes:
+      - raw PII / email / phone / address
+      - raw DNA genotype or segment table
+      - OIDC access / refresh token
+      - raw Keycloak subject
+      - signed media URL
+      - raw person / user / tenant UUID
+    workerIdentity:
+      - Kubernetes service-account name (genealogy-service, media-worker, dna-worker) registered via Istio mTLS.
+    notes:
+      - Self-hosted Temporal everywhere per ADR-E0.5-07. SaaS may swap to Temporal Cloud only with an in-region + on-prem parity contract.
+      - 30-day retention default; DNA namespace bumped to 365d per privacy-and-legal-gate.md section 14.
+      - Domain authorization is at the service via OpenFGA + ABAC; Temporal does NOT carry business policy.
+      - Search attributes are pseudonymised at the worker boundary via the platform tenant-pseudo-id library.
+{{- end }}
 {{- if eq $name "vault" }}
 ---
 apiVersion: v1

@@ -35,11 +35,21 @@ components:
   apicurio:
     replicas: 3
   temporal:
-    replicasFrontend: 4
-    replicasWorker: 8
-    replicasHistory: 3
-    replicasMatching: 4
-    replicasVisibility: 3
+    # SaaS self-hosts the Temporal cluster in-region (ADR-E0.5-07
+    # — Temporal Cloud is reserved for an explicit ADR that
+    # documents in-region + on-prem parity). The chart renders the
+    # same all-in-one StatefulSet as on-prem; horizontal scaling is
+    # via the `addCacheCapacity` knob once the size envelopes grow
+    # (out of scope for E2.4).
+    persistence:
+      postgresHost: postgres.gp-data.svc.cluster.local
+      postgresPort: "5432"
+      database: genea_temporal
+      secretName: temporal-postgres-credentials
+      cacheStorageClass: gp-data-ssd
+      cacheSize: 50Gi
+    ui:
+      enabled: true
   vault:
     replicas: 5
   storage:

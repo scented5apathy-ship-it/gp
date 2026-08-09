@@ -14,6 +14,10 @@
 
 name: gp-local
 
+networks:
+  default:
+    name: gp-local-net
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -56,7 +60,7 @@ services:
         condition: service_healthy
 
   openfga:
-    image: openfga/openfga:1.10
+    image: openfga/openfga:v1.18.3
     container_name: gp-openfga
     command: ["run"]
     environment:
@@ -68,6 +72,8 @@ services:
   kafka:
     image: quay.io/strimzi/kafka:0.43.0-kafka-3.8.0
     container_name: gp-kafka
+    user: "0"
+    command: ["sh", "-c", "mkdir -p /tmp/kafka-logs && if [ ! -f /tmp/kafka-logs/meta.properties ]; then /opt/kafka/bin/kafka-storage.sh format -t MkU3OEVBNTcwNTJENDM2Qk -c /opt/kafka/config/kraft/server.properties; fi && exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties"]
     environment:
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: broker,controller
@@ -77,18 +83,21 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_LOG_DIR: /tmp/kafka-logs
     ports:
       - "9092:9092"
+    volumes:
+      - kafka-data:/tmp/kafka-logs
 
   apicurio:
-    image: apicurio/apicurio-registry:2.6
+    image: apicurio/apicurio-registry:3.3.1
     container_name: gp-apicurio
     environment:
       REGISTRY_DATASOURCE_URL: jdbc:postgresql://postgres:5432/genea_apicurio
       REGISTRY_DATASOURCE_USERNAME: ${POSTGRES_USER:-genealogy}
       REGISTRY_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "8081:8080"
+      - "8086:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,14 +106,18 @@ services:
     image: temporalio/auto-setup:1.26.2
     container_name: gp-temporal
     environment:
-      DB: postgresql
-      DB_POSTGRES_HOST: postgres
-      DB_POSTGRES_PORT: "5432"
-      DB_POSTGRES_USER: ${POSTGRES_USER:-genealogy}
-      DB_POSTGRES_PWD: ${POSTGRES_PASSWORD}
-      DB_POSTGRES_SEEDS: postgres
+      DB: postgres12
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-genealogy}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
       DEFAULT_NAMESPACE: genea-default
       SKIP_DEFAULT_NAMESPACE_CREATION: "false"
+      # E2.4 search attribute whitelist (mirrors
+      # `platform/temporal/search-attrs.yaml`). The auto-setup
+      # script accepts a comma-separated list via
+      # `TEMPORAL_SEARCH_ATTRIBUTES`; the deep linter enforces
+      # the same list at PR time.
+      TEMPORAL_SEARCH_ATTRIBUTES: "TenantId=CustomStringField,WorkflowType=CustomKeywordField,TaskQueue=CustomKeywordField,Attempt=CustomIntField,AggregateType=CustomKeywordField,AggregateId=CustomStringField,MediaAssetId=CustomStringField,TransferJobId=CustomStringField,ConsentId=CustomStringField"
     ports:
       - "7233:7233"
       - "8088:8088"
@@ -139,12 +152,14 @@ services:
   flagsmith:
     image: flagsmith/flagsmith:latest
     container_name: gp-flagsmith
+    restart: on-failure
+    entrypoint: ["sh", "/app/scripts/run-docker-dev.sh"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-genealogy}:${POSTGRES_PASSWORD}@postgres:5432/genea_flagsmith
       ENV: dev
       DJANGO_ALLOWED_HOSTS: "*"
     ports:
-      - "8000:8000"
+      - "8010:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -154,7 +169,7 @@ services:
     container_name: gp-otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
-      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./observability/otel-collector.yaml/config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "4317:4317"
       - "4318:4318"
@@ -191,3 +206,4 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  kafka-data:
