@@ -1,0 +1,81 @@
+{{/*
+istio-bootstrap-job — Helm hook (`pre-upgrade,pre-install`) that
+applies the four source-of-truth manifests derived from the
+Istio ConfigMaps. The job runs once per `helm upgrade`, waits
+for the four CRDs (`peerauthentications.security.istio.io`,
+`authorizationpolicies.security.istio.io`,
+`telemetries.telemetry.istio.io`) to be registered by the
+`istio-operator` subchart, then applies the manifests and
+deletes itself on success.
+
+The job uses the `bitnami/kubectl` image (small, includes
+`python3` for the init script) so it does NOT require the
+heavy `istioctl` binary in the Job container.
+*/}}
+{{- $istio := .Values.components.istio }}
+{{- if $istio.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: istio-bootstrap
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: {{ $istio.version | default "1.23" | quote }}
+    # Helm hook annotation — runs once per upgrade.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: istio-bootstrap
+    spec:
+      serviceAccountName: istio-bootstrap
+      restartPolicy: OnFailure
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: apply
+          image: {{ $istio.kubectlImage.repository }}:{{ $istio.kubectlImage.tag }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/scripts/istio-init.sh"]
+          env:
+            - name: NAMESPACE
+              value: gp-platform
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: apply
+              mountPath: /tmp/istio-apply
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: scripts
+          configMap:
+            name: istio-bootstrap-scripts
+            defaultMode: 0500
+        - name: apply
+          emptyDir: {}
+{{- end }}

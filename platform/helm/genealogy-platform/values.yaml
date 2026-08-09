@@ -446,12 +446,71 @@ components:
   istio:
     enabled: true
     profile: default
+    # Image pin — ADR-E0.5-01 baseline (Istio 1.23.x). Renovate
+    # bumps the patch line per ADR-E0.5-01; the umbrella chart
+    # uses the `istio-operator` subchart for the control plane
+    # (`istiod`) so this version is the documented baseline.
+    version: "1.23"
+    # Image pin for the bootstrap Job (Python + kubectl). The
+    # `istio-bootstrap-job` template does NOT need the heavy
+    # `istioctl` image — it just applies the four source-of-truth
+    # ConfigMap-derived manifests. `bitnami/kubectl` ships
+    # `python3` for the YAML conversion.
+    kubectlImage:
+      repository: bitnami/kubectl
+      tag: "1.31.1"
+      registry: docker.io
     # Strict mTLS, deny-by-default AuthorizationPolicy and no in-mesh
     # retry (mesh + app retries are kept disjoint per design §13).
+    # The four source-of-truth files live in `platform/istio/` and
+    # are mirrored into the chart's `files/istio/` directory.
     mesh:
       mtls: STRICT
       outboundPolicy: REGISTRY_ONLY
       inboundPolicy: MUTUAL_TLS
+      retryBudget: null
+    # The four source-of-truth ConfigMaps rendered by the chart
+    # (mesh-config, peer-auth, authz-policies, telemetry). Mirrored
+    # from `platform/istio/` so `helm template` does not read
+    # outside the chart root.
+    configPaths:
+      meshConfig: files/istio/mesh-config.yaml
+      peerAuth: files/istio/peer-auth.yaml
+      authzPolicies: files/istio/authz-policies.yaml
+      telemetry: files/istio/telemetry.yaml
+    # Authorization policy — pinned posture for the platform.
+    # The `authz-policies.yaml` source-of-truth carries the
+    # documented allow + deny rules; these values tell the
+    # template which CRD kinds to render.
+    authz:
+      denyByDefault: true
+      denyPlaintextPrincipal: true
+      dnaServiceEgressDeny: true
+      dnaServiceIngressDeny: true
+      mediaWorkerEgressDeny: true
+      mediaWorkerIngressAllow: true
+      dnaWorkerEgressDeny: true
+    # Telemetry — pinned posture for the platform.
+    telemetry:
+      traceDriver: otel
+      otelCollectorHost: otel-collector.gp-observability.svc.cluster.local
+      otelCollectorPort: 4317
+      prometheusHost: prometheus.gp-observability.svc.cluster.local
+      prometheusPort: 9090
+      accesslogFormat: JSON
+      includeSpiffe: true
+    # Trust domain — must match the `clusterDomain` in
+    # `global.clusterDomain` (default `cluster.local`).
+    trustDomain: cluster.local
+    # Resources for the bootstrap Job — small, runs once per
+    # `helm upgrade`.
+    bootstrapResources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
   vault:
     enabled: true
     # KMS abstraction (E2.6) wires cloud KMS for SaaS, transit Vault

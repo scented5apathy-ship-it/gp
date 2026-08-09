@@ -1,0 +1,22 @@
+{{/*
+PeerAuthentication ConfigMap — renders
+`platform/istio/peer-auth.yaml` as a ConfigMap. The chart applies
+the rendered manifest via `istioctl apply`. The PeerAuthentication
+CRs pin STRICT mTLS for every workload namespace; PERMISSIVE and
+DISABLE are forbidden by `scripts/lint-istio-config.mjs`.
+*/}}
+{{- $istio := .Values.components.istio }}
+{{- if $istio.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-istio-peer-auth
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: {{ $istio.version | default "1.23" | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  {{- (.Files.Get "files/istio/peer-auth.yaml") | nindent 4 }}
+{{- end }}

@@ -1,0 +1,27 @@
+{{/*
+MeshConfig ConfigMap — renders `platform/istio/mesh-config.yaml`
+as a ConfigMap so `helm template` can place the MeshConfig CR
+without reading outside the chart root.
+
+Per `tasks.md` E2.5 + `design.md` §13 the platform ships one
+MeshConfig with `outboundTrafficPolicy: REGISTRY_ONLY`,
+`inboundTrafficPolicy: MUTUAL_TLS`, and an explicit
+`mesh.retryBudget: null` (no mesh-level retry). The
+`istio-bootstrap-job` Helm-hook Job applies the rendered
+manifest via `kubectl apply -f`.
+*/}}
+{{- $istio := .Values.components.istio }}
+{{- if $istio.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-istio-mesh-config
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: {{ $istio.version | default "1.23" | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  {{- (.Files.Get "files/istio/mesh-config.yaml") | nindent 4 }}
+{{- end }}

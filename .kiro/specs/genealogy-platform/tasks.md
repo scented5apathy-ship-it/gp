@@ -141,7 +141,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - Định nghĩa timeout/retry/heartbeat mặc định; cấm PII trong search attributes.
   - Backup/restore và smoke workflow phải được kiểm chứng.
 
-- [ ] E2.5 Cấu hình Istio
+- [x] E2.5 Cấu hình Istio
 
   - Bật strict mTLS, ingress/egress policy, service authorization và telemetry.
   - Quy định nơi cấu hình timeout/retry để tránh retry amplification.

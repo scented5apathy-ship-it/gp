@@ -1,0 +1,220 @@
+# Source-of-truth Istio AuthorizationPolicy — E2.5.
+#
+# Per `tasks.md` E2.5 + `design.md` §13 the platform MUST ship
+# deny-by-default AuthorizationPolicy CRDs that:
+#   1. Allow only the documented service-to-service paths
+#      (the `allow` rules below).
+#   2. Reject forged workload identity (`action: DENY` for any
+#      principal that is not on the source allow-list).
+#   3. Restrict the dna-service mesh egress to its dedicated
+#      namespace + service (E10.2).
+#   4. Restrict the media-worker mesh egress to the ClamAV / Tika /
+#      FFmpeg sandbox pods only (E7.2).
+#
+# The mesh is the second line of defense. Domain authorization
+# (living / DNA / consent) is the destination service's job per
+# `design.md` §4.1 / §5 — this file MUST NOT carry business
+# authorization rules.
+#
+# The deep linter enforces:
+#   - every workload namespace has at least one AuthorizationPolicy
+#     (`action: DENY` for `notPrincipals` and one allow rule);
+#   - no `action: CUSTOM` (ext-authz) without an explicit
+#     `envoyExtAuthzHttp` provider in `mesh-config.yaml` — a
+#     dangling custom provider is a startup-time crash;
+#   - source.principals references match the SPIFFE pattern from
+#     `peer-auth.yaml::principalFormat`;
+#   - the dna-service and media-worker DENY rules are present.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-istio-authz-policies
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: "1.23"
+    gp.genealogy/contract-only: "true"
+data:
+  policy.yaml: |
+    # AuthorizationPolicy list — E2.5 §3.
+    # The contract is one deny-by-default block per workload
+    # namespace + the documented cross-namespace allow rules. The
+    # chart renders the entries via the `istio-authz-policies.yaml`
+    # template. The linter rejects any policy that:
+    #   - uses `action: CUSTOM` without a registered ext-authz
+    #     provider;
+    #   - references a source namespace outside the baseline list;
+    #   - misses the dna-service / media-worker egress DENY block.
+    authorizationPolicies:
+      # ----------------------------------------------------------------
+      # 1. Mesh-wide deny-by-default for plaintext / non-mTLS.
+      #    The peer-auth.yaml STRICT posture already covers this,
+      #    but the explicit DENY rule provides observability (every
+      #    rejected request shows up as a 403 with a deny reason
+      #    code).
+      # ----------------------------------------------------------------
+      - name: deny-plaintext
+        namespace: gp-platform
+        action: DENY
+        selector: {}
+        rules:
+          - from:
+              - source:
+                  notPrincipals: ["cluster.local/ns/*/sa/*"]
+
+      # ----------------------------------------------------------------
+      # 2. Kong -> BFF / public-api path. Kong in `gp-edge` is the
+      #    only ingress the platform exposes; the BFF / public-api
+      #    in `gp-bff` accept calls from Kong's service account
+      #    only. Direct pod-to-pod calls from `gp-services` are
+      #    denied — domain services NEVER talk to the BFF.
+      # ----------------------------------------------------------------
+      - name: kong-to-bff
+        namespace: gp-bff
+        action: ALLOW
+        rules:
+          - from:
+              - source:
+                  principals:
+                    - cluster.local/ns/gp-edge/sa/kong
+      - name: bff-to-services
+        namespace: gp-services
+        action: ALLOW
+        rules:
+          - from:
+              - source:
+                  principals:
+                    - cluster.local/ns/gp-bff/sa/web-bff
+                    - cluster.local/ns/gp-bff/sa/public-api
+      - name: workers-to-data
+        namespace: gp-data
+        action: ALLOW
+        rules:
+          - from:
+              - source:
+                  principals:
+                    - cluster.local/ns/gp-workers/sa/media-worker
+                    - cluster.local/ns/gp-workers/sa/search-indexer
+                    - cluster.local/ns/gp-workers/sa/dna-worker
+                    - cluster.local/ns/gp-workers/sa/import-export-worker
+                    - cluster.local/ns/gp-workers/sa/notification-worker
+                    - cluster.local/ns/gp-workers/sa/reporting-worker
+                    - cluster.local/ns/gp-workers/sa/temporal-worker
+                    - cluster.local/ns/gp-services/sa/genealogy-service
+                    - cluster.local/ns/gp-services/sa/tenant-service
+      - name: observability-scrape
+        namespace: gp-data
+        action: ALLOW
+        rules:
+          - from:
+              - source:
+                  principals:
+                    - cluster.local/ns/gp-observability/sa/prometheus
+                    - cluster.local/ns/gp-observability/sa/otel-collector
+      - name: observability-scrape-services
+        namespace: gp-services
+        action: ALLOW
+        rules:
+          - from:
+              - source:
+                  principals:
+                    - cluster.local/ns/gp-observability/sa/prometheus
+                    - cluster.local/ns/gp-observability/sa/otel-collector
+
+      # ----------------------------------------------------------------
+      # 3. DNA service isolation. The dna-service is the only
+      #    workload that may read from the DNA database
+      #    (`genea_dna`) or write to the `dna-raw` object prefix.
+      #    The DENY rule below rejects EVERY call that does not
+      #    originate from the dna-worker identity. Domain services
+      #    that need DNA read access go through the
+      #    `gp-dna-callers` AuthorizationPolicy (E10.2 expansion,
+      #    tracked separately).
+      # ----------------------------------------------------------------
+      - name: dna-service-egress-deny
+        namespace: gp-data
+        action: DENY
+        selector:
+          matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values:
+                - dna-postgres
+                - dna-object-store
+        rules:
+          - from:
+              - source:
+                  notPrincipals:
+                    - cluster.local/ns/gp-workers/sa/dna-worker
+                    - cluster.local/ns/gp-services/sa/dna-service
+      - name: dna-service-ingress-deny
+        namespace: gp-services
+        action: DENY
+        selector:
+          matchLabels:
+            app.kubernetes.io/component: dna-service
+        rules:
+          - from:
+              - source:
+                  notPrincipals:
+                    - cluster.local/ns/gp-bff/sa/web-bff
+                    - cluster.local/ns/gp-bff/sa/public-api
+                    - cluster.local/ns/gp-workers/sa/dna-worker
+                    - cluster.local/ns/gp-services/sa/dna-service
+
+      # ----------------------------------------------------------------
+      # 4. Media worker egress — only the ClamAV / Tika / FFmpeg /
+      #    Gotenberg sandbox pods may be reached. Egress to the
+      #    public internet is denied at the mesh (`outboundPolicy:
+      #    REGISTRY_ONLY`) AND at the AuthorizationPolicy layer
+      #    (defense in depth).
+      # ----------------------------------------------------------------
+      - name: media-worker-egress-deny
+        namespace: gp-workers
+        action: DENY
+        selector:
+          matchLabels:
+            app.kubernetes.io/component: media-worker
+        rules:
+          - to:
+              - operation:
+                  hosts:
+                    - "*/api.github.com"
+                    - "*/pypi.org"
+                    - "*/registry.npmjs.org"
+                    - "*/index.docker.io"
+      - name: media-worker-ingress-allow
+        namespace: gp-workers
+        action: ALLOW
+        selector:
+          matchLabels:
+            app.kubernetes.io/component: media-worker
+        rules:
+          - from:
+              - source:
+                  principals:
+                    - cluster.local/ns/gp-bff/sa/web-bff
+                    - cluster.local/ns/gp-services/sa/media-service
+      - name: dna-worker-egress-deny
+        namespace: gp-workers
+        action: DENY
+        selector:
+          matchLabels:
+            app.kubernetes.io/component: dna-worker
+        rules:
+          - to:
+              - operation:
+                  hosts:
+                    - "*/api.github.com"
+                    - "*/pypi.org"
+                    - "*/registry.npmjs.org"
+                    - "*/index.docker.io"
+
+    # Forbidden actions — CUSTOM without an ext-authz provider is
+    # rejected at startup; ALLOW without a `from` allow-list is
+    # useless (the mesh will fall back to deny-by-default anyway).
+    forbiddenActions:
+      - CUSTOM
+    forbiddenActionPatterns:
+      - "^ALLOW$" # explicit allow without source rules

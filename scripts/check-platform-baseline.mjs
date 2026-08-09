@@ -561,6 +561,102 @@ for (const tpl of [
 }
 
 // ---------------------------------------------------------------------------
+// E2.5 — Istio service mesh runtime invariants (static check;
+// `scripts/lint-istio-config.mjs` runs the deep YAML validation).
+// ---------------------------------------------------------------------------
+const ISTIO_DIR = join(ROOT, "platform", "istio");
+const ISTIO_FILES = [
+  join(ISTIO_DIR, "mesh-config.yaml"),
+  join(ISTIO_DIR, "peer-auth.yaml"),
+  join(ISTIO_DIR, "authz-policies.yaml"),
+  join(ISTIO_DIR, "telemetry.yaml"),
+];
+const istioTemplates = join(HELM_DIR, "templates", "components", "istio");
+const REQUIRED_ISTIO_TEMPLATES = [
+  "mesh-config-configmap.yaml",
+  "peer-auth-configmap.yaml",
+  "authz-policies-configmap.yaml",
+  "telemetry-configmap.yaml",
+  "serviceaccount.yaml",
+  "init-scripts-configmap.yaml",
+  "bootstrap-job.yaml",
+  "network-policies.yaml",
+];
+
+for (const f of ISTIO_FILES) {
+  if (!existsSync(f)) {
+    fail(`E2.5 source-of-truth file missing — ${relative(ROOT, f)}`);
+  }
+}
+
+for (const tpl of REQUIRED_ISTIO_TEMPLATES) {
+  const p = join(istioTemplates, tpl);
+  if (!existsSync(p)) {
+    fail(`E2.5 helm template missing — ${relative(ROOT, p)}`);
+  }
+}
+
+if (existsSync(valuesPath)) {
+  const v = readFileSync(valuesPath, "utf8");
+  // ADR-E0.5-01 baseline pin (Istio 1.23.x).
+  if (!/version:\s*"1\.23"/.test(v)) {
+    fail("values.yaml must pin Istio version to 1.23 (ADR-E0.5-01)");
+  }
+  if (!/outboundPolicy:\s*REGISTRY_ONLY/.test(v)) {
+    fail("values.yaml must declare components.istio.mesh.outboundPolicy: REGISTRY_ONLY (E2.5 §1)");
+  }
+  if (!/inboundPolicy:\s*MUTUAL_TLS/.test(v)) {
+    fail("values.yaml must declare components.istio.mesh.inboundPolicy: MUTUAL_TLS (E2.5 §1)");
+  }
+  if (!/mtls:\s*STRICT/.test(v)) {
+    fail("values.yaml must declare components.istio.mesh.mtls: STRICT (E2.5 §2)");
+  }
+  if (!/retryBudget:\s*null/.test(v)) {
+    fail("values.yaml must declare components.istio.mesh.retryBudget: null (E2.5 §4)");
+  }
+  if (!/kubectlImage:/.test(v)) {
+    fail("values.yaml must declare components.istio.kubectlImage (E2.5 bootstrap Job)");
+  }
+  if (!/trustDomain:\s*cluster\.local/.test(v)) {
+    fail("values.yaml must declare components.istio.trustDomain: cluster.local (E2.5 §1)");
+  }
+}
+
+// Alert rules must cover the 5 E2.5 signal classes.
+if (!existsSync(ALERTS_DIR) || !existsSync(join(ALERTS_DIR, "istio-rules.yaml"))) {
+  fail("platform/observability/alerts/istio-rules.yaml missing (E2.5 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR, "istio-rules.yaml"), "utf8");
+  for (const alert of [
+    "IstioControlPlaneDown",
+    "IstioPilotPushErrors",
+    "IstioMtlsHandshakeFailures",
+    "IstioMtlsHandshakeFailuresHigh",
+    "IstioAuthzDenialSpike",
+    "IstioAuthzDenialSpikeCritical",
+    "IstioUpstreamFailureSpike",
+    "IstioUpstreamFailureSpikeCritical",
+    "IstioBootstrapJobFailed",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/istio-rules.yaml missing alert '${alert}' (E2.5)`);
+    }
+  }
+}
+
+// Profile.yaml must declare the Istio dev pin.
+if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
+  const p = readFileSync(join(LOCAL_DIR, "profile.yaml"), "utf8");
+  if (!/version:\s*"1\.23"/.test(p)) {
+    fail("platform/local/profile.yaml must pin Istio version to 1.23 (ADR-E0.5-01)");
+  }
+  if (!/kubectlImage:\s*bitnami\/kubectl:1\.31\.1/.test(p)) {
+    fail("platform/local/profile.yaml must pin the Istio bootstrap Job kubectl image (E2.5 §4)");
+  }
+}
+
+
+// ---------------------------------------------------------------------------
 // E2.4 — Temporal runtime invariants (static check;
 // `scripts/lint-temporal-config.mjs` runs the deep YAML validation).
 // ---------------------------------------------------------------------------

@@ -43,7 +43,7 @@
 > - [x] **E2.2** Kong Gateway
 > - [x] **E2.3** Strimzi Kafka + Apicurio Schema Registry
 > - [x] **E2.4** Temporal
-> - [ ] **E2.5** Istio service mesh
+> - [x] **E2.5** Istio service mesh
 > - [ ] **E2.6** Vault + cloud KMS abstraction
 > - [ ] **E2.7** S3/MinIO + Valkey
 > - [ ] **E2.8** Flagsmith / OpenFeature
@@ -376,7 +376,7 @@ flowchart LR
 
 | Thành phần                                           | Phiên bản (ADR-E0.5-01)            | Epic  | Vai trò                                       |
 | ---------------------------------------------------- | ---------------------------------- | ----- | --------------------------------------------- |
-| Istio (service mesh + mTLS)                          | `1.23.x`                           | E2.5  | mTLS workload identity + AuthorizationPolicy  |
+| Istio (service mesh + mTLS)                          | `1.23.x`                           | E2.5 ✅ | mTLS workload identity + AuthorizationPolicy  |
 | Vault + cloud KMS abstraction                        | `1.17.x`                           | E2.6  | Short-lived credentials + envelope encryption |
 | S3/MinIO + bucket policy                             | n/a                                | E2.7  | Object storage + signed URL                   |
 | Valkey (Redis-compatible)                            | `7.2-alpine`                       | E2.7  | Cache/session/rate state                      |
@@ -922,11 +922,69 @@ Chi tiết: `platform/temporal/README.md` + `runbook/temporal.md`
 
 ### 4.4 E2.5 Istio service mesh
 
-**Trạng thái**: 🚧 planned. Chart đã có block `components.istio`
-trong values.yaml (`mesh.mtls: STRICT`, `outboundPolicy: REGISTRY_ONLY`).
+**Trạng thái**: ✅ DONE (chart render + bootstrap Job + 4 source-of-truth manifests).
 
-**Sẽ có**: helm install + IstioOperator + strict mTLS + AuthorizationPolicy
-deny-by-default. Hiện tại chưa ship — theo dõi `tasks.md` E2.5.
+**Auto-apply khi chạy lệnh §4**. Helm-hook Job (`istio-bootstrap`,
+`pre-install,pre-upgrade`) áp 4 source-of-truth manifests (MeshConfig +
+PeerAuthentication + AuthorizationPolicy + Telemetry) qua
+`kubectl apply --server-side`.
+
+Verify:
+
+```bash
+# 1. Control plane Ready
+kubectl -n gp-platform get pods -l app=istiod
+# Kỳ vọng: istiod-xxx  1/1 Running
+
+# 2. Bootstrap Job complete
+kubectl -n gp-platform get jobs -l app.kubernetes.io/component=istio-bootstrap
+# Kỳ vọng: istio-bootstrap  Complete  1/1
+
+# 3. 4 ConfigMaps rendered
+kubectl -n gp-platform get cm -l app.kubernetes.io/component=istio | grep genea-istio
+# Kỳ vọng: genea-istio-mesh-config, genea-istio-peer-auth,
+#           genea-istio-authz-policies, genea-istio-telemetry
+
+# 4. STRICT mTLS trên từng workload namespace
+for ns in gp-platform gp-edge gp-bff gp-services gp-workers gp-data gp-observability gp-argocd; do
+  echo -n "$ns: "
+  kubectl -n $ns get peerauthentication default \
+    -o jsonpath='{.spec.mtls.mode}' 2>/dev/null || echo "(no CR)"
+done
+# Kỳ vọng: tất cả in "STRICT"
+
+# 5. 7 mandatory AuthorizationPolicy rules
+kubectl get authorizationpolicies.security.istio.io -A | grep -E "deny-plaintext|kong-to-bff|dna-service|media-worker|dna-worker"
+# Kỳ vọng: 7 entry
+
+# 6. Smoke probe
+pnpm smoke:istio
+# Kỳ vọng: 5/5 PASS
+```
+
+**Prerequisite**: cert-manager (E2.1) + Istio base + istiod subchart
+phải được cài độc lập (chart chỉ ship 4 source-of-truth ConfigMaps
++ Helm-hook Job; không ship control plane):
+
+```bash
+# Cài Istio base + istiod (một lần per cluster)
+helm repo add istio https://istio-release.storage.googleapis.com/charts
+helm repo update
+helm install istio-base istio/base -n gp-platform --create-namespace
+helm install istiod istio/istiod -n gp-platform \
+  --set meshConfig.outboundTrafficPolicy.mode=REGISTRY_ONLY \
+  --set meshConfig.inboundTrafficPolicy.mode=MUTUAL_TLS \
+  --set meshConfig.trustDomain=cluster.local \
+  --wait
+```
+
+**Troubleshooting**: xem `runbook/istio.md` (6 alert playbooks:
+control plane down, pilot push errors, mTLS handshake failures,
+AuthorizationPolicy denial spike, upstream retry spike, bootstrap
+Job failed).
+
+Chi tiết: `docs/e25-istio-setup.md` + `platform/istio/README.md` +
+`evidence/E2.5.md`.
 
 ### 4.5 E2.6 Vault + cloud KMS abstraction
 
@@ -985,9 +1043,10 @@ các lệnh sau để verify:
 pnpm lint:temporal
 pnpm lint:kafka
 pnpm lint:kong
+pnpm lint:istio
 pnpm check:platform:baseline
 pnpm test:scripts
-# Kỳ vọng: tất cả clean, 42/42 tests pass
+# Kỳ vọng: tất cả clean, 48/48 tests pass
 
 # 2. Helm render check (xác nhận chart không lỗi)
 docker run --rm -v "${PWD}:/src:ro" -w /src alpine/helm:3.16.3 \
@@ -998,6 +1057,7 @@ docker run --rm -v "${PWD}:/src:ro" -w /src alpine/helm:3.16.3 \
 pnpm smoke:kong          # E2.2
 pnpm smoke:apicurio      # E2.3
 pnpm smoke:temporal      # E2.4
+pnpm smoke:istio         # E2.5
 # Kỳ vọng: tất cả PASS
 
 # 4. Resource counts per environment
@@ -1080,7 +1140,7 @@ helm upgrade genealogy-platform platform/helm/genealogy-platform \
 | Kafka     | `kubectl delete kafkatopic <name>` rồi re-apply từ chart  |
 | Apicurio  | Publish lại schema version cũ qua REST API                |
 | Temporal  | `helm rollback` (namespace + task queue tự reconcile lại) |
-| Istio     | `istioctl uninstall` + reinstall version cũ               |
+| Istio     | `helm rollback` (Helm-hook Job re-apply 4 source-of-truth); khi downgrade control plane: `istioctl uninstall` + reinstall version cũ |
 | Vault     | `helm rollback` (KV data vẫn còn trong Raft storage)      |
 | MinIO     | Snapshot bucket + restore                                 |
 | Flagsmith | `helm rollback`                                           |

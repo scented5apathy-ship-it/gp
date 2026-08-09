@@ -1,0 +1,113 @@
+# Source-of-truth Istio MeshConfig — E2.5.
+#
+# Per `tasks.md` E2.5 + `design.md` §13 the platform MUST ship a
+# single MeshConfig resource that pins:
+#   - `outboundTrafficPolicy.mode = REGISTRY_ONLY` (deny-by-default
+#     egress; a workload can only reach services declared in the
+#     ServiceEntry / mesh registry, never the public internet or an
+#     arbitrary cluster IP).
+#   - `inboundTrafficPolicy.mode = MUTUAL_TLS` (every pod-to-pod
+#     connection is mTLS-authenticated; plaintext is rejected by the
+#     proxy).
+#   - `extensionProviders: [envoyExtAuthzHttp, prometheus]`
+#     (the proxy can fan authz + metrics decisions to an external
+#     service when needed, but the canonical policy decision still
+#     lives in the destination service per design.md §4.1).
+#   - `defaultConfig.proxyMetadata.ISTIO_META_ENABLE_HBONE: "true"`
+#     (HBONE tunneling is enabled by default; required by Istio
+#     1.23.x ambient mode that ADR-E0.5-01 pins).
+#   - `defaultConfig.tracing.zipkin.address` is left blank — the
+#     OTel Collector sidecar is the source of truth for trace export
+#     (E2.10).
+#   - **No mesh-level retry / timeout policy.** Mesh + app retries
+#     are kept disjoint per `design.md` §13 to prevent retry
+#     amplification; app services pin their own gRPC deadlines (E1.4)
+#     and resilience4j retry budget (E13.4).
+#
+# This file is the contract; the umbrella chart renders it through
+# the `istio-mesh-config-configmap.yaml` template (and the platform
+# operator — see `runbook/istio.md` — applies it via `istioctl
+# install`/`istioctl apply`).
+#
+# The deep linter (`scripts/lint-istio-config.mjs`) enforces
+# structure, deny-by-default posture, and the retry/timeout
+# non-overlap rule.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-istio-mesh-config
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: "1.23"
+    gp.genealogy/contract-only: "true"
+data:
+  mesh.yaml: |
+    # MeshConfig — E2.5 §1 + design.md §13.
+    #
+    # The `defaultConfig` block is applied to every Envoy sidecar /
+    # waypoint proxy that the mesh injects. We deliberately leave
+    # `outboundPolicy: REGISTRY_ONLY` + `inboundPolicy: MUTUAL_TLS`
+    # as the default — any workload that needs plaintext is
+    # exceptional and must be declared via a ServiceEntry + a
+    # workload-level `sidecar.istio.io/rewriteAppHTTPProbers: false`
+    # annotation.
+    defaultConfig:
+      # HBONE is required by Istio 1.23.x ambient mode; the workload
+      # bootstrap script (`scripts/local-up.sh` + the chart's
+      # init-container) sets the same env var.
+      proxyMetadata:
+        ISTIO_META_ENABLE_HBONE: "true"
+      # Tracing — empty address; OTel Collector sidecar (E2.10) is
+      # the source of truth. The mesh's built-in Zipkin driver is
+      # intentionally disabled.
+      tracing:
+        zipkin:
+          address: ""
+        sampling: 100
+      # No mesh-level retry. App services own the retry budget.
+      # Anything declared here would be additive to the gRPC
+      # deadline + resilience4j retry that the platform Spring Boot
+      # starter pins.
+      retryBudget: null
+    # Extension providers — registered but NOT used by the mesh
+    # itself. The destination service can still reach them via
+    # `envoyExtAuthzHttp` filters if a workload opts in (the
+    # `auth-service` filter below is the canonical example).
+    extensionProviders:
+      - name: otel-tracing
+        zipkin:
+          service: otel-collector.gp-observability.svc.cluster.local
+          port: 9411
+      - name: prometheus
+        prometheus:
+          service: prometheus.gp-observability.svc.cluster.local
+          port: 9090
+    # Outbound traffic policy — REGISTRY_ONLY. The proxy rejects any
+    # outbound call to a service not declared in the registry. This
+    # is the canonical "deny-by-default" posture mandated by E2.5.
+    outboundTrafficPolicy:
+      mode: REGISTRY_ONLY
+    # Inbound traffic policy — MUTUAL_TLS. Every pod-to-pod
+    # connection is authenticated and encrypted by the mesh. The
+    # PeerAuthentication CRD in `peer-auth.yaml` reinforces the
+    # policy namespace-by-namespace; the mesh default is a safety
+    # net.
+    inboundTrafficPolicy:
+      mode: MUTUAL_TLS
+    # Trust domain — pinned so the workload identity JWTs minted by
+    # the platform Vault / K8s service-account-token exchange are
+    # validated against the right issuer. Domain must match the
+    # `clusterDomain` in `values.yaml::global` (default
+    # `cluster.local`).
+    trustDomain: cluster.local
+    # Default discovery address — used by the platform operator
+    # (`istioctl install`).
+    discoveryAddress: istiod.gp-platform.svc.cluster.local:15012
+    # CA configuration — the platform cert-manager + Vault PKI
+    # chain. `istiod` signs leaf certs with the platform CA so the
+    # workload identity is anchored in the same trust chain as the
+    # rest of the platform.
+    ca:
+      address: cert-manager.gp-platform.svc.cluster.local

@@ -1,0 +1,182 @@
+# Prometheus alert rules for the Istio service mesh (E2.5).
+#
+# Per `tasks.md` E2.5 + `design.md` §13 the platform must alert on
+# the four mesh-level SLI signals:
+#   1. **Control plane availability** — `istiod` is up; pilot
+#      push errors are within the error budget.
+#   2. **mTLS handshake success rate** — 5xx from handshake
+#      failures indicates a forged / mis-issued workload
+#      identity.
+#   3. **Authorization policy denials** — spike in 403 / RBAC:
+#      denied indicates either a misconfigured policy or an
+#      attempted lateral movement.
+#   4. **Retry amplification** — `istio_requests_total` with
+#      `response_flags: UR,UF,UT,UO,URX` above threshold
+#      signals upstream retries that may cascade.
+#
+# The rule groups below mirror `kafka-rules.yaml` /
+# `temporal-rules.yaml`: severity ladder (warning → critical),
+# `for:` clause tuned per severity, and `runbook_url` pointing
+# at `runbook/istio.md`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-istio-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: "1.23"
+    gp.genealogy/contract-only: "true"
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    # -----------------------------------------------------------------
+    # Mesh control plane — istiod availability + push errors.
+    # -----------------------------------------------------------------
+    - name: istio.availability
+      interval: 30s
+      rules:
+        - alert: IstioControlPlaneDown
+          expr: up{job="istiod"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: istio
+            slo_class: control-plane
+          annotations:
+            summary: "istiod is down"
+            description: "istiod has been unreachable for 2m. The platform's mesh control plane cannot push config to sidecars; pod-to-pod mTLS may stall. Check `kubectl -n gp-platform get pods -l app=istiod` and the istio operator logs."
+            runbook_url: https://runbooks.genealogy.local/istio#control-plane-down
+        - alert: IstioPilotPushErrors
+          expr: |
+            sum(rate(istio_pilot_xds_pushes{type~"rds_.*|eds_.*|cds_.*|lds_.*",result="error"}[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            component: istio
+            slo_class: control-plane
+          annotations:
+            summary: "istiod xDS push error rate elevated"
+            description: "istiod push error rate is above 0.1/s for 5m. Pilot may be saturated or a CRD schema is incompatible. Check `kubectl -n gp-platform logs -l app=istiod` and the latest CRD upgrade history."
+            runbook_url: https://runbooks.genealogy.local/istio#pilot-push-errors
+    # -----------------------------------------------------------------
+    # mTLS handshake — forged / mis-issued identity.
+    # -----------------------------------------------------------------
+    - name: istio.mtls
+      interval: 30s
+      rules:
+        - alert: IstioMtlsHandshakeFailures
+          expr: |
+            sum(rate(istio_tcp_connections_closed_total{reporter="destination",connection_termination_details=~".*HANDSHAKE_FAILED.*"}[5m])) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+            component: istio
+            slo_class: mTLS
+          annotations:
+            summary: "mTLS handshake failure rate elevated"
+            description: "mTLS handshake failure rate is above 0.5/s for 5m. Either a workload identity is mis-issued (cert-manager rotation lag) or an attempt to connect with plaintext is being rejected. Check `kubectl -n gp-platform logs -l app=istiod` for `authentication failed` events."
+            runbook_url: https://runbooks.genealogy.local/istio#mtls-handshake
+        - alert: IstioMtlsHandshakeFailuresHigh
+          expr: |
+            sum(rate(istio_tcp_connections_closed_total{reporter="destination",connection_termination_details=~".*HANDSHAKE_FAILED.*"}[5m])) > 5
+          for: 2m
+          labels:
+            severity: critical
+            component: istio
+            slo_class: mTLS
+          annotations:
+            summary: "mTLS handshake failure rate CRITICAL"
+            description: "mTLS handshake failure rate is above 5/s for 2m. This is a potential security incident (forged identity attempt) or a platform cert-manager outage. Page platform-primary + security on-call immediately."
+            runbook_url: https://runbooks.genealogy.local/istio#mtls-handshake-critical
+    # -----------------------------------------------------------------
+    # Authorization policy denials — RBAC denied spike.
+    # -----------------------------------------------------------------
+    - name: istio.authz
+      interval: 30s
+      rules:
+        - alert: IstioAuthzDenialSpike
+          expr: |
+            sum(rate(istio_requests_total{reporter="destination",response_flags="RBAC:denied"}[5m])) > 1
+          for: 5m
+          labels:
+            severity: warning
+            component: istio
+            slo_class: authorization
+          annotations:
+            summary: "Istio AuthorizationPolicy denial rate elevated"
+            description: "AuthorizationPolicy denial rate is above 1/s for 5m. Either a workload is using a forged principal (lateral movement attempt) or a CRD change broke an allow rule. Check the SPIFFE principal on the rejected request via the JSON access log + `kubectl -n gp-platform logs -l app=istiod`."
+            runbook_url: https://runbooks.genealogy.local/istio#authz-denial
+        - alert: IstioAuthzDenialSpikeCritical
+          expr: |
+            sum(rate(istio_requests_total{reporter="destination",response_flags="RBAC:denied"}[5m])) > 10
+          for: 2m
+          labels:
+            severity: critical
+            component: istio
+            slo_class: authorization
+          annotations:
+            summary: "AuthorizationPolicy denial rate CRITICAL"
+            description: "AuthorizationPolicy denial rate is above 10/s for 2m. Active lateral movement attempt or a broken CRD change. Page security on-call + platform-primary. Freeze further CRD changes until the SPIFFE source is identified."
+            runbook_url: https://runbooks.genealogy.local/istio#authz-denial-critical
+    # -----------------------------------------------------------------
+    # Retry amplification — upstream retry / connect failure spike.
+    # The mesh itself has retryBudget: null; the application
+    # owns the retry policy. A spike in upstream failure
+    # response_flags indicates the app-level retry budget is
+    # being consumed; this alert is the canary for cascade
+    # failures per E13.4.
+    # -----------------------------------------------------------------
+    - name: istio.retries
+      interval: 30s
+      rules:
+        - alert: IstioUpstreamFailureSpike
+          expr: |
+            sum(rate(istio_requests_total{reporter="destination",response_flags=~"UR|UF|UT|UO|URX"}[5m]))
+              /
+            sum(rate(istio_requests_total{reporter="destination"}[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            component: istio
+            slo_class: resilience
+          annotations:
+            summary: "Upstream failure rate (retry-able) above 10%"
+            description: "Upstream retry-able failure rate is above 10% of the destination request rate for 5m. Application-level resilience4j retry budget may be depleted; this is the E13.4 cascade failure canary. Check the destination service's own SLO dashboard + the temporal / kafka lag dashboards."
+            runbook_url: https://runbooks.genealogy.local/istio#upstream-failures
+        - alert: IstioUpstreamFailureSpikeCritical
+          expr: |
+            sum(rate(istio_requests_total{reporter="destination",response_flags=~"UR|UF|UT|UO|URX"}[5m]))
+              /
+            sum(rate(istio_requests_total{reporter="destination"}[5m])) > 0.3
+          for: 2m
+          labels:
+            severity: critical
+            component: istio
+            slo_class: resilience
+          annotations:
+            summary: "Upstream failure rate CRITICAL — retry amplification risk"
+            description: "Upstream retry-able failure rate is above 30% of the destination request rate for 2m. Cascade failure is imminent. Engage E13.4 chaos playbook + consider Argo Rollouts canary abort."
+            runbook_url: https://runbooks.genealogy.local/istio#upstream-failures-critical
+    # -----------------------------------------------------------------
+    # Bootstrap job — the istio-bootstrap Helm-hook Job must
+    # succeed on every `helm upgrade`. A failed run means the
+    # mesh CRDs are out of sync with the source-of-truth.
+    # -----------------------------------------------------------------
+    - name: istio.bootstrap
+      interval: 60s
+      rules:
+        - alert: IstioBootstrapJobFailed
+          expr: |
+            kube_job_status_failed{job_name=~"istio-bootstrap-.*"} > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: istio
+            slo_class: gitops
+          annotations:
+            summary: "istio-bootstrap Job failed"
+            description: "The istio-bootstrap Job has at least one failed Pod for 5m. The mesh CRDs are out of sync with `platform/istio/`. Re-run `helm upgrade` after fixing the rendered manifest; check `kubectl -n gp-platform logs -l app.kubernetes.io/component=istio-bootstrap`."
+            runbook_url: https://runbooks.genealogy.local/istio#bootstrap-failed

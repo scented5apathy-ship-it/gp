@@ -1,0 +1,99 @@
+# Source-of-truth Istio PeerAuthentication — E2.5.
+#
+# Per `tasks.md` E2.5 + `design.md` §13 the platform MUST enable
+# **strict mTLS** across every workload namespace. This is enforced
+# via the PeerAuthentication CRD:
+#   - A `default` PeerAuthentication in `gp-platform` (the
+#     `istiod` namespace) with `mtls.mode: STRICT` — the mesh-wide
+#     default; every namespace without its own PeerAuthentication
+#     inherits this.
+#   - One PeerAuthentication per workload namespace that pins
+#     `mtls.mode: STRICT` and forbids `mode: DISABLE` overrides
+#     (PeerAuthentication is evaluated alphabetically; an
+#     alphabetical exception is impossible to declare without an
+#     explicit `STRICT` override).
+#
+# The strict posture means:
+#   - Plaintext HTTP / gRPC traffic to / from a sidecar is rejected
+#     at the proxy with a 503.
+#   - Workload identity is asserted by the SPIFFE X.509 cert
+#     minted by `istiod` (anchored to the platform CA per
+#     `mesh-config.yaml::ca`).
+#   - AuthorizationPolicy CRDs (in `authz-policies.yaml`) reference
+#     the workload principal (`source.principals`) to gate
+#     traffic between services.
+#
+# The deep linter enforces the STRICT posture on every declared
+# namespace; a single permissive `mtls.mode: PERMISSIVE` or
+# `DISABLE` is a lint violation.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-istio-peer-auth
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: "1.23"
+    gp.genealogy/contract-only: "true"
+data:
+  policy.yaml: |
+    # PeerAuthentication list — E2.5 §2.
+    # The first entry is the mesh-wide default. Every subsequent
+    # entry pins STRICT mTLS for one workload namespace. The list
+    # is the contract; the chart renders one PeerAuthentication per
+    # entry.
+    peerAuthentications:
+      # Mesh-wide default — applies to any namespace that does NOT
+      # declare its own. STRICT mTLS; no plaintext allowed.
+      - name: default
+        namespace: gp-platform
+        selector: {} # cluster-wide default
+        mtls:
+          mode: STRICT
+        # No `portLevelMtls` — every port is mTLS.
+        portLevelMtls: {}
+      # Per-namespace strict pins. Every workload namespace from
+      # `values.yaml::baseline.namespaces` is listed so the
+      # PeerAuthentication CR is rendered in every one. PERMISSIVE
+      # and DISABLE are forbidden by the linter.
+      - name: default
+        namespace: gp-edge
+        mtls:
+          mode: STRICT
+      - name: default
+        namespace: gp-bff
+        mtls:
+          mode: STRICT
+      - name: default
+        namespace: gp-services
+        mtls:
+          mode: STRICT
+      - name: default
+        namespace: gp-workers
+        mtls:
+          mode: STRICT
+      - name: default
+        namespace: gp-data
+        mtls:
+          mode: STRICT
+      - name: default
+        namespace: gp-observability
+        mtls:
+          mode: STRICT
+      - name: default
+        namespace: gp-argocd
+        mtls:
+          mode: STRICT
+    # Deny-by-default rule — no PeerAuthentication may declare
+    # `mode: PERMISSIVE` or `mode: DISABLE`. The linter rejects any
+    # future PR that loosens mTLS.
+    forbiddenModes:
+      - PERMISSIVE
+      - DISABLE
+    # Identity format — SPIFFE ID must be
+    # `spiffe://<trustDomain>/ns/<namespace>/sa/<service-account>`.
+    # AuthorizationPolicy CRDs reference the principal as
+    # `cluster.local/ns/<ns>/sa/<sa>`.
+    trustDomain: cluster.local
+    principalFormat: "spiffe://cluster.local/ns/{{.Namespace}}/sa/{{.ServiceAccount}}"

@@ -1,0 +1,49 @@
+{{/*
+NetworkPolicy — default-deny Ingress + Egress for the
+`istio-bootstrap` Job pod + the four ConfigMaps in
+`gp-platform`. The Job is the only workload that needs
+write access to the four ConfigMaps. Everything else is
+allowed to READ the ConfigMaps (so the OTel Collector +
+the workload bootstrap can pick up the policy) but cannot
+write.
+
+The Job's NetworkPolicy is the same shape as
+`temporal/network-policies.yaml` (default-deny + DNS
+allow to `kube-system` + per-workload allow). The Job
+needs to talk to the Kubernetes API server; the cluster's
+default NetworkPolicy already opens that path.
+*/}}
+{{- $istio := .Values.components.istio }}
+{{- if $istio.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: istio-bootstrap-default-deny
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: istio-bootstrap
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-argocd
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

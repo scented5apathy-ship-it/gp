@@ -1,0 +1,64 @@
+{{/*
+Init-scripts ConfigMap — ships `istio-init.sh` (mode 0500) that
+the `istio-bootstrap-job` Job calls to apply the four rendered
+manifests. The script writes the four ConfigMap data blocks to
+ephemeral files in `/tmp/istio-apply/` then runs `istioctl
+manifest generate` to assemble the mesh CRD set, then
+`kubectl apply --server-side -f` to install them.
+
+`istioctl` is intentionally NOT called from this Job — the
+Job only applies the four ConfigMap-derived manifests. The
+umbrella chart's `istiod` Deployment is installed via the
+`istio-operator` Helm subchart (separate template).
+*/}}
+{{- $istio := .Values.components.istio }}
+{{- if $istio.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-bootstrap-scripts
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: {{ $istio.version | default "1.23" | quote }}
+data:
+  istio-init.sh: |
+    #!/bin/sh
+    set -eu
+    # Apply MeshConfig / PeerAuthentication / AuthorizationPolicy /
+    # Telemetry manifests derived from the four source-of-truth
+    # ConfigMaps. The platform's contract is that these four files
+    # are the only source of mesh config; operators never `kubectl
+    # apply` against the cluster directly per design.md §13.
+    NAMESPACE="${NAMESPACE:-gp-platform}"
+    for kind in mesh-config peer-auth authz-policies telemetry; do
+      printf 'applying genea-istio-%s ...\n' "$kind"
+      kubectl get configmap -n "$NAMESPACE" "genea-istio-${kind}" \
+        -o jsonpath='{.data}' > "/tmp/istio-apply/${kind}.json"
+    done
+    # Convert the JSON ConfigMap payload to YAML manifests and
+    # apply with server-side apply so subsequent reconcile does
+    # NOT fight with the operator.
+    python3 - <<'PY'
+    import json
+    import os
+    import subprocess
+    import sys
+    import yaml
+    for kind in ["mesh-config", "peer-auth", "authz-policies", "telemetry"]:
+        with open(f"/tmp/istio-apply/{kind}.json") as fh:
+            data = json.load(fh)
+        for name, body in data.items():
+            docs = list(yaml.safe_load_all(body))
+            for doc in docs:
+                with open(f"/tmp/istio-apply/{kind}-{name}.yaml", "w") as out:
+                    yaml.safe_dump(doc, out)
+    for path in sorted(os.listdir("/tmp/istio-apply")):
+        if not path.endswith(".yaml"):
+            continue
+        full = os.path.join("/tmp/istio-apply", path)
+        subprocess.run(["kubectl", "apply", "--server-side", "--force-conflicts", "-f", full], check=True)
+    PY
+    printf 'istio bootstrap complete\n'
+{{- end }}

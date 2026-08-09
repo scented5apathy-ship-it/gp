@@ -1,0 +1,23 @@
+{{/*
+AuthorizationPolicy ConfigMap — renders
+`platform/istio/authz-policies.yaml` as a ConfigMap. The chart
+applies the rendered manifest via `istioctl apply` / `kubectl
+apply`. The AuthorizationPolicy CRs enforce deny-by-default
++ documented cross-namespace allow rules; the dna-service and
+media-worker DENY blocks are mandatory.
+*/}}
+{{- $istio := .Values.components.istio }}
+{{- if $istio.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-istio-authz-policies
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: {{ $istio.version | default "1.23" | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  {{- (.Files.Get "files/istio/authz-policies.yaml") | nindent 4 }}
+{{- end }}

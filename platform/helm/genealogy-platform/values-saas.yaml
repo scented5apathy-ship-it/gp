@@ -66,6 +66,20 @@ components:
       loki: 90d
       tempo: 30d
 
+# SaaS Istio profile (E2.5). Production posture; same
+# source-of-truth files as on-prem. The trust domain follows
+# the cluster domain; for cross-cluster failover the trust
+# domain is appended with the region (e.g. `cluster.local.eu-
+# central-1`) — tracked in ADR-E0.5-03 supersession.
+istio:
+  enabled: true
+  version: "1.23"
+  kubectlImage:
+    repository: bitnami/kubectl
+    tag: "1.31.1"
+    registry: docker.io
+  trustDomain: cluster.local
+
 # Backup retention extended for SaaS (audit/compliance needs).
 backups:
   postgres:

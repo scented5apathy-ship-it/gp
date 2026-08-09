@@ -195,6 +195,62 @@ data:
       - Domain authorization is at the service via OpenFGA + ABAC; Temporal does NOT carry business policy.
       - Search attributes are pseudonymised at the worker boundary via the platform tenant-pseudo-id library.
 {{- end }}
+{{- if eq $name "istio" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-contract-stub
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Istio service mesh contract (E2.5).
+    responsibilities:
+      - workload identity (SPIFFE X.509) via strict mTLS
+      - deny-by-default AuthorizationPolicy (forged principal rejected)
+      - REGISTRY_ONLY outbound (no public internet egress without ServiceEntry)
+      - OTel-trace export via the platform OTel Collector (E2.10)
+      - Prometheus RED metrics via the platform Prometheus (E2.10)
+      - JSON access log including SPIFFE principal (PII redacted by OTel pipeline)
+    namespaces:
+      - gp-platform
+      - gp-edge
+      - gp-bff
+      - gp-services
+      - gp-workers
+      - gp-data
+      - gp-observability
+      - gp-argocd
+    default_policy:
+      mtls: STRICT
+      outboundPolicy: REGISTRY_ONLY
+      inboundPolicy: MUTUAL_TLS
+      mesh_retry: disabled
+      app_retry:
+        maxAttempts: 3
+        backoff: 50ms/2s/2x
+      trustDomain: cluster.local
+    principal_format: "spiffe://cluster.local/ns/{{.Namespace}}/sa/{{.ServiceAccount}}"
+    dedicated_deny_blocks:
+      - dna-service egress (only dna-worker may reach dna-postgres / dna-raw)
+      - media-worker egress (only the ClamAV / Tika / FFmpeg / Gotenberg sandbox)
+      - dna-worker egress (public internet forbidden)
+    forbidden:
+      - mesh-level retry (would compound with app-level retry budget)
+      - PERMISSIVE / DISABLE mTLS (plaintext forbidden in production)
+      - ALLOW without source.principals (deny-by-default must be intact)
+      - CUSTOM ext-authz without a registered envoyExtAuthzHttp provider
+      - business authorization (living / DNA / consent) — service-owned
+    notes:
+      - Mesh + app retry budgets are kept disjoint (3 app attempts × 1 mesh attempt) to prevent retry amplification per design.md §13.
+      - Workload identity is the SPIFFE cert minted by istiod; the platform cert-manager + Vault PKI chain anchors the trust root.
+      - Domain authorization is at the service via OpenFGA + ABAC; Istio only gates mesh-level (network) authorization.
+      - The dna-service and media-worker isolation rules mirror E10.2 + E7.2 sandbox contracts.
+{{- end }}
 {{- if eq $name "vault" }}
 ---
 apiVersion: v1

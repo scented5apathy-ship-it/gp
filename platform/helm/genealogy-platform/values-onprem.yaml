@@ -84,6 +84,19 @@ components:
       loki: 30d
       tempo: 14d
 
+# On-prem Istio profile (E2.5). Same posture as SaaS; the
+# umbrella chart renders the same four source-of-truth
+# ConfigMaps. The trust domain follows the customer's cluster
+# domain (overridable per-deploy via `--set global.clusterDomain`).
+istio:
+  enabled: true
+  version: "1.23"
+  kubectlImage:
+    repository: bitnami/kubectl
+    tag: "1.31.1"
+    registry: docker.io
+  trustDomain: cluster.local
+
 backups:
   postgres:
     schedule: "0 2 * * *"

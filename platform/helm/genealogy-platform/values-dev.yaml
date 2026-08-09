@@ -107,6 +107,22 @@ components:
     replicas: 1
     rolloutsEnabled: false
 
+# Per-env overrides for the Istio mesh (E2.5).
+# Dev profile keeps the four source-of-truth files but enables a
+# less aggressive `kubectlImage.tag` (1.31.x) for the bootstrap
+# Job. The dev stack does NOT run `istiod` — the bootstrap Job
+# applies the four CRD sets against a kind cluster; the in-pod
+# sidecar injection is left to `scripts/local-up.sh` on a per
+# developer basis (out of scope for the umbrella chart).
+istio:
+  enabled: true
+  version: "1.23"
+  kubectlImage:
+    repository: bitnami/kubectl
+    tag: "1.31.1"
+    registry: docker.io
+  trustDomain: cluster.local
+
 backups:
   postgres:
     enabled: false

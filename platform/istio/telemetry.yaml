@@ -1,0 +1,169 @@
+# Source-of-truth Istio telemetry / retry / timeout policy — E2.5.
+#
+# Per `tasks.md` E2.5 + `design.md` §13 the platform MUST document
+# where retry / timeout / circuit-breaker configuration lives so
+# the mesh and the application do NOT compound retries (retry
+# amplification). This file is the contract:
+#
+#   1. `mesh.retryBudget: null` (no mesh-level retry) — already
+#      declared in `mesh-config.yaml`; duplicated here so the
+#      linter can enforce the disjoint policy.
+#   2. `app.requestsPerConnection.maxRequests: 10000` — the
+#      canonical application-level connection cap (matches the
+#      Spring Boot `server.tomcat.max-connections` + resilience4j
+#      defaults in E1.4).
+#   3. `app.timeout.connect: 2s`, `app.timeout.request: 30s` —
+#      platform-wide default; the BFF / domain services override
+#      per call via the gRPC deadline (`MetadataUtils.seconds()`)
+#      and the Spring MVC `@RequestMapping(timeout=...)` extension.
+#   4. `app.retry.maxAttempts: 3`, `app.retry.backoff: 50ms/2s/2x`
+#      — canonical app-level retry policy; **mesh + app retries
+#      are disjoint** so the cumulative retry fan-out stays
+#      ≤ 9 (3 × 3 = 9 worst case), well under the 12-attempt
+#      budget the on-call workbook budget for cascade failures
+#      (E13.4).
+#   5. `telemetry.tracing.zipkin.address: otel-collector` —
+#      trace export goes through the OTel Collector (E2.10) so the
+#      mesh's built-in Zipkin driver is intentionally blank in
+#      `mesh-config.yaml`.
+#   6. `telemetry.metrics.prometheus` — the Envoy sidecar emits
+#      RED metrics to the platform Prometheus instance.
+#   7. `telemetry.accesslog.format: JSON` — JSON access log
+#      including the SPIFFE principal, source namespace, and
+#      tenant_pseudo_id label. The OTel Collector log pipeline
+#      redacts PII / DNA per `privacy-and-legal-gate.md` §11.
+#
+# The deep linter enforces the disjoint retry / timeout policy:
+# any value > 0 in the mesh retry block is a violation; any
+# `mesh.requestsPerConnection.maxRequests` different from the
+# application cap is a violation.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-istio-telemetry
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: istio
+    app.kubernetes.io/version: "1.23"
+    gp.genealogy/contract-only: "true"
+data:
+  policy.yaml: |
+    # Retry / timeout contract — E2.5 §4.
+    #
+    # The mesh does NOT retry; the application does. This is the
+    # single most important rule for retry-amplification
+    # prevention per design.md §13 / ownership-catalog.md §4.
+    mesh:
+      # Mesh retry budget is empty. Envoy will surface the upstream
+      # response code (5xx, 503) without re-attempting the call.
+      retryBudget: null
+      # Mesh-level connection cap — Envoy enforces per-upstream
+      # max-connections. The cap is identical to the application
+      # cap so a connection storm at the mesh is mirrored at the
+      # workload (no asymmetric amplification).
+      requestsPerConnection:
+        maxRequests: 10000
+
+    # Application-level retry / timeout policy. Spring Boot
+    # template (`libs/platform-spring-boot-starter`) reads these
+    # from ConfigMap and wires them through resilience4j
+    # (`RetryConfig`) + gRPC `MetadataUtils`.
+    app:
+      retry:
+        maxAttempts: 3
+        backoff:
+          initial: 50ms
+          max: 2s
+          multiplier: 2.0
+        # Idempotent-only retry. Non-idempotent operations MUST
+        # NOT be retried (the domain command already carries an
+        # idempotency key per design.md §7.1).
+        retryOn:
+          - ConnectException
+          - TimeoutException
+          - 503
+        doNotRetryOn:
+          - 400
+          - 401
+          - 403
+          - 404
+          - 409 # conflict — the caller must re-read
+      timeout:
+        connect: 2s
+        request: 30s
+      circuitBreaker:
+        failureRateThreshold: 50 # percent over a 60s window
+        slowCallRateThreshold: 50
+        slowCallDuration: 5s
+        waitDurationInOpen: 30s
+        permittedCallsInHalfOpen: 5
+        slidingWindowSize: 100
+        minimumNumberOfCalls: 20
+
+    # Telemetry contract — E2.5 §5.
+    telemetry:
+      tracing:
+        # Trace export goes through the OTel Collector sidecar so
+        # the mesh's built-in Zipkin driver stays blank in
+        # `mesh-config.yaml`.
+        driver: otel
+        otel:
+          service: otel-collector.gp-observability.svc.cluster.local
+          port: 4317
+        sampling:
+          # 100% in dev/staging; production uses tail-based
+          # sampling on the OTel Collector side per E2.10. The
+          # mesh default is 100% so the operator can audit
+          # sampling locally without re-deploying the chart.
+          defaultPercent: 100
+      metrics:
+        # Envoy sidecar emits RED metrics via the platform
+        # Prometheus receiver.
+        prometheus:
+          service: prometheus.gp-observability.svc.cluster.local
+          port: 9090
+          # We do NOT export mTLS handshake failures as metrics
+          # by name (the platform Prometheus alerts group them
+          # under `istio_tcp_connections_closed_total`).
+          enabledMetrics:
+            - requests_total
+            - request_duration_milliseconds
+            - request_bytes
+            - response_bytes
+            - tcp_connections_opened_total
+            - tcp_connections_closed_total
+      accesslog:
+        format: JSON
+        fields:
+          - start_time
+          - duration
+          - upstream_service_time
+          - upstream_transport_failure_reason
+          - downstream_remote_address
+          - downstream_local_address
+          - upstream_host
+          - upstream_cluster
+          - upstream_service
+          - upstream_pod_ip
+          - downstream_pod_ip
+          - request_id
+          - x_forwarded_for
+          - user_agent
+          - response_code
+          - response_flags
+          - connection_termination_details
+          # SPIFFE principal asserted by the mesh; recorded for
+          # security audit (no PII / DNA expected on the wire
+          # because the ABAC redaction runs in the destination
+          # service before the response leaves the pod).
+          - downstream_peer_identity
+          - source_principal
+
+    # Cross-cutting invariants — enforced by the linter.
+    invariants:
+      - meshRetryMustBeDisabled: true
+      - meshAndAppTimeoutMustMatch: false # mesh has no timeout; app owns it
+      - accessLogMustBeJson: true
+      - accessLogMustIncludeSpiffe: true
+      - tracingDriverMustBeOtel: true

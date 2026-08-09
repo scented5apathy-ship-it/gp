@@ -306,3 +306,32 @@ kong:
     - ip-restriction
     - jwt
     - prometheus
+
+# Istio service mesh (E2.5) — local dev profile.
+# The local stack DOES NOT run `istiod` (the heavy control plane).
+# The four source-of-truth files (`platform/istio/*.yaml`) are
+# rendered by the umbrella chart on the integration kind cluster;
+# locally, `scripts/local-up.sh` exercises the same files via
+# `kubectl apply` against a single-node kind cluster. The profile
+# below documents the pin + the bootstrap Job image so the
+# integration tests have a single source of truth.
+istio:
+  # Image pin — ADR-E0.5-01 baseline (Istio 1.23.x). The
+  # umbrella chart renders the `istio-operator` subchart on
+  # staging / production; the local profile documents the same
+  # pin so `scripts/local-up.sh` brings up the control plane on
+  # kind with the same version.
+  version: "1.23"
+  # Bootstrap Job image — same pin as `components.istio.kubectlImage`
+  # in `values.yaml` (E2.5 §4).
+  kubectlImage: bitnami/kubectl:1.31.1
+  # Trust domain — `cluster.local` for the local kind cluster.
+  trustDomain: cluster.local
+  # MeshConfig posture — must match the source-of-truth in
+  # `platform/istio/mesh-config.yaml`. The linter enforces this
+  # so the local profile cannot drift.
+  mesh:
+    mtls: STRICT
+    outboundPolicy: REGISTRY_ONLY
+    inboundPolicy: MUTUAL_TLS
+    retryBudget: null
