@@ -330,6 +330,11 @@ Báo cáo cuối:
   `helm` không có trên PATH, smoke render phải exit với
   `BLOCKED` chứ không `PASS`).
 
+> **Lưu ý:** placeholder `<TASK_ID>` được thay bằng mã task thực
+> (`E3.1`, `E3.2`, `E4.1`, …) khi áp dụng; placeholder `<COMMIT_SHA>`
+> là SHA của commit PARTIAL cần đóng. Quy trình này generic cho mọi
+> task PARTIAL, không gắn với task cụ thể nào.
+
 ## 7. Prompt review độc lập
 
 Sau khi Agent triển khai, nên giao Agent khác review bằng prompt:
