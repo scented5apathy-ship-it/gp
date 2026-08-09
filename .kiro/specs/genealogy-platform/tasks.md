@@ -129,7 +129,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - Tách public, authenticated, partner và admin routes; không đặt domain authorization trong Kong.
   - Thêm config validation, smoke test, metrics và rollback.
 
-- [ ] E2.3 Cấu hình Strimzi và Apicurio
+- [x] E2.3 Cấu hình Strimzi và Apicurio
 
   - Khai báo Kafka cluster, users, ACL, topics, retention, replication và quotas.
   - Thiết lập schema compatibility, artifact naming và access control trong Apicurio.

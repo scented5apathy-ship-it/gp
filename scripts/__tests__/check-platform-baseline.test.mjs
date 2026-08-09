@@ -60,12 +60,21 @@ function makeFixture() {
   });
   mkdirSync(join(dir, "platform", "local", "db"), { recursive: true });
   mkdirSync(join(dir, "platform", "kong"), { recursive: true });
+  mkdirSync(join(dir, "platform", "kafka"), { recursive: true });
+  mkdirSync(join(dir, "platform", "apicurio"), { recursive: true });
+  mkdirSync(join(dir, "platform", "observability", "alerts"), { recursive: true });
   copyTree(
     join(ROOT, "platform", "helm", "genealogy-platform"),
     join(dir, "platform", "helm", "genealogy-platform"),
   );
   copyTree(join(ROOT, "platform", "local"), join(dir, "platform", "local"));
   copyTree(join(ROOT, "platform", "kong"), join(dir, "platform", "kong"));
+  copyTree(join(ROOT, "platform", "kafka"), join(dir, "platform", "kafka"));
+  copyTree(join(ROOT, "platform", "apicurio"), join(dir, "platform", "apicurio"));
+  copyTree(
+    join(ROOT, "platform", "observability", "alerts"),
+    join(dir, "platform", "observability", "alerts"),
+  );
   return dir;
 }
 

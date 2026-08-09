@@ -1,0 +1,3 @@
+primary: platform
+secondary: "@genealogy/data"
+oncall: data-primary

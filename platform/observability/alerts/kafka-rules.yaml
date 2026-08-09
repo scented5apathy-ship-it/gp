@@ -1,0 +1,187 @@
+# Prometheus alert rules for the Strimzi Kafka cluster and the
+# Apicurio Schema Registry (E2.3).
+#
+# Per `tasks.md` E2.3 we alert on:
+#   - under-replicated partitions
+#   - broker / controller disk pressure
+#   - consumer lag
+#   - registry availability / artifact failures
+#
+# Severity ladder follows `scale-and-slo.md` §11 (warn 5m, critical
+# 10m, page 15m for SLO-impacting signals; tighter windows for
+# hard-fail signals like offline partitions or registry down).
+#
+# Tenant labels are pseudonymous: the rules reference
+# `tenant_pseudo_id` only and never a raw tenant UUID.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-kafka-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kafka
+    prometheus: gp-platform
+    role: alert-rules
+spec:
+  groups:
+    # ===================================================================
+    # Partition health (ADR-E0.5-01 SLO: 0 offline partitions)
+    # ===================================================================
+    - name: kafka.partitions
+      interval: 30s
+      rules:
+        - alert: KafkaUnderReplicatedPartitions
+          expr: max(kafka_server_replica_manager_under_replicated_partitions) > 0
+          for: 5m
+          labels:
+            severity: warn
+            team: platform
+            component: kafka
+            runbook: https://runbooks.genealogy.local/kafka/under-replicated
+          annotations:
+            summary: "Kafka cluster has under-replicated partitions"
+            description: |
+              Cluster `{{ $labels.kubernetes_cluster }}` reports
+              {{ $value }} under-replicated partitions for >5m.
+              Investigate broker health (JVM, disk) and recent
+              rebalance events.
+        - alert: KafkaOfflinePartitions
+          expr: max(kafka_server_replica_manager_offline_partitions) > 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+            component: kafka
+            page: "true"
+            runbook: https://runbooks.genealogy.local/kafka/offline-partitions
+          annotations:
+            summary: "Kafka cluster has offline partitions"
+            description: |
+              Cluster `{{ $labels.kubernetes_cluster }}` has
+              {{ $value }} offline partitions. Producer writes to
+              those partitions will fail. Page platform-on-call.
+    # ===================================================================
+    # Disk / log pressure
+    # ===================================================================
+    - name: kafka.disk
+      interval: 30s
+      rules:
+        - alert: KafkaBrokerLogDiskPressure
+          expr: |
+            (kafka_log_size_bytes
+              / on(namespace, pod) group_left
+              kube_pod_container_resource_limits{resource="ephemeral-storage"}
+            ) > 0.8
+          for: 10m
+          labels:
+            severity: warn
+            team: platform
+            component: kafka
+            runbook: https://runbooks.genealogy.local/kafka/disk
+          annotations:
+            summary: "Kafka broker {{ $labels.pod }} is >80% full"
+            description: |
+              Broker pod `{{ $labels.pod }}` ephemeral storage is
+              {{ $value | humanizePercentage }} of the limit. Run
+              `kubectl exec -it` and inspect the data dir; a topic
+              with runaway retention is the most common cause.
+        - alert: KafkaBrokerOutOfDisk
+          expr: |
+            (kafka_log_size_bytes
+              / on(namespace, pod) group_left
+              kube_pod_container_resource_limits{resource="ephemeral-storage"}
+            ) > 0.95
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            component: kafka
+            page: "true"
+            runbook: https://runbooks.genealogy.local/kafka/disk
+          annotations:
+            summary: "Kafka broker {{ $labels.pod }} nearly full"
+            description: |
+              Broker pod `{{ $labels.pod }}` ephemeral storage is
+              {{ $value | humanizePercentage }} of the limit; the
+              broker will refuse writes within minutes.
+    # ===================================================================
+    # Consumer lag
+    # ===================================================================
+    - name: kafka.consumer-lag
+      interval: 30s
+      rules:
+        - alert: KafkaConsumerLag
+          expr: |
+            sum by (consumergroup, topic) (
+              kafka_consumergroup_lag{consumergroup!~"__.*"}
+            ) > 10000
+          for: 10m
+          labels:
+            severity: warn
+            team: platform
+            component: kafka
+            runbook: https://runbooks.genealogy.local/kafka/lag
+          annotations:
+            summary: "Consumer group {{ $labels.consumergroup }} is lagging"
+            description: |
+              Consumer group `{{ $labels.consumergroup }}` has
+              {{ $value }} messages of lag on topic
+              `{{ $labels.topic }}` for >10m. Check the consumer
+              pod's CPU / memory and recent error rate.
+        - alert: KafkaConsumerLagCritical
+          expr: |
+            sum by (consumergroup, topic) (
+              kafka_consumergroup_lag{consumergroup!~"__.*"}
+            ) > 1000000
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            component: kafka
+            page: "true"
+            runbook: https://runbooks.genealogy.local/kafka/lag
+          annotations:
+            summary: "Consumer group {{ $labels.consumergroup }} lag is critical"
+            description: |
+              Consumer group `{{ $labels.consumergroup }}` has
+              {{ $value | humanize }} messages of lag on
+              `{{ $labels.topic }}`. Search / public projection
+              will be stale.
+    # ===================================================================
+    # Registry availability (Apicurio)
+    # ===================================================================
+    - name: apicurio.availability
+      interval: 30s
+      rules:
+        - alert: ApicurioRegistryDown
+          expr: ap_up{job="apicurio-registry"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            component: apicurio
+            page: "true"
+            runbook: https://runbooks.genealogy.local/apicurio/down
+          annotations:
+            summary: "Apicurio Schema Registry is unreachable"
+            description: |
+              The registry probe is failing for >2m. Every producer
+              / consumer will fail to resolve the current schema
+              version. Verify the Apicurio pod + Postgres
+              connection, then check the JMX exporter.
+        - alert: ApicurioRegistryArtifactFailures
+          expr: rate(apicurio_registry_rest_requests_count{code=~"5.."}[5m]) > 0.1
+          for: 10m
+          labels:
+            severity: warn
+            team: platform
+            component: apicurio
+            runbook: https://runbooks.genealogy.local/apicurio/artifact-errors
+          annotations:
+            summary: "Apicurio is rejecting artifacts"
+            description: |
+              Apicurio is returning 5xx for >10m at
+              {{ $value }} req/s. Most likely a compatibility
+              policy violation on a producer's new schema version.
+              Check the Apicurio audit log.

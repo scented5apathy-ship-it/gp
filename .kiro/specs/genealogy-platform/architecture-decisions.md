@@ -64,6 +64,17 @@ Adopt option 3 with the following matrix. All versions are referenced as `MAJOR.
 | TypeScript                          | 5.6.x                 | Quarterly bump                                    | 2026-11-01  |
 | PostgreSQL                          | 16.x (latest minor)   | Annual major; security back-port quarterly        | 2027-01-15  |
 | Kafka (Strimzi)                     | 3.8.x                 | Minor per Strimzi release train                   | 2026-12-01  |
+| Strimzi operator                    | 0.45.x (was 0.43.x)   | Minor per Strimzi release train                   | 2026-12-01  |
+
+> **ADR-E0.5-01 supersession (2026-08-08):** Strimzi operator bumped
+> 0.43.0 → 0.45.2 due to entity-operator Admin API bug on kind cluster
+> (no KafkaTopic/KafkaUser reconciliation, /ready probe permanently
+> failing). StaticQuotaCallback config remains REMOVED from chart —
+> 0.45.2 STILL has the forbidden-list for
+> `client.quota.callback.static.kafka.admin.bootstrap.servers` (lifted
+> only in 0.46.x line). Re-enable in ADR-E0.5-08 supersession when
+> Strimzi 0.46.x is adopted platform-wide. See E2.3 evidence file and
+> `docs/local-k8s-setup.md` Step 12 troubleshooting.
 | Apicurio Registry                   | 2.6.x                 | Minor per Apicurio release train                  | 2026-12-01  |
 | Keycloak                            | 26.x                  | Minor per Keycloak release cadence                | 2026-12-01  |
 | OpenFGA                             | 1.x (latest)          | Minor per OpenFGA release                         | 2026-12-01  |

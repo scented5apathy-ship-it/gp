@@ -1,0 +1,240 @@
+{{- /* Apicurio config + deployment + service + policies */}}
+{{- $apicurio := .Values.components.apicurio }}
+{{- if $apicurio.enabled }}
+{{- $cfgData := $.Files.Get $apicurio.configPath | fromYaml }}
+{{- $compatDoc := $cfgData.data.compatibility | fromYaml }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: apicurio-registry
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: apicurio
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apicurio-registry-config
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: apicurio
+    gp.genealogy/contract-only: "true"
+data:
+  # Quarkus-style config (Apicurio 3.x chạy trên Quarkus). Legacy
+  # `registry.*` keys không còn được Apicurio 3.x đọc — phải dùng
+  # `apicurio.*` cho app config + `quarkus.datasource.*` cho JDBC.
+  application.properties: |
+    apicurio.storage.kind=sql
+    apicurio.storage.sql.kind=postgresql
+    apicurio.global.compatibility.level={{ $apicurio.defaultCompatibility }}
+    apicurio.artifact.version.increment-on-existing-content=false
+    apicurio.apis.confluent.enabled=false
+    apicurio.apis.legacy.confluent.enabled=false
+    apicurio.metrics.enabled=true
+    apicurio.metrics.jmx.enabled=true
+    apicurio.ui.enabled=true
+    quarkus.datasource.db-kind=postgresql
+  compatibility: |
+    # Per-artifact compatibility matrix. The runtime Apicurio
+    # config-as-code MUST mirror this list verbatim; a drift
+    # breaks the BACKWARD contract (ADR-E0.5-08).
+    artifacts:
+{{- range $compatDoc.artifacts }}
+      - group: {{ .group }}
+        artifact: {{ .artifact }}
+        type: {{ .type }}
+        compatibility: {{ .compatibility }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apicurio-registry
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: apicurio
+    app.kubernetes.io/version: {{ $apicurio.image.tag | quote }}
+spec:
+  replicas: {{ $apicurio.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: apicurio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: apicurio
+        app.kubernetes.io/version: {{ $apicurio.image.tag | quote }}
+    spec:
+      serviceAccountName: apicurio-registry
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: apicurio
+          image: {{ include "genealogy-platform.image" (dict "image" $apicurio.image) }}
+          imagePullPolicy: IfNotPresent
+          env:
+            # Apicurio 3.x chạy trên Quarkus, dùng `quarkus.*` env
+            # var trực tiếp (ConfigMap mount path /deployments/config
+            # không được Apicurio 3.x đọc). Per-app config dùng
+            # `apicurio.*`.
+            - name: QUARKUS_DATASOURCE_DB_KIND
+              value: postgresql
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://postgres.gp-data.svc.cluster.local:5432/genea_apicurio
+            - name: QUARKUS_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: apicurio-postgres
+                  key: username
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: apicurio-postgres
+                  key: password
+            - name: APICURIO_GLOBAL_COMPATIBILITY_LEVEL
+              value: {{ $apicurio.defaultCompatibility }}
+            - name: APICURIO_ARTIFACT_VERSION_INCREMENT_ON_EXISTING_CONTENT
+              value: "false"
+            - name: APICURIO_APIS_CONFLUENT_ENABLED
+              value: "false"
+            - name: APICURIO_APIS_LEGACY_CONFLUENT_ENABLED
+              value: "false"
+            - name: APICURIO_METRICS_ENABLED
+              value: "true"
+            - name: APICURIO_METRICS_JMX_ENABLED
+              value: "true"
+            - name: APICURIO_UI_ENABLED
+              value: "true"
+            - name: APICURIO_UI_URL
+              value: "https://apicurio.gp-data.svc.cluster.local"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: jmx
+              containerPort: {{ $apicurio.jmxPort }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              # Apicurio 3.x disable Quarkus `/q/health/*` endpoints
+              # trong profile prod (404). Dùng `/apis/registry/v2/system/info`
+              # — luôn trả 200 khi SQL store ready.
+              path: /apis/registry/v2/system/info
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /apis/registry/v2/system/info
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: {{ $apicurio.resources.requests.cpu | quote }}
+              memory: {{ $apicurio.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ $apicurio.resources.limits.cpu | quote }}
+              memory: {{ $apicurio.resources.limits.memory | quote }}
+          volumeMounts: []
+      volumes: []
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apicurio-registry
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: apicurio
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: apicurio
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: jmx
+      port: {{ $apicurio.jmxPort }}
+      targetPort: jmx
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apicurio-registry-default-deny
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: apicurio
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: apicurio
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: {{ $apicurio.jmxPort }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 4318
+{{- end }}

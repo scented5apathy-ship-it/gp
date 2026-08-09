@@ -32,10 +32,34 @@ components:
     topology: standalone
     replicas: 1
   kafka:
-    replicas: 1
+    # ZK cần >= 3 replicas cho quorum (2 ZK + 1 observer). Override
+    # `replicas` riêng cho ZK — chart hiện dùng cùng $kafka.replicas.
+    # Strimzi 0.45.2 validate `zookeeper.replicas >= 3`. Dev trên kind
+    # cần bump lên 3 để ZK form quorum đúng.
+    replicas: 3
     replicationFactor: 1
+    minInSyncReplicas: 1
+    # kind cluster không provision được gp-data-ssd; dùng standard
+    # (local-path provisioner built-in của kind).
+    kafkaStorageClass: standard
+    zookeeperStorageClass: standard
+    # Entity-operator DISABLED on dev. Strimzi 0.45.2 entity-operator
+    # has silent Admin API bug on kind cluster (topic + user
+    # reconciliation runs in <100ms without actually calling Kafka
+    # Admin API). Topics + ACLs are bootstrapped manually via
+    # `kafka-topics.sh` / `kafka-acls.sh` from broker pod
+    # (see docs/local-k8s-setup.md Step 10.4). Keep `enabled: true`
+    # on production / staging.
+    entityOperator:
+      enabled: false
   apicurio:
     replicas: 1
+    # ADR-E0.5-01 pin Apicurio 2.6.x, nhưng Docker Hub đã drop
+    # tag 2.6.x (chỉ còn 3.x). Trên dev dùng 3.3 cho đến khi
+    # ADR cập nhật lên 3.x. Production values giữ 2.6.x.
+    # Tag PHẢI là string trong quotes để Helm không parse thành float.
+    image:
+      tag: "3.3"
   temporal:
     replicasFrontend: 1
     replicasWorker: 1

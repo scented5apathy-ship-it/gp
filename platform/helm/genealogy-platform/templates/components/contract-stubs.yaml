@@ -54,6 +54,89 @@ data:
       - `KONG_PLUGINS` allow-list rejects any plugin that could carry
         domain authorization at startup.
 {{- end }}
+{{- if eq $name "kafka" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-contract-stub
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kafka
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Kafka runtime contract (E2.3).
+    responsibilities:
+      - durable event bus (KRaft, no ZooKeeper)
+      - topic + ACL config-as-code
+      - per-broker static quota (StaticQuotaCallback)
+      - JMX exporter for SLI / alert source
+    topic_classes:
+      - domain-event      # 30d retention
+      - projection-rebuild # 7d retention
+      - audit             # 365d retention
+      - dlq               # 14d retention
+    compatibility:
+      - BACKWARD (default)
+      - FORWARD (projection rebuild)
+      - FULL (shared enums)
+    forbidden:
+      - storing raw DNA
+      - storing file content
+      - storing access token
+      - storing PII not required for the consumer
+      - scram-sha-512 (no literal credentials)
+    notes:
+      - Two listeners (plain 9092 + tls 9093), both internal-only.
+      - Default `auto.create.topics.enable=false` — every topic must
+        be declared in `platform/kafka/topics.yaml`.
+      - Authz is `simple`; business authorization is enforced at the
+        service via OpenFGA + ABAC, never at the broker.
+      - Replication factor is per-env (3 SaaS / 3 on-prem / 1 dev).
+{{- end }}
+{{- if eq $name "apicurio" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apicurio-contract-stub
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: apicurio
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Apicurio runtime contract (E2.3).
+    responsibilities:
+      - canonical schema store (Avro, ADR-E0.5-08)
+      - compatibility policy enforcement (BACKWARD default)
+      - artifact lifecycle (deprecate / disable / restore)
+    artifacts:
+      - genea-person-v1
+      - genea-tree-v1
+      - genea-relationship-v1
+      - genea-media-v1
+      - genea-research-v1
+      - genea-collaboration-v1
+      - genea-notification-v1
+      - genea-search-rebuild-v1
+      - genea-public-rebuild-v1
+      - genea-audit-v1
+      - genea-dlq-v1
+    storage: postgresql (sql kind, in-memory forbidden in production)
+    forbidden:
+      - storing raw DNA / file content / token in any artifact
+      - enabling the confluent-compatible REST shim
+        (Confluent Community License, not on allow-list)
+    notes:
+      - Avro only; JSON Schema is reserved for partner webhooks.
+      - Per-artifact compatibility override applied at provisioning
+        via `scripts/seed-apicurio.mjs`.
+      - JMX exporter sidecar feeds the registry-availability alert.
+{{- end }}
 {{- if eq $name "vault" }}
 ---
 apiVersion: v1

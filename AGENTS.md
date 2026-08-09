@@ -83,6 +83,7 @@ Every change must respect:
       StorageClass encryption, per-env values, probe contract,
       Kong runtime invariants — E2.2)
 - [ ] `pnpm lint:kong` passes (Kong declarative config validator — E2.2)
+- [ ] `pnpm lint:kafka` passes (Strimzi Kafka + Apicurio config validator — E2.3)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

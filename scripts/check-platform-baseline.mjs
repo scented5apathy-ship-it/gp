@@ -384,4 +384,168 @@ for (const envFile of REQUIRED_ENV_VALUES) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// E2.3 — Strimzi Kafka + Apicurio runtime invariants (static check;
+// `scripts/lint-kafka-config.mjs` runs the deep YAML validation).
+// ---------------------------------------------------------------------------
+const KAFKA_DIR = join(ROOT, "platform", "kafka");
+const APICURIO_DIR = join(ROOT, "platform", "apicurio");
+const KAFKA_CR = join(KAFKA_DIR, "kafka.yaml");
+const KAFKA_TOPICS = join(KAFKA_DIR, "topics.yaml");
+const KAFKA_USERS = join(KAFKA_DIR, "users.yaml");
+const APICURIO_CFG = join(APICURIO_DIR, "registry-config.yaml");
+const ALERTS_DIR = join(ROOT, "platform", "observability", "alerts");
+
+const kafkaTemplates = join(HELM_DIR, "templates", "components", "kafka");
+const apicurioTemplates = join(HELM_DIR, "templates", "components", "apicurio");
+
+for (const f of [KAFKA_CR, KAFKA_TOPICS, KAFKA_USERS, APICURIO_CFG]) {
+  if (!existsSync(f)) {
+    fail(`E2.3 source-of-truth file missing — ${relative(ROOT, f)}`);
+  }
+}
+
+// Kafka CR must pin Kafka 3.8.x (ADR-E0.5-01) and disable auto topic
+// creation. The chart copies the same file into
+// `files/kafka/...`; the linter enforces the deep invariants.
+if (existsSync(KAFKA_CR)) {
+  const k = readFileSync(KAFKA_CR, "utf8");
+  if (!/version:\s*3\.8\.0/.test(k)) {
+    fail("kafka.yaml must pin Kafka 3.8.0 (ADR-E0.5-01)");
+  }
+  if (!/auto\.create\.topics\.enable:\s*false/.test(k)) {
+    fail("kafka.yaml must disable auto topic creation (every topic is declared in topics.yaml)");
+  }
+  if (!/CN=genea-kafka-admin/.test(k)) {
+    fail("kafka.yaml must declare genea-kafka-admin as a super-user");
+  }
+  // StaticQuotaCallback REMOVED — Strimzi 0.45.x forbidden-list still
+  // strips `client.quota.callback.static.kafka.admin.bootstrap.servers`,
+  // `client.quota.callback.static.produce`, and
+  // `client.quota.callback.static.excluded.principal.name.list`. Broker
+  // crashes with "Missing required configuration" if
+  // `client.quota.callback.class` is set without those keys. Re-enable
+  // only when Strimzi 0.46.x is adopted platform-wide (ADR-E0.5-08
+  // supersession). Quota enforcement moves to KafkaUser.spec.quotas +
+  // Kong edge rate-limit (E2.2). See evidence/E2.3.md §5 follow-up #2.
+  // Match only uncommented occurrences (lines that do NOT start with
+  // optional whitespace + `#`). The kafka.yaml rationale comment
+  // explicitly references the string to document why it is removed.
+  const strippedK = k.replace(/^\s*#.*$/gm, "");
+  if (/StaticQuotaCallback/.test(strippedK)) {
+    fail("kafka.yaml must NOT enable Strimzi StaticQuotaCallback — forbidden-list still active in 0.45.x; tracked in ADR-E0.5-08");
+  }
+  if (!/kind:\s*Kafka\b/.test(k)) {
+    fail("kafka.yaml must declare a Strimzi 'Kafka' resource");
+  }
+}
+
+// Topics file must declare the 4 ADR-E0.5-08 classes.
+if (existsSync(KAFKA_TOPICS)) {
+  const t = readFileSync(KAFKA_TOPICS, "utf8");
+  for (const cls of ["domain-event", "projection-rebuild", "audit", "dlq"]) {
+    if (!new RegExp(`topicClass:\\s*${cls}\\b`).test(t)) {
+      fail(`kafka topics.yaml must declare at least one '${cls}' topic (ADR-E0.5-08)`);
+    }
+  }
+  // KRaft metadataVersion (3.8) must be quoted as a string per
+  // K8s schema. Bare `3.8` parses as a float and Strimzi rejects
+  // it.
+  const kcr = readFileSync(KAFKA_CR, "utf8");
+  if (!/metadataVersion:\s*"3\.8"/.test(kcr) && !/metadataVersion:\s*'3\.8'/.test(kcr)) {
+    fail(`kafka.yaml must pin metadataVersion as a quoted string "3.8" (KRaft)`);
+  }
+  // Strimzi 0.43 still requires `spec.zookeeper` block even when
+  // KRaft metadataVersion is set. Enforce presence.
+  if (!/zookeeper:[\s\S]*?replicas:\s*\d+[\s\S]*?storage:/.test(kcr)) {
+    fail(`kafka.yaml must declare a zookeeper block with replicas and storage (Strimzi 0.43 schema)`);
+  }
+}
+
+// Users file must cover admin / producer / consumer.
+if (existsSync(KAFKA_USERS)) {
+  const u = readFileSync(KAFKA_USERS, "utf8");
+  for (const role of ["admin", "producer", "consumer"]) {
+    if (!new RegExp(`role:\\s*${role}\\b`).test(u)) {
+      fail(`kafka users.yaml must declare at least one '${role}' user`);
+    }
+  }
+  if (/authType:\s*scram-sha-512/i.test(u)) {
+    fail("kafka users.yaml must not declare scram-sha-512 (no literal credentials per ADR-E0.5-01)");
+  }
+  if (!/genea-kafka-admin/.test(u)) {
+    fail("kafka users.yaml must declare the 'genea-kafka-admin' super-user");
+  }
+}
+
+// Apicurio config must keep the SQL store and disable the Confluent
+// license shim.
+if (existsSync(APICURIO_CFG)) {
+  const a = readFileSync(APICURIO_CFG, "utf8");
+  if (!/registry\.storage\.kind=sql/.test(a)) {
+    fail("apicurio registry-config.yaml must keep registry.storage.kind=sql (in-memory forbidden in production)");
+  }
+  if (!/registry\.apis\.confluent\.enabled=false/.test(a)) {
+    fail("apicurio must keep 'registry.apis.confluent.enabled=false' (license compliance)");
+  }
+  if (!/BACKWARD/.test(a)) {
+    fail("apicurio must declare 'BACKWARD' as the global default compatibility (ADR-E0.5-08)");
+  }
+  if (!/AVRO/.test(a)) {
+    fail("apicurio must declare at least one AVRO artifact (Avro is the canonical serializer)");
+  }
+}
+
+// Alert rules must cover the 4 E2.3 signals.
+if (!existsSync(ALERTS_DIR) || !existsSync(join(ALERTS_DIR, "kafka-rules.yaml"))) {
+  fail("platform/observability/alerts/kafka-rules.yaml missing (E2.3 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR, "kafka-rules.yaml"), "utf8");
+  for (const alert of [
+    "KafkaUnderReplicatedPartitions",
+    "KafkaOfflinePartitions",
+    "KafkaBrokerLogDiskPressure",
+    "KafkaBrokerOutOfDisk",
+    "KafkaConsumerLag",
+    "KafkaConsumerLagCritical",
+    "ApicurioRegistryDown",
+    "ApicurioRegistryArtifactFailures",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/kafka-rules.yaml missing alert '${alert}' (E2.3)`);
+    }
+  }
+}
+
+// Helm templates for kafka + apicurio must exist.
+for (const tpl of [
+  join(kafkaTemplates, "kafka.yaml"),
+  join(kafkaTemplates, "topics.yaml"),
+  join(kafkaTemplates, "users.yaml"),
+  join(kafkaTemplates, "metrics-configmap.yaml"),
+  join(kafkaTemplates, "network-policy.yaml"),
+  join(apicurioTemplates, "registry.yaml"),
+]) {
+  if (!existsSync(tpl)) {
+    fail(`E2.3 helm template missing — ${relative(ROOT, tpl)}`);
+  }
+}
+
+// values.yaml must pin Kafka 3.8.x + Apicurio 3.x (ADR-E0.5-01
+// supersession — bumped Strimzi 0.43.0 → 0.45.2 to fix entity-operator
+// Admin API bug + KRaft stability; bumped Apicurio 2.6.x → 3.3.x after
+// Docker Hub dropped 2.6.x tags).
+if (existsSync(valuesPath)) {
+  const v = readFileSync(valuesPath, "utf8");
+  if (!/tag:\s*0\.45\.2-kafka-3\.8\.0/.test(v)) {
+    fail("values.yaml must pin Kafka image tag to 0.45.2-kafka-3.8.0 (ADR-E0.5-01 supersession)");
+  }
+  if (!/tag:\s*"?3\.3/.test(v)) {
+    fail("values.yaml must pin Apicurio image tag to 3.x (ADR-E0.5-01 supersession; Docker Hub dropped 2.6.x)");
+  }
+  if (!/defaultCompatibility:\s*BACKWARD/.test(v)) {
+    fail("values.yaml must set apicurio.defaultCompatibility to BACKWARD (ADR-E0.5-08)");
+  }
+}
+
 finish();

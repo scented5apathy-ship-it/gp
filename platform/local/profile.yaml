@@ -61,23 +61,109 @@ openfga:
 
 # Strimzi Kafka single-node + Apicurio Registry.
 kafka:
-  image: quay.io/strimzi/kafka:0.43.0-kafka-3.8.0
+  image: quay.io/strimzi/kafka:0.45.2-kafka-3.8.0
   port: 9092
+  kraft: true                  # KRaft mode (no ZooKeeper), E2.3
   replicationFactor: 1
+  minInSyncReplicas: 1
+  # Local profile mirrors the canonical topic list from
+  # `platform/kafka/topics.yaml` so contract tests can use the same
+  # names. The chart-side list is the source of truth; this profile
+  # is a documentation hint for `scripts/local-up.sh`.
   topics:
-    - name: genea.person.events.v1
+    - name: genealogy.person.v1.v1
+      topicClass: domain-event
+      partitions: 3
+      retentionMs: 2592000000
+    - name: genealogy.tree.v1.v1
+      topicClass: domain-event
+      partitions: 3
+      retentionMs: 2592000000
+    - name: genealogy.relationship.v1.v1
+      topicClass: domain-event
+      partitions: 3
+      retentionMs: 2592000000
+    - name: genealogy.media.v1.v1
+      topicClass: domain-event
+      partitions: 3
+      retentionMs: 2592000000
+    - name: genealogy.research.v1.v1
+      topicClass: domain-event
+      partitions: 3
+      retentionMs: 2592000000
+    - name: genealogy.collaboration.v1.v1
+      topicClass: domain-event
+      partitions: 3
+      retentionMs: 2592000000
+    - name: genealogy.notification.v1.v1
+      topicClass: domain-event
+      partitions: 3
+      retentionMs: 2592000000
+    - name: genealogy.search.rebuild.v1.v1
+      topicClass: projection-rebuild
       partitions: 3
       retentionMs: 604800000
-    - name: genea.tree.events.v1
+    - name: genealogy.public.rebuild.v1.v1
+      topicClass: projection-rebuild
       partitions: 3
       retentionMs: 604800000
-    - name: genea.media.events.v1
+    - name: genealogy.audit.v1.v1
+      topicClass: audit
       partitions: 3
-      retentionMs: 604800000
+      retentionMs: 31536000000
+    - name: genealogy.dlq.v1.v1
+      topicClass: dlq
+      partitions: 3
+      retentionMs: 1209600000
 apicurio:
   image: apicurio/apicurio-registry:2.6
   port: 8080
-  compatibility: BACKWARDS
+  defaultCompatibility: BACKWARD
+  artifacts:
+    - group: genea-person-v1
+      artifact: genea-person-v1
+      type: AVRO
+      compatibility: BACKWARD
+    - group: genea-tree-v1
+      artifact: genea-tree-v1
+      type: AVRO
+      compatibility: BACKWARD
+    - group: genea-relationship-v1
+      artifact: genea-relationship-v1
+      type: AVRO
+      compatibility: BACKWARD
+    - group: genea-media-v1
+      artifact: genea-media-v1
+      type: AVRO
+      compatibility: BACKWARD
+    - group: genea-research-v1
+      artifact: genea-research-v1
+      type: AVRO
+      compatibility: BACKWARD
+    - group: genea-collaboration-v1
+      artifact: genea-collaboration-v1
+      type: AVRO
+      compatibility: BACKWARD
+    - group: genea-notification-v1
+      artifact: genea-notification-v1
+      type: AVRO
+      compatibility: BACKWARD
+    - group: genea-search-rebuild-v1
+      artifact: genea-search-rebuild-v1
+      type: AVRO
+      compatibility: FORWARD
+    - group: genea-public-rebuild-v1
+      artifact: genea-public-rebuild-v1
+      type: AVRO
+      compatibility: FULL
+    - group: genea-audit-v1
+      artifact: genea-audit-v1
+      type: AVRO
+      compatibility: BACKWARD
+    - group: genea-dlq-v1
+      artifact: genea-dlq-v1
+      type: AVRO
+      compatibility: BACKWARD
 
 # Temporal dev server + namespace.
 temporal:

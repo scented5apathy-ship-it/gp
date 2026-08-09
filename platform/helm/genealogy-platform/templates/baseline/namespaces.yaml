@@ -34,7 +34,6 @@ metadata:
     app.kubernetes.io/part-of: genealogy-platform
     app.kubernetes.io/managed-by: Helm
     gp.genealogy/environment: {{ $.Values.global.environment | default "dev" }}
-    gp.genealogy/purpose: {{ $ns.purpose }}
     {{- if $ns.tenantShared }}
     gp.genealogy/tenant-shared: "true"
     {{- end }}
@@ -44,6 +43,12 @@ metadata:
     pod-security.kubernetes.io/enforce: {{ $ns.podSecurity }}
     pod-security.kubernetes.io/audit: {{ $ns.podSecurity }}
     pod-security.kubernetes.io/warn: {{ $ns.podSecurity }}
+  annotations:
+    # `purpose` carries a free-form description ("web-bff and
+    # public-api applications") so it must live in an annotation,
+    # not a label — K8s labels must match
+    # `(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?`.
+    gp.genealogy/purpose: {{ $ns.purpose | quote }}
 {{- if $ns.quota }}
 ---
 apiVersion: v1
@@ -53,7 +58,8 @@ metadata:
   namespace: {{ $ns.name }}
   labels:
     app.kubernetes.io/part-of: genealogy-platform
-    gp.genealogy/purpose: {{ $ns.purpose }}
+  annotations:
+    gp.genealogy/purpose: {{ $ns.purpose | quote }}
 spec:
   hard:
     {{- if $ns.quota.requestsCpu }}

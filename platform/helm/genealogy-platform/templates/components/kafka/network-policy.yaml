@@ -1,0 +1,62 @@
+{{/*
+Default-deny NetworkPolicy for the Kafka cluster (E2.3).
+
+Per `design.md` §13 / `tasks.md` E2.3 the Kafka brokers are reachable
+only from in-mesh workloads in `gp-services` and `gp-workers`. The
+public internet, the BFF namespace, and the observability namespace
+are denied. The alert rules fire from `gp-observability` for the
+JMX exporter, so an explicit egress allowance is added too.
+*/}}
+{{- $kafka := .Values.components.kafka }}
+{{- if $kafka.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: genea-kafka-default-deny
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kafka
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: kafka
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9093
+        - protocol: TCP
+          port: 9999
+  egress:
+    # DNS must always be reachable.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # JMX exporter to the OTel collector.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 4318
+{{- end }}

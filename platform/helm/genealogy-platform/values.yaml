@@ -290,9 +290,98 @@ components:
     enabled: true
     # Strimzi-managed; see E2.3 for topic/ACL/quota policy.
     replicas: 3
+    replicationFactor: 3
+    minInSyncReplicas: 2
+    # Image pin — ADR-E0.5-01 baseline (Kafka 3.8.x via Strimzi
+    # 0.45.x). Renovate bumps the patch line per ADR-E0.5-01.
+    # Bumped from 0.43.0 → 0.45.2 per ADR-E0.5-01 supersession
+    # (entity-operator Admin API bug in 0.43.0 + KRaft stability
+    # fixes; StaticQuotaCallback forbidden-list dropped in 0.45).
+    image:
+      repository: quay.io/strimzi/kafka
+      tag: 0.45.2-kafka-3.8.0
+      registry: quay.io
+    # KRaft-only; ZooKeeper is forbidden per design §13.
+    kraft: true
+    # Per-broker quota DISABLED for Strimzi 0.43.x / 0.45.x baseline.
+    # Strimzi's forbidden-list still strips the required
+    # AdminClient bootstrap key in these versions. Quota enforcement
+    # delegated to KafkaUser.spec.quotas and Kong edge rate-limit.
+    # Re-enable in ADR-E0.5-08 supersession when Strimzi 0.46.x is
+    # adopted (forbidden-list lifted in 0.46 line). Keys below kept
+    # commented for the future ADR diff.
+    # quota:
+    #   produceBytesPerSec: 52428800
+    #   consumeBytesPerSec: 52428800
+    #   requestsPerSec: 200000
+    #   adminBootstrapServers: "genea-kafka-kafka-bootstrap.gp-data.svc.cluster.local:9092"
+    # Probe defaults — Kafka brokers expose a TCP-only probe on
+    # 9090 (entity-operator) and 8080 (Strimzi admin). The Spring
+    # Boot service template uses the standard
+    # `/healthz/{live,ready,startup}` contract.
+    # Entity-operator (topic + user). Set `enabled: false` on local
+    # dev where the operator's Admin API connection fails silently
+    # (Strimzi 0.43 / 0.45 bug on kind cluster). When disabled, the
+    # chart ships only the Kafka cluster + ZooKeeper; topics/ACLs
+    # are bootstrapped manually via `kafka-topics.sh` /
+    # `kafka-acls.sh` exec'd from broker pod. Keep `enabled: true`
+    # on production / staging.
+    entityOperator:
+      enabled: true
+      topicOperator:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+      userOperator:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    # Source-of-truth list of KafkaTopics. Mirrored from
+    # `platform/kafka/topics.yaml` so the chart can `helm template`
+    # without reading the file directly.
+    topicsPath: files/kafka/topics.yaml
+    usersPath: files/kafka/users.yaml
   apicurio:
     enabled: true
     replicas: 2
+    # Image pin — ADR-E0.5-01 supersession (Apicurio 3.3.x).
+    # Bumped from 2.6.x → 3.3.x because Docker Hub dropped the
+    # 2.6.x tag stream and Apicurio 3.x ships on Quarkus (different
+    # config mount path, env-var-driven). Production / staging must
+    # be re-validated after bump.
+    image:
+      repository: apicurio/apicurio-registry
+      tag: "3.3"
+      registry: docker.io
+    # Source-of-truth config (configmap) + per-artifact
+    # compatibility matrix.
+    configPath: files/apicurio/registry-config.yaml
+    # Default compatibility is BACKWARD (ADR-E0.5-08).
+    defaultCompatibility: BACKWARD
+    resources:
+      requests:
+        cpu: "200m"
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # JMX exporter port (alert source).
+    jmxPort: 9999
   temporal:
     enabled: true
     replicasFrontend: 3

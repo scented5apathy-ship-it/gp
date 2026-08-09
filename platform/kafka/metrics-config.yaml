@@ -1,0 +1,71 @@
+# JMX-to-Prometheus exporter config for the Kafka cluster.
+#
+# This is the SLI source for the E2.3 alert rules (under-replicated
+# partitions, consumer lag, broker disk, registry failures). The
+# exporter is enabled via the Kafka CR's `metricsConfig.valueFrom`
+# reference, so the chart must ship this ConfigMap in `gp-data` and
+# the cluster CR must declare the same `name` / `key`.
+#
+# Per ADR-E0.5-08 / design §13 every metric is consumed by the OTel
+# Collector / Prometheus stack. Tenant labels stay pseudonymous.
+lowercaseOutputName: true
+rules:
+  # ----- Partition & replica health -----
+  - pattern: kafka.server<type=(.+), name=(.+), topic=(.+), partition=(.+)><>Value
+    name: kafka_server_partition_$1_$2
+    type: GAUGE
+    labels:
+      topic: "$3"
+      partition: "$4"
+  - pattern: kafka.server<type=ReplicaManager, name=UnderReplicatedPartitions><>Value
+    name: kafka_server_replica_manager_under_replicated_partitions
+    type: GAUGE
+  - pattern: kafka.server<type=ReplicaManager, name=OfflinePartitionsCount><>Value
+    name: kafka_server_replica_manager_offline_partitions
+    type: GAUGE
+  - pattern: kafka.server<type=ReplicaManager, name=IsrShrinksPerSec><>Count
+    name: kafka_server_replica_manager_isr_shrinks_total
+    type: COUNTER
+  - pattern: kafka.server<type=ReplicaManager, name=IsrExpandsPerSec><>Count
+    name: kafka_server_replica_manager_isr_expands_total
+    type: COUNTER
+  # ----- Log / disk -----
+  - pattern: kafka.log<type=Log, name=Size, topic=(.+), partition=(.+)><>Value
+    name: kafka_log_size_bytes
+    type: GAUGE
+    labels:
+      topic: "$1"
+      partition: "$2"
+  - pattern: kafka.server<type=KafkaRequestHandlerPool, name=RequestHandlerAvgIdlePercent><>Value
+    name: kafka_server_request_handler_avg_idle_percent
+    type: GAUGE
+  - pattern: "kafka.server:type=BrokerTopicMetrics,name=(.+)"
+    name: kafka_server_broker_topic_metrics_$1
+    type: GAUGE
+  # ----- Consumer / producer (per-client) -----
+  - pattern: kafka.server<type=BrokerTopicMetrics, name=MessagesInPerSec, topic=(.+)><>Count
+    name: kafka_server_broker_topic_metrics_messages_in_total
+    type: COUNTER
+    labels:
+      topic: "$1"
+  - pattern: kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec, topic=(.+)><>Count
+    name: kafka_server_broker_topic_metrics_bytes_in_total
+    type: COUNTER
+    labels:
+      topic: "$1"
+  - pattern: kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec, topic=(.+)><>Count
+    name: kafka_server_broker_topic_metrics_bytes_out_total
+    type: COUNTER
+    labels:
+      topic: "$1"
+  # ----- Quota (per ADR-E0.5-08: detect a single tenant crossing
+  # quota) -----
+  - pattern: kafka.server<type=ClientQuotaManager, name=(.+), clientId=(.+)><>Value
+    name: kafka_server_client_quota_$1
+    type: GAUGE
+    labels:
+      client_id: "$2"
+  # ----- Controller (KRaft) -----
+  - pattern: "kafka.controller:type=ControllerChannelManager,name=(.+)"
+    name: kafka_controller_channel_manager_$1
+    type: GAUGE

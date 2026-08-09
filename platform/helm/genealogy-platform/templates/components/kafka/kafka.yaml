@@ -1,0 +1,161 @@
+{{/*
+Strimzi Kafka cluster — primary Kafka CR.
+
+E2.3 source-of-truth. The Strimzi `Kafka` CR is rendered by
+`.Files.Get` from the platform-level `platform/kafka/kafka.yaml`
+so SaaS / on-prem / dev reconcile against the same cluster topology.
+Per-environment overrides (replicas, replication factor) come from
+`.Values.components.kafka` (per-env values file).
+
+Per `architecture-decisions.md` ADR-E0.5-01 / 08:
+  - Kafka 3.8.x via Strimzi 0.45.x.
+  - KRaft only (no ZooKeeper).
+  - Two listeners (plain + tls), both internal-only, mTLS via Istio.
+  - Simple ACL authorization, super-user reserved for the admin cert.
+  - Per-broker StaticQuotaCallback DISABLED (Strimzi 0.45.2 STILL
+    strips `static.kafka.admin.bootstrap.servers` — forbidden-list
+    lifted only in 0.46.x). Quota lives in KafkaUser.spec.quotas +
+    Kong edge rate-limit. Track re-enable in ADR-E0.5-08 supersession.
+  - JMX exporter sidecar feeds the Prometheus alert rules in
+    `templates/components/observability/alerts.yaml`.
+*/}}
+{{- $kafka := .Values.components.kafka }}
+{{- if $kafka.enabled }}
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: genea-kafka
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kafka
+    app.kubernetes.io/version: {{ $kafka.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  kafka:
+    version: 3.8.0
+    # metadataVersion must be a STRING — bare `3.8` parses as a
+    # float and Strimzi rejects it.
+    metadataVersion: "3.8"
+    replicas: {{ $kafka.replicas }}
+    config:
+      default.replication.factor: {{ $kafka.replicationFactor | quote }}
+      min.insync.replicas: {{ $kafka.minInSyncReplicas | quote }}
+      offsets.topic.replication.factor: {{ $kafka.replicationFactor | quote }}
+      transaction.state.log.replication.factor: {{ $kafka.replicationFactor | quote }}
+      transaction.state.log.min.isr: {{ $kafka.minInSyncReplicas | quote }}
+      auto.create.topics.enable: "false"
+      # Per-broker quota: REMOVED.
+      # Strimzi 0.45.2 STILL has the forbidden-list that strips
+      # `client.quota.callback.static.kafka.admin.bootstrap.servers`,
+      # `client.quota.callback.static.produce`, and
+      # `client.quota.callback.static.excluded.principal.name.list`
+      # silently (operator WARNs "forbidden and will be ignored").
+      # Setting `client.quota.callback.class` alone leaves the
+      # callback half-configured — broker crashes with
+      # `Missing required configuration
+      # client.quota.callback.static.kafka.admin.bootstrap.servers`.
+      # Strimzi docs: forbidden-list lifted in 0.46.x line. Until
+      # we bump, quota enforcement is delegated to:
+      #   1. KafkaUser.spec.quotas (per-user throttling), or
+      #   2. Kong edge rate-limit (E2.2).
+      # Track re-enable in ADR-E0.5-08 supersession when
+      # Strimzi 0.46.x is adopted platform-wide.
+      jmxPort: 9999
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+        authentication:
+          type: tls
+    # NetworkPolicy cho Kafka brokers ship riêng trong file
+    # `templates/components/kafka/network-policy.yaml`. Strimzi
+    # `v1beta2` không hỗ trợ `listeners.configuration.networkPolicyPeers`
+    # (Strimzi tự quản NetworkPolicy khi dùng `type: route` /
+    # `loadbalancer` cho external listener; với internal listener,
+    # NetworkPolicy phải tự viết).
+    authorization:
+      type: simple
+      superUsers:
+        - CN=genea-kafka-admin
+    storage:
+      type: persistent-claim
+      size: 100Gi
+      # Default `gp-data-ssd` cho production cluster với cloud
+      # provisioner. Trên kind cluster dùng `standard` (map
+      # với rancher.io/local-path built-in) — override bằng
+      # `--set components.kafka.kafkaStorageClass=standard` nếu
+      # chạy local. Xem docs/local-k8s-setup.md Step 8.1.
+      class: {{ default "gp-data-ssd" $kafka.kafkaStorageClass }}
+      deleteClaim: false
+    resources:
+      requests:
+        cpu: {{ $kafka.resources.requests.cpu | quote }}
+        memory: {{ $kafka.resources.requests.memory | quote }}
+      limits:
+        cpu: {{ $kafka.resources.limits.cpu | quote }}
+        memory: {{ $kafka.resources.limits.memory | quote }}
+    readinessProbe:
+      initialDelaySeconds: 15
+      timeoutSeconds: 5
+    livenessProbe:
+      initialDelaySeconds: 15
+      timeoutSeconds: 5
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: genea-kafka-metrics
+          key: kafka-metrics-config.yml
+  # Strimzi 0.43 schema: `spec.zookeeper` block bắt buộc dù có
+  # `metadataVersion` KRaft. KRaft mode thực sự chỉ enable khi
+  # upgrade lên Strimzi 0.45+ — khi đó sẽ bỏ block này và rely
+  # vào `spec.kafka.metadataVersion` thôi. Hiện tại 0.43 vẫn
+  # yêu cầu zookeeper config đầy đủ.
+  zookeeper:
+    replicas: {{ $kafka.replicas }}
+    storage:
+      type: persistent-claim
+      size: 10Gi
+      class: {{ default "gp-data-ssd" $kafka.kafkaStorageClass }}
+      deleteClaim: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+  {{- if $kafka.entityOperator.enabled }}
+  entityOperator:
+    topicOperator:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 200m
+          memory: 512Mi
+    userOperator:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 200m
+          memory: 512Mi
+  {{- end }}
+  cruiseControl:
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 400m
+        memory: 1Gi
+{{- end }}

@@ -1,0 +1,189 @@
+# KafkaUser declarations + ACL matrix.
+#
+# Per `tasks.md` E2.3 every workload identity is declared as a
+# `KafkaUser` (TLS auth + simple ACLs). The user list is the
+# source-of-truth for which service may read or write which topic;
+# anything not listed is denied by the broker's `simple` authorizer.
+#
+# Naming: `<service>-<role>` (e.g. `genealogy-service-producer`).
+# Auth: `tls` — the broker matches on the certificate CN and the
+# ACLs below are enforced on top. No `scram-sha-512` is allowed in
+# production (it requires literal credentials; ADR-E0.5-01 forbids
+# inline secrets).
+#
+# Per `design.md` §4.1 + §13, Kafka authorization is the runtime
+# guard, not the policy source of truth. Business authorization
+# (living / DNA / consent) is enforced at the service via OpenFGA +
+# ABAC before the event is published, so the broker ACLs are scoped
+# to the coarse (topic, role) tuple only.
+users:
+  # ----- Admin -----
+  - name: genea-kafka-admin
+    role: admin
+    authType: tls
+    # CN=genea-kafka-admin is whitelisted as a super-user in the
+    # cluster CR's `authorization.superUsers`. No ACL block — the
+    # super-user flag is the contract.
+    acls: []
+  # ----- Service producers -----
+  - name: genealogy-service-producer
+    role: producer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.person.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+      - resourceType: topic
+        name: genealogy.tree.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+      - resourceType: topic
+        name: genealogy.relationship.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+      - resourceType: topic
+        name: genealogy.audit.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+  - name: media-service-producer
+    role: producer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.media.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+  - name: research-service-producer
+    role: producer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.research.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+  - name: collaboration-service-producer
+    role: producer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.collaboration.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+      - resourceType: topic
+        name: genealogy.audit.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+  - name: notification-service-producer
+    role: producer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.notification.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+  - name: audit-service-producer
+    role: producer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.audit.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+  - name: import-export-service-producer
+    role: producer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.dlq.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+      - resourceType: topic
+        name: genealogy.public.rebuild.v1.v1
+        patternType: literal
+        operations: [Write, Describe]
+  # ----- Service consumers (one per downstream project) -----
+  - name: search-service-consumer
+    role: consumer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.person.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: topic
+        name: genealogy.tree.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: topic
+        name: genealogy.relationship.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: topic
+        name: genealogy.audit.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: group
+        name: search-service
+        patternType: literal
+        operations: [Read]
+  - name: public-projection-consumer
+    role: consumer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.public.rebuild.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: group
+        name: public-projection
+        patternType: literal
+        operations: [Read]
+  - name: media-worker-consumer
+    role: consumer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.media.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: group
+        name: media-worker
+        patternType: literal
+        operations: [Read]
+  - name: notification-worker-consumer
+    role: consumer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.notification.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: group
+        name: notification-worker
+        patternType: literal
+        operations: [Read]
+  - name: audit-worker-consumer
+    role: consumer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.audit.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: group
+        name: audit-worker
+        patternType: literal
+        operations: [Read]
+  - name: dlq-triage-consumer
+    role: consumer
+    authType: tls
+    acls:
+      - resourceType: topic
+        name: genealogy.dlq.v1.v1
+        patternType: literal
+        operations: [Read, Describe]
+      - resourceType: group
+        name: dlq-triage
+        patternType: literal
+        operations: [Read]

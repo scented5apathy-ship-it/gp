@@ -24,6 +24,8 @@
     "lint:protobuf": "node scripts/lint-protobuf.mjs",
     "lint:kong": "node scripts/lint-kong-config.mjs",
     "smoke:kong": "node scripts/smoke-kong.mjs",
+    "lint:kafka": "node scripts/lint-kafka-config.mjs",
+    "smoke:apicurio": "node scripts/smoke-apicurio.mjs",
     "lint:ownership": "node scripts/check-ownership-coverage.mjs",
     "lint:generated": "node scripts/check-generated-code.mjs",
     "typecheck": "pnpm run -r --parallel typecheck",
@@ -44,9 +46,10 @@
     "check:boundary": "node scripts/check-monorepo-boundaries.mjs",
     "check:ownership": "node scripts/check-ownership-coverage.mjs",
     "check:generated": "node scripts/check-generated-code.mjs",
-    "check:platform": "pnpm lint:helm && pnpm lint:kong && node scripts/check-platform-baseline.mjs",
+    "check:platform": "pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && node scripts/check-platform-baseline.mjs",
     "check:platform:baseline": "node scripts/check-platform-baseline.mjs",
     "check:kong": "pnpm lint:kong && node scripts/check-platform-baseline.mjs",
+    "check:kafka": "pnpm lint:kafka && node scripts/check-platform-baseline.mjs",
     "check:contracts": "pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events",
     "check:docs": "pnpm lint:markdown",
     "security": "node scripts/security-ci.mjs all",
@@ -57,10 +60,10 @@
     "security:sbom": "node scripts/security-ci.mjs sbom",
     "security:license": "node scripts/security-ci.mjs license",
     "security:baseline": "docker run --rm -v \"${PWD}:/src:ro\" -w /src ghcr.io/gitleaks/gitleaks:v8.21.2 detect --no-banner --config /src/security/gitleaks.toml --report-path /src/security/.gitleaks-baseline.json --report-format json --source /src",
-    "check:all": "pnpm check:boundary && pnpm check:lockfile && pnpm check:gradle:lock && pnpm check:ownership && pnpm check:generated && pnpm lint:eslint && pnpm lint:yaml && pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events && pnpm lint:helm && pnpm lint:kong && pnpm lint:markdown && pnpm typecheck && pnpm test:unit && pnpm check:java:format && pnpm check:java && pnpm check:java:test && pnpm check:platform:baseline",
+    "check:all": "pnpm check:boundary && pnpm check:lockfile && pnpm check:gradle:lock && pnpm check:ownership && pnpm check:generated && pnpm lint:eslint && pnpm lint:yaml && pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events && pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:markdown && pnpm typecheck && pnpm test:unit && pnpm check:java:format && pnpm check:java && pnpm check:java:test && pnpm check:platform:baseline",
     "release": "turbo run build --filter=...{git origin/main...HEAD}",
     "ci:quality": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit && pnpm check:java && pnpm check:boundary",
-    "ci:full": "pnpm ci:quality && pnpm test:integration && pnpm test:contract && pnpm test:e2e && pnpm lint:ownership && pnpm lint:generated && pnpm lint:helm && pnpm lint:kong && pnpm check:platform && pnpm check:platform:baseline && pnpm smoke:kong"
+    "ci:full": "pnpm ci:quality && pnpm test:integration && pnpm test:contract && pnpm test:e2e && pnpm lint:ownership && pnpm lint:generated && pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm check:platform && pnpm check:platform:baseline && pnpm smoke:kong && pnpm smoke:apicurio"
   },
   "devDependencies": {
     "@eslint/js": "9.13.0",

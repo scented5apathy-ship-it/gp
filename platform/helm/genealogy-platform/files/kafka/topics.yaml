@@ -1,0 +1,138 @@
+# Canonical Kafka topic list (ADR-E0.5-08).
+#
+# Every domain event topic is declared here so a drift is grep-able
+# from CI logs. The list is rendered into the umbrella chart's
+# `templates/components/kafka/topics.yaml` as `KafkaTopic` resources.
+#
+# Topic naming: `<domain>.<aggregate>.<version>.v<n>` (e.g.
+# `genealogy.person.v1.v1`). The double `.v1` follows the convention
+# documented in ADR-E0.5-08: the inner `.v1` is the schema version
+# (Apicurio artifact), the outer `v1` is the topic revision. A schema
+# breaking change bumps the inner `v1` -> `v2`; a topology change
+# (e.g. partition count) bumps the outer one.
+#
+# Retention class matrix (ADR-E0.5-08):
+#   - domain event     : 30d, no compaction
+#   - projection rebuild: 7d, no compaction
+#   - audit            : 365d, no compaction
+#   - dlq              : 14d, no compaction
+#
+# Per `tasks.md` E2.3 the partition key is `tenantId + aggregateId`
+# (mandatory ordering across aggregate for cross-tenant search index
+# rebuild) and `aggregateId` only otherwise. The convention is encoded
+# in the documentation block; producers MUST respect it.
+topics:
+  # ----- Domain event class (30d retention) -----
+  - name: genealogy.person.v1.v1
+    topicClass: domain-event
+    partitions: 12
+    replicationFactor: 3
+    retentionMs: 2592000000 # 30d
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: aggregate
+    schema: genea-person-v1
+    owner: genealogy-service
+  - name: genealogy.tree.v1.v1
+    topicClass: domain-event
+    partitions: 6
+    replicationFactor: 3
+    retentionMs: 2592000000
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: aggregate
+    schema: genea-tree-v1
+    owner: genealogy-service
+  - name: genealogy.relationship.v1.v1
+    topicClass: domain-event
+    partitions: 12
+    replicationFactor: 3
+    retentionMs: 2592000000
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: aggregate
+    schema: genea-relationship-v1
+    owner: genealogy-service
+  - name: genealogy.media.v1.v1
+    topicClass: domain-event
+    partitions: 6
+    replicationFactor: 3
+    retentionMs: 2592000000
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: aggregate
+    schema: genea-media-v1
+    owner: media-service
+  - name: genealogy.research.v1.v1
+    topicClass: domain-event
+    partitions: 6
+    replicationFactor: 3
+    retentionMs: 2592000000
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: aggregate
+    schema: genea-research-v1
+    owner: research-service
+  - name: genealogy.collaboration.v1.v1
+    topicClass: domain-event
+    partitions: 6
+    replicationFactor: 3
+    retentionMs: 2592000000
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: aggregate
+    schema: genea-collaboration-v1
+    owner: collaboration-service
+  - name: genealogy.notification.v1.v1
+    topicClass: domain-event
+    partitions: 6
+    replicationFactor: 3
+    retentionMs: 2592000000
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: aggregate
+    schema: genea-notification-v1
+    owner: notification-service
+  # ----- Projection rebuild class (7d retention) -----
+  - name: genealogy.search.rebuild.v1.v1
+    topicClass: projection-rebuild
+    partitions: 6
+    replicationFactor: 3
+    retentionMs: 604800000 # 7d
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: tenant-and-aggregate
+    schema: genea-search-rebuild-v1
+    owner: search-service
+  - name: genealogy.public.rebuild.v1.v1
+    topicClass: projection-rebuild
+    partitions: 3
+    replicationFactor: 3
+    retentionMs: 604800000
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: tenant-and-aggregate
+    schema: genea-public-rebuild-v1
+    owner: search-service
+  # ----- Audit class (365d retention, no compaction) -----
+  - name: genealogy.audit.v1.v1
+    topicClass: audit
+    partitions: 6
+    replicationFactor: 3
+    retentionMs: 31536000000 # 365d
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: tenant
+    schema: genea-audit-v1
+    owner: audit-service
+  # ----- DLQ class (14d retention) -----
+  - name: genealogy.dlq.v1.v1
+    topicClass: dlq
+    partitions: 3
+    replicationFactor: 3
+    retentionMs: 1209600000 # 14d
+    cleanupPolicy: delete
+    minInSyncReplicas: 2
+    partitionKey: original-topic
+    schema: genea-dlq-v1
+    owner: platform

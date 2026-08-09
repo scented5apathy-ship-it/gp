@@ -1,0 +1,198 @@
+# Source-of-truth Strimzi Kafka cluster manifest.
+#
+# E2.3 wires the Strimzi operator + the canonical Kafka cluster that
+# every service talks to. The Strimzi `Kafka` CR is rendered into the
+# umbrella chart's `templates/components/kafka/kafka.yaml` so SaaS,
+# on-premise and dev all reconcile against the same topology.
+#
+# Per `architecture-decisions.md` ADR-E0.5-08 (Avro + Apicurio, BACKWARD
+# compatibility) and ADR-E0.5-01 (pinned baseline) the cluster is
+# pinned to Kafka 3.8.x via the `version` field below. Bump only via a
+# new ADR.
+#
+# Per `design.md` §13 + `tasks.md` E2.3 the cluster:
+#   - uses KRaft (no ZooKeeper) — Strimzi 0.43+ default.
+#   - exposes only an internal listener (PLAINTEXT over mTLS) and a
+#     TLS listener for cross-namespace consumers; the public broker
+#     listener is forbidden (services connect via Istio mTLS).
+#   - broker-level quota NOT enforced at the broker today (Strimzi
+#     0.45.2 STILL forbids the StaticQuotaCallback keys —
+#     forbidden-list lifted only in 0.46.x). Quota enforcement
+#     lives at the edge (Kong rate-limit) and per-user via
+#     KafkaUser.spec.quotas — see ADR-E0.5-08.
+#   - declares a default `min.insync.replicas` and `replication.factor`
+#     so every topic inherits durability.
+#   - declares a default `retention.ms` and `cleanup.policy` per the
+#     topic class matrix in ADR-E0.5-08.
+#
+# Topic layout is split: the cluster declares only the structural
+# defaults here, while the actual `KafkaTopic` CRs live in
+# `platform/kafka/topics/*.yaml` so a domain team can PR a new topic
+# without touching the cluster CR.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: genea-kafka
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kafka
+    app.kubernetes.io/version: 3.8.0
+    gp.genealogy/contract-only: "true"
+spec:
+  kafka:
+    # Pinned to Strimzi's 3.8.x release train (ADR-E0.5-01).
+    version: 3.8.0
+    # KRaft mode — no ZooKeeper. Strimzi 0.43+ default.
+    # NOTE: 0.43 schema still requires `spec.zookeeper` block (see
+    # below); KRaft-only path is 0.45+. metadataVersion must be a
+    # STRING per K8s schema — bare `3.8` parses as a float.
+    metadataVersion: "3.8"
+    # 3 brokers / AZs for SaaS, 3 for on-prem, 1 for dev (overridden
+    # per-env values file).
+    replicas: 3
+    # Cluster-wide defaults inherited by every topic that does not
+    # override them. Matches ADR-E0.5-08 (domain event 30d retention,
+    # no compaction).
+    config:
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      auto.create.topics.enable: false
+      # Per-broker quota: REMOVED. Strimzi 0.45.2 STILL silently
+      # strips `client.quota.callback.static.kafka.admin.bootstrap.servers`,
+      # `client.quota.callback.static.produce`, and
+      # `client.quota.callback.static.excluded.principal.name.list`
+      # via its forbidden-list (operator WARNs "forbidden and will
+      # be ignored"). Setting only `client.quota.callback.class`
+      # leaves the callback half-configured — broker crashes on
+      # startup with `Missing required configuration
+      # client.quota.callback.static.kafka.admin.bootstrap.servers`.
+      # Forbidden-list lifted only in Strimzi 0.46.x. Until we
+      # adopt 0.46+, quota enforcement lives at the edge (Kong
+      # rate-limit) and per-user via KafkaUser.spec.quotas.
+      # JMX exporter sidecar is the SLI source for the alert rules
+      # shipped with E2.3.
+      jmxPort: 9999
+    # Brokers reject plaintext traffic from outside the mesh. The TLS
+    # listener carries workload identity from Istio mTLS, the PLAINTEXT
+    # listener is reserved for in-mesh sidecars.
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+        authentication:
+          type: tls
+    # NetworkPolicy cho Kafka brokers ship riêng trong file
+    # `templates/components/kafka/network-policy.yaml`. Strimzi
+    # `v1beta2` không hỗ trợ `listeners.configuration.networkPolicyPeers`
+    # (Strimzi tự quản NetworkPolicy khi dùng `type: route` / `loadbalancer`
+    # cho external listener; với internal listener, NetworkPolicy phải
+    # tự viết).
+    authorization:
+      # Per-tenant ACL enforcement — see `KafkaUser` resources in
+      # `platform/kafka/users/`. Domain authorization is **not**
+      # carried in Kafka; the ACL is the runtime guard, the
+      # authorization decision lives in OpenFGA + ABAC at the
+      # service.
+      type: simple
+      superUsers:
+        - CN=genea-kafka-admin
+    storage:
+      type: persistent-claim
+      size: 100Gi
+      class: gp-data-ssd
+      deleteClaim: false
+      # Per-class retention — every topic lands on a separate volume
+      # so a runaway retention policy cannot fill the cluster.
+      volumes:
+        - id: 0
+          type: persistent-claim
+          size: 100Gi
+          class: gp-data-ssd
+          deleteClaim: false
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    # Probes + metrics.
+    readinessProbe:
+      initialDelaySeconds: 15
+      timeoutSeconds: 5
+    livenessProbe:
+      initialDelaySeconds: 15
+      timeoutSeconds: 5
+    jmxOptions:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 200m
+          memory: 512Mi
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: genea-kafka-metrics
+          key: kafka-metrics-config.yml
+  # Zookeeper section intentionally present for Strimzi 0.45.x
+  # schema compatibility. KRaft mode (metadataVersion 3.8) is the
+  # documented path forward in ADR-E0.5-01; Strimzi 0.45 supports
+  # KRaft-only when `metadataVersion` is set explicitly without
+  # `spec.zookeeper`, but we keep the ZK block for safety so the
+  # chart renders cleanly across 0.43 → 0.45 during migration.
+  # Remove after cluster-wide cutover to Strimzi 0.46+ where
+  # KRaft-only schema is validated by default.
+  zookeeper:
+    replicas: 3
+    storage:
+      type: persistent-claim
+      size: 10Gi
+      class: gp-data-ssd
+      deleteClaim: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+  entityOperator:
+    topicOperator:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 200m
+          memory: 512Mi
+    userOperator:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 200m
+          memory: 512Mi
+  cruiseControl:
+    # CruiseControl drives the canary/balanced rebalance used during
+    # version upgrades. Required by Strimzi's rolling-restart logic
+    # when `replicas` is in flux.
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 400m
+        memory: 1Gi

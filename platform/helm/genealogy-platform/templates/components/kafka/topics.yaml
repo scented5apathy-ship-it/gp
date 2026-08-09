@@ -1,0 +1,41 @@
+{{/*
+KafkaTopic resources (E2.3).
+
+Iterates `platform/kafka/topics.yaml` (loaded via `.Files.Get`) and
+emits a `KafkaTopic` CR per entry. The source-of-truth list lives
+at `platform/kafka/topics.yaml` and is mirrored into the chart's
+`files/kafka/topics.yaml` for `helm template` portability.
+
+Per ADR-E0.5-08 the topic list is versioned (outer `v1`) and the
+artifact (inner `v1`) is independent. A schema breaking change
+bumps the artifact version only.
+*/}}
+{{- $kafka := .Values.components.kafka }}
+{{- if $kafka.enabled }}
+{{- $topicsData := $.Files.Get $kafka.topicsPath | fromYaml }}
+{{- range $topicsData.topics }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: {{ .name }}
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kafka
+    gp.genealogy/schema: {{ .schema | quote }}
+    gp.genealogy/owner: {{ .owner | quote }}
+    gp.genealogy/partition-key: {{ .partitionKey | quote }}
+    gp.genealogy/topic-class: {{ .topicClass | quote }}
+  annotations:
+    gp.genealogy/retention-ms: {{ .retentionMs | quote }}
+spec:
+  partitions: {{ .partitions }}
+  replicas: {{ $kafka.replicationFactor }}
+  config:
+    retention.ms: {{ .retentionMs | quote }}
+    cleanup.policy: {{ .cleanupPolicy | quote }}
+    min.insync.replicas: {{ $kafka.minInSyncReplicas | quote }}
+    compression.type: producer
+{{- end }}
+{{- end }}

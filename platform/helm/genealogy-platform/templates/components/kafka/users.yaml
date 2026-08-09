@@ -1,0 +1,53 @@
+{{/*
+KafkaUser resources (E2.3).
+
+Iterates `platform/kafka/users.yaml` and emits a `KafkaUser` CR per
+entry. The broker enforces the `simple` authorizer against these
+rules, but the source of truth for business authorization remains
+OpenFGA + ABAC at the service per `design.md` §4.1.
+
+Per ADR-E0.5-01 / E2.3:
+  - All users authenticate with `tls` (no scram-sha-512, no plaintext
+    in production).
+  - The admin user (`genea-kafka-admin`) is the only one with the
+    super-user flag, set in the Kafka CR; its `acls` list is empty
+    by design.
+  - Service identities only touch their own topics — cross-tenant
+    reads are impossible.
+*/}}
+{{- $kafka := .Values.components.kafka }}
+{{- if $kafka.enabled }}
+{{- $usersData := $.Files.Get $kafka.usersPath | fromYaml }}
+{{- range $usersData.users }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: {{ .name }}
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: kafka
+    gp.genealogy/role: {{ .role | quote }}
+spec:
+  authentication:
+    type: {{ .authType }}
+  {{- if .acls }}
+  authorization:
+    type: simple
+    acls:
+    {{- range .acls }}
+      {{- $resourceType := .resourceType }}
+      {{- $resourceName := .name }}
+      {{- $patternType := .patternType }}
+      {{- range .operations }}
+      - resource:
+          type: {{ $resourceType }}
+          name: {{ $resourceName }}
+          patternType: {{ $patternType }}
+        operation: {{ . }}
+      {{- end }}
+    {{- end }}
+{{- end }}
+  {{- end }}
+{{- end }}

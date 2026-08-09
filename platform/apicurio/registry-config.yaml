@@ -1,0 +1,93 @@
+# Apicurio Schema Registry configuration. E2.3 wires Apicurio
+# Registry as the canonical schema store. Avro is the canonical
+# serializer (ADR-E0.5-08) and compatibility policy is BACKWARD
+# for domain events.
+#
+# Per design.md §7.3 and tasks.md E2.3 the registry
+#   - runs in PostgreSQL storage mode (in-memory forbidden in
+#     production because schema store must survive pod restart)
+#   - declares a single global compatibility level (BACKWARD) plus
+#     per-artifact overrides for the FORWARD / FULL cases spelled
+#     out in ADR-E0.5-08
+#   - exposes the registry API under a non-public ClusterIP service
+#   - cross-namespace access is governed by NetworkPolicy no
+#     in-browser traffic is allowed
+#   - publishes JMX metrics to the OTel Collector and Prometheus
+#     stack for the registry-failure alert (E2.3)
+#
+# The artifact name matrix mirrors the topic list in
+# platform/kafka/topics.yaml. Naming is group/artifact-version
+# (e.g. genea-person-v1).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apicurio-registry-config
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: apicurio
+    gp.genealogy/contract-only: "true"
+data:
+  application.properties: |
+    registry.storage.kind=sql
+    registry.storage.sql.kind=postgresql
+    registry.datasource.url=jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+    registry.datasource.username=${POSTGRES_USER}
+    registry.datasource.password=${POSTGRES_PASSWORD}
+    registry.global.compatibility.level=BACKWARD
+    registry.artifact-types.ordered-group.priority=1
+    registry.artifact-types.ordered-group.order=1
+    registry.artifact-types.ordered-group.enabled=true
+    registry.download.href.relative=true
+    registry.artifact.version.increment-on-existing-content=false
+    registry.apis.confluent.enabled=false
+    registry.apis.legacy.confluent.enabled=false
+    registry.metrics.enabled=true
+    registry.metrics.jmx.enabled=true
+    registry.ui.enabled=true
+  compatibility: |
+    artifacts:
+      - group: genea-person-v1
+        artifact: genea-person-v1
+        type: AVRO
+        compatibility: BACKWARD
+      - group: genea-tree-v1
+        artifact: genea-tree-v1
+        type: AVRO
+        compatibility: BACKWARD
+      - group: genea-relationship-v1
+        artifact: genea-relationship-v1
+        type: AVRO
+        compatibility: BACKWARD
+      - group: genea-media-v1
+        artifact: genea-media-v1
+        type: AVRO
+        compatibility: BACKWARD
+      - group: genea-research-v1
+        artifact: genea-research-v1
+        type: AVRO
+        compatibility: BACKWARD
+      - group: genea-collaboration-v1
+        artifact: genea-collaboration-v1
+        type: AVRO
+        compatibility: BACKWARD
+      - group: genea-notification-v1
+        artifact: genea-notification-v1
+        type: AVRO
+        compatibility: BACKWARD
+      - group: genea-search-rebuild-v1
+        artifact: genea-search-rebuild-v1
+        type: AVRO
+        compatibility: FORWARD
+      - group: genea-public-rebuild-v1
+        artifact: genea-public-rebuild-v1
+        type: AVRO
+        compatibility: FULL
+      - group: genea-audit-v1
+        artifact: genea-audit-v1
+        type: AVRO
+        compatibility: BACKWARD
+      - group: genea-dlq-v1
+        artifact: genea-dlq-v1
+        type: AVRO
+        compatibility: BACKWARD
