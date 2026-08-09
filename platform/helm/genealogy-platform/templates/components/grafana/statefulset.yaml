@@ -1,0 +1,401 @@
+{{/*
+E2.10 observability StatefulSets + Deployments.
+
+Renders 1 OTel Collector Deployment (cluster-singleton, not
+DaemonSet — single ingress via Service), 1 Prometheus
+StatefulSet (replicated), 1 Loki StatefulSet (replicated),
+1 Tempo StatefulSet (replicated), 1 Grafana Deployment.
+*/}}
+{{- $obs := .Values.components.observability }}
+{{- $otel := $obs.otelCollectorConfig }}
+{{- $prom := $obs.prometheusConfig }}
+{{- $loki := $obs.lokiConfig }}
+{{- $tempo := $obs.tempoConfig }}
+{{- $grafana := $obs.grafanaConfig }}
+{{- if $obs.enabled }}
+---
+# OpenTelemetry Collector — singleton Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: genea-otel-collector
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: {{ $otel.replicas | default 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: otel-collector
+      app.kubernetes.io/part-of: genealogy-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: otel-collector
+        gp.genealogy/environment: {{ .Values.global.environment }}
+    spec:
+      serviceAccountName: genea-otel-collector
+      containers:
+        - name: otel-collector
+          image: "{{ $otel.image.repository }}:{{ $otel.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config=/etc/otelcol-contrib/config.yaml"
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 4318
+              name: otlp-http
+            - containerPort: 4319
+              name: otlp-audit
+            - containerPort: 9464
+              name: prometheus-exporter
+            - containerPort: 13133
+              name: health
+            - containerPort: 8888
+              name: telemetry
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_RESOURCE_ATTRIBUTES_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_RESOURCE_ATTRIBUTES_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol-contrib
+            - name: auth-tokens
+              mountPath: /etc/otelcol-contrib/auth
+              readOnly: true
+          resources:
+            requests:
+              cpu: {{ $otel.resources.requests.cpu | default "200m" }}
+              memory: {{ $otel.resources.requests.memory | default "512Mi" }}
+            limits:
+              cpu: {{ $otel.resources.limits.cpu | default "1" }}
+              memory: {{ $otel.resources.limits.memory | default "1Gi" }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+      volumes:
+        - name: config
+          configMap:
+            name: genea-otel-collector-config
+        - name: auth-tokens
+          projected:
+            sources:
+              - secret:
+                  name: genea-otel-collector-bearertoken
+                  items:
+                    - key: token
+                      path: tokens
+---
+# Prometheus — StatefulSet (replicated).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: genea-prometheus
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: prometheus
+spec:
+  serviceName: genea-prometheus
+  replicas: {{ $prom.replicas | default 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: prometheus
+      app.kubernetes.io/part-of: genealogy-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: prometheus
+        gp.genealogy/scrape: "true"
+        gp.genealogy/environment: {{ .Values.global.environment }}
+    spec:
+      serviceAccountName: genea-prometheus
+      containers:
+        - name: prometheus
+          image: "{{ $prom.image.repository }}:{{ $prom.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config.file=/etc/prometheus/config/config.yaml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time={{ $obs.retention.prometheus | default "30d" }}"
+            - "--web.enable-lifecycle"
+            - "--web.external-url=https://prometheus.genealogy.local"
+          ports:
+            - containerPort: 9090
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/config
+            - name: storage
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: {{ $prom.resources.requests.cpu | default "250m" }}
+              memory: {{ $prom.resources.requests.memory | default "1Gi" }}
+            limits:
+              cpu: {{ $prom.resources.limits.cpu | default "2" }}
+              memory: {{ $prom.resources.limits.memory | default "4Gi" }}
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+      volumes:
+        - name: config
+          configMap:
+            name: genea-prometheus-config
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.baseline.storage.defaultClass | default "gp-data-ssd" }}
+        resources:
+          requests:
+            storage: {{ $prom.storage.size | default "50Gi" }}
+---
+# Loki — single-node StatefulSet (dev) / replicated StatefulSet (saas, on-prem).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: genea-loki
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: loki
+spec:
+  serviceName: genea-loki
+  replicas: {{ $loki.replicas | default 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: loki
+      app.kubernetes.io/part-of: genealogy-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: loki
+        gp.genealogy/environment: {{ .Values.global.environment }}
+    spec:
+      serviceAccountName: genea-loki
+      containers:
+        - name: loki
+          image: "{{ $loki.image.repository }}:{{ $loki.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-config.file=/etc/loki/config/config.yaml"
+          ports:
+            - containerPort: 3100
+              name: http
+            - containerPort: 9096
+              name: grpc
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki/config
+            - name: storage
+              mountPath: /var/loki
+          resources:
+            requests:
+              cpu: {{ $loki.resources.requests.cpu | default "250m" }}
+              memory: {{ $loki.resources.requests.memory | default "1Gi" }}
+            limits:
+              cpu: {{ $loki.resources.limits.cpu | default "2" }}
+              memory: {{ $loki.resources.limits.memory | default "4Gi" }}
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 3100
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3100
+      volumes:
+        - name: config
+          configMap:
+            name: genea-loki-config
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.baseline.storage.defaultClass | default "gp-data-ssd" }}
+        resources:
+          requests:
+            storage: {{ $loki.storage.size | default "50Gi" }}
+---
+# Tempo — single-node StatefulSet.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: genea-tempo
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: tempo
+spec:
+  serviceName: genea-tempo
+  replicas: {{ $tempo.replicas | default 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: tempo
+      app.kubernetes.io/part-of: genealogy-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: tempo
+        gp.genealogy/environment: {{ .Values.global.environment }}
+    spec:
+      serviceAccountName: genea-tempo
+      containers:
+        - name: tempo
+          image: "{{ $tempo.image.repository }}:{{ $tempo.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-config.file=/etc/tempo/config/config.yaml"
+            - "-storage.trace.block.retention={{ $obs.retention.tempo | default "720h" }}"
+          ports:
+            - containerPort: 3200
+              name: http
+            - containerPort: 9095
+              name: grpc
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 4318
+              name: otlp-http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo/config
+            - name: storage
+              mountPath: /var/tempo
+          resources:
+            requests:
+              cpu: {{ $tempo.resources.requests.cpu | default "250m" }}
+              memory: {{ $tempo.resources.requests.memory | default "1Gi" }}
+            limits:
+              cpu: {{ $tempo.resources.limits.cpu | default "2" }}
+              memory: {{ $tempo.resources.limits.memory | default "4Gi" }}
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 3200
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3200
+      volumes:
+        - name: config
+          configMap:
+            name: genea-tempo-config
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.baseline.storage.defaultClass | default "gp-data-ssd" }}
+        resources:
+          requests:
+            storage: {{ $tempo.storage.size | default "50Gi" }}
+---
+# Grafana — Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: genea-grafana
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: grafana
+spec:
+  replicas: {{ $grafana.replicas | default 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: grafana
+      app.kubernetes.io/part-of: genealogy-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: grafana
+        gp.genealogy/environment: {{ .Values.global.environment }}
+    spec:
+      serviceAccountName: genea-grafana
+      containers:
+        - name: grafana
+          image: "{{ $grafana.image.repository }}:{{ $grafana.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_USER__FILE
+              value: /etc/grafana/secrets/admin-user
+            - name: GF_SECURITY_ADMIN_PASSWORD__FILE
+              value: /etc/grafana/secrets/admin-password
+            - name: GF_AUTH_KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: genea-grafana-keycloak-client-secret
+                  key: client-secret
+          volumeMounts:
+            - name: config
+              mountPath: /etc/grafana
+            - name: dashboards
+              mountPath: /etc/grafana/dashboards
+            - name: secrets
+              mountPath: /etc/grafana/secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: {{ $grafana.resources.requests.cpu | default "100m" }}
+              memory: {{ $grafana.resources.requests.memory | default "256Mi" }}
+            limits:
+              cpu: {{ $grafana.resources.limits.cpu | default "500m" }}
+              memory: {{ $grafana.resources.limits.memory | default "512Mi" }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+      volumes:
+        - name: config
+          configMap:
+            name: genea-grafana-config
+        - name: dashboards
+          configMap:
+            name: genea-grafana-dashboards
+        - name: secrets
+          projected:
+            sources:
+              - secret:
+                  name: genea-grafana-admin
+                  items:
+                    - key: user
+                      path: admin-user
+                    - key: password
+                      path: admin-password
+{{- end }}

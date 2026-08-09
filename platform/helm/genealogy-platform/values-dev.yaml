@@ -158,7 +158,60 @@ components:
     sdkSafeDefault: true
   observability:
     # Local stack keeps one replica each and a 7-day retention so
-    # the dev VM doesn't run out of disk.
+    # the dev VM doesn't run out of disk. The deep linter still
+    # asserts the source-of-truth files are present in
+    # `platform/grafana/`.
+    otelCollectorConfig:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    prometheusConfig:
+      replicas: 1
+      storage:
+        size: 10Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    lokiConfig:
+      replicas: 1
+      storage:
+        size: 10Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    tempoConfig:
+      replicas: 1
+      storage:
+        size: 10Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    grafanaConfig:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
     retention:
       prometheus: 7d
       loki: 7d

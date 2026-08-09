@@ -126,10 +126,35 @@ components:
       enabled: true
       resyncSeconds: 180
   observability:
+    # E2.10 — SaaS runs the full observability stack on the
+    # production cluster. 90-day Prometheus + Loki retention
+    # for audit / compliance. Tempo S3 backend via cross-region
+    # bucket `genea-tempo-blocks`.
+    otelCollectorConfig:
+      replicas: 3
+    prometheusConfig:
+      replicas: 3
+      storage:
+        size: 250Gi
+    lokiConfig:
+      replicas: 3
+      storage:
+        size: 250Gi
+    tempoConfig:
+      replicas: 3
+      storage:
+        size: 250Gi
+    grafanaConfig:
+      replicas: 3
     retention:
       prometheus: 90d
       loki: 90d
       tempo: 30d
+    secretRefs:
+      clusterSecretStore: vault-backend
+      grafanaAdminVaultPath: secret/saas/data/grafana/admin
+      grafanaKeycloakClientVaultPath: secret/saas/data/keycloak/grafana-client
+      otelBearerVaultPath: secret/saas/data/otel-collector/bearertoken
 
 # SaaS Istio profile (E2.5). Production posture; same
 # source-of-truth files as on-prem. The trust domain follows

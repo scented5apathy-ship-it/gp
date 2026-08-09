@@ -1,0 +1,138 @@
+# platform/grafana/grafana.yaml
+#
+# E2.10 — Grafana source-of-truth (config-as-code).
+#
+# Per `tasks.md` E2.10 ("Dashboard cho Kong, Kafka, Temporal,
+# OpenFGA, Istio, Vault, database và workloads") + NFR1
+# ("access control + audit cho mọi dashboard view") + ADR-E0.5-01
+# (Grafana latest stable), Grafana renders the platform
+# dashboards via the `dashboards-configmap` sidecar pattern
+# (provisioned from `platform/grafana/dashboards.yaml` +
+# `grafana/dashboards/*.json`) and ships the **3 mandatory
+# datasources**: Prometheus, Loki, Tempo.
+#
+# Auth posture (NFR1):
+#   - Anonymous access is FORBIDDEN;
+#   - Keycloak OIDC SSO for human operators (`platform-` realm,
+#     role `platform-admin` / `sre` / `appsec` / `data`);
+#   - Two-factor authentication ENFORCED via the Keycloak
+#     `conditional-2fa` flow (no bypass);
+#   - Service accounts (`grafana-service-account`) carry
+#     `actor_pseudo_id` only — never raw email;
+#   - Session timeout 60 minutes;
+#   - Every dashboard view publishes a `dashboard_viewed` event
+#     to OTel Collector (audit pipeline → Loki + Tempo).
+#
+# The deep linter (`scripts/lint-grafana-config.mjs`) enforces:
+#   - 3 mandatory datasources (prometheus, loki, tempo);
+#   - Keycloak OIDC SSO enabled; anonymous access FORBIDDEN;
+#   - 2FA conditional flow required;
+#   - audit sink = OTel Collector OTLP endpoint
+#     (gp-observability:4318/v1/audit);
+#   - 3 admin roles (platform-admin, sre, appsec) — never
+#     raw `email` / `oidc_subject` as role identity;
+#   - dashboard viewer logs `actor_pseudo_id` only;
+#   - admin password sourced from ESO-managed `grafana-admin`
+#     Secret (NEVER literal in repo);
+#   - no literal secret / token / password in any file.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-grafana-config
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: grafana
+    gp.genealogy/contract-only: "true"
+data:
+  config.ini: |
+    # Grafana configuration (E2.10 source-of-truth).
+    # The chart renders the Grafana Deployment whenever
+    # `components.observability.grafana: enabled`. Auth =
+    # Keycloak OIDC SSO; anonymous access FORBIDDEN.
+    app_mode: production
+    instance_name: genealogy-platform-grafana
+    [server]
+    http_port: 3000
+    domain: grafana.gp-observability.svc.cluster.local
+    root_url: https://grafana.genealogy.local
+    serve_from_sub_path: false
+    enable_gzip: true
+    [security]
+    admin_user: REPLACE_VIA_ESO
+    # E2.10 §6 — admin password sourced from ESO-managed
+    # `grafana-admin` Secret. The literal NEVER lives in
+    # this repo.
+    admin_password: REPLACE_VIA_ESO
+    secret_key: REPLACE_VIA_ESO
+    cookie_secure: true
+    cookie_samesite: strict
+    strict_transport_security: true
+    strict_transport_security_max_age_seconds: 31536000
+    strict_transport_security_preload: true
+    content_security_policy: true
+    content_security_policy_report_only: false
+    [users]
+    allow_sign_up: false
+    allow_org_create: false
+    auto_assign_org: false
+    auto_assign_org_role: Viewer
+    verify_email_enabled: true
+    login_hint: grafana
+    password_hint: password
+    default_theme: dark
+    [auth]
+    # E2.10 §6 — anonymous access is FORBIDDEN. Keycloak OIDC
+    # SSO is the sole identity provider.
+    anonymous_enabled: false
+    anonymous_org_name: ""
+    anonymous_org_role: Viewer
+    disable_login_form: true
+    disable_signout_menu: false
+    oauth_auto_login: false
+    api_key_max_seconds_to_live: 3600
+    sigv4_session_life_cycles: 60
+    [auth.generic_oauth]
+    enabled: false
+    [auth.keycloak]
+    enabled: true
+    name: Keycloak
+    icon: signin
+    client_id: grafana
+    # E2.10 §6 — client secret sourced from ESO-managed
+    # `grafana-keycloak-client-secret`. NEVER literal.
+    client_secret: REPLACE_VIA_ESO
+    scopes: openid profile email groups
+    auth_url: https://keycloak.gp-platform.svc.cluster.local/realms/genealogy/protocol/openid-connect/auth
+    token_url: https://keycloak.gp-platform.svc.cluster.local/realms/genealogy/protocol/openid-connect/token
+    api_url: https://keycloak.gp-platform.svc.cluster.local/realms/genealogy/protocol/openid-connect/userinfo
+    allow_sign_up: false
+    auto_login: false
+    role_attribute_path: contains(groups, 'platform-admin') && 'Admin' || contains(groups, 'sre') && 'Editor' || contains(groups, 'appsec') && 'Editor' || contains(groups, 'data') && 'Editor' || 'Viewer'
+    groups_attribute_path: groups
+    [dataproxy]
+    timeout: 30
+    [analytics]
+    reporting_enabled: false
+    check_for_updates: false
+    [dashboards]
+    # E2.10 §6 — dashboard sidecar ships the catalogue from
+    # `platform/grafana/dashboards.yaml` (mounted as
+    # `/etc/grafana/dashboards/catalogue.yaml`) and the
+    # dashboard JSONs from `grafana/dashboards/*.json`.
+    versions_to_keep: 20
+    [plugins]
+    enable_alpha: false
+    allow_loading_unsigned_plugins: ""
+    plugin_admin_enabled: true
+    [unified_alerting]
+    enabled: true
+    admin_config_poll_interval: 60s
+    alertmanager_config_poll_interval: 60s
+    ha_listen_address: "0.0.0.0:9095"
+    [log]
+    mode: console
+    level: info
+    [log.console]
+    format: json

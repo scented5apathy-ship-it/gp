@@ -48,7 +48,7 @@
 > - [x] **E2.7** S3/MinIO + Valkey
 > - [x] **E2.8** Flagsmith / OpenFeature
 > - [x] **E2.9** Argo CD / Rollouts
-> - [ ] **E2.10** Grafana OSS stack (OTel Collector + Prometheus + Loki + Tempo + Grafana)
+ > - [x] **E2.10** Grafana OSS stack (OTel Collector + Prometheus + Loki + Tempo + Grafana)
 
 ## 0. Cleanup / Uninstall (chạy TRƯỚC khi cài mới)
 
@@ -1406,13 +1406,93 @@ override procedure + backup / restore + on-call escalation).
 
 ### 4.9 E2.10 Grafana OSS stack (OTel + Prometheus + Loki + Tempo + Grafana)
 
-**Trạng thái**: 🚧 planned. Chart đã có block
-`components.observability` (otelCollector/prometheus/loki/tempo/grafana
+**Trạng thái**: ✅ shipped. Chart đã có block
+`components.observability` (otelCollector + prometheus + loki
++ tempo + grafana + retention); umbrella chart render 1 OTel
+Collector Deployment + 4 StatefulSets (Prometheus / Loki /
+Tempo / Grafana-sidecar) + 3 ESO-managed Secrets
+(`grafana-admin`, `otel-collector-bearertoken`,
+`grafana-keycloak-client-secret`) + 5 NetworkPolicies
+(default-deny + control-plane allow).
 
-- retention).
+**Helm** (`platform/helm/genealogy-platform/templates/components/grafana/`):
 
-**Sẽ có**: OTel Collector + Prometheus operator + Loki + Tempo +
-Grafana với dashboards. Hiện tại chưa ship — theo dõi `tasks.md` E2.10.
+- `configmap.yaml` — mirror 6 source-of-truth ConfigMaps
+  (`otel-collector`, `prometheus`, `loki`, `tempo`, `dashboards`,
+  `grafana`) byte-identical với
+  `platform/grafana/*.yaml`.
+- `secrets.yaml` — 3 ESO-managed Secrets, giá trị là
+  `REPLACE_VIA_ESO` placeholder; ESO resolve từ Vault
+  path `secret/<env>/data/{grafana/admin,otel-collector/bearertoken,keycloak/grafana-client}`.
+- `serviceaccounts.yaml` — 5 SA trong `gp-observability`
+  (otel-collector / prometheus / loki / tempo / grafana).
+- `services.yaml` — 5 Services expose đúng cổng theo ADR
+  (otlp-grpc 4317 / otlp-http 4318 / otlp-audit 4319 /
+  prometheus-exporter 9464 / loki 3100 / tempo 3200 / grafana 3000).
+- `statefulset.yaml` — OTel Collector (Deployment, 2 replicas) +
+  Prometheus / Loki / Tempo (StatefulSet, 2 replicas) +
+  Grafana (Deployment, 2 replicas); volumeClaimTemplates cho
+  Prometheus / Loki / Tempo với `gp-data-ssd` StorageClass.
+- `network-policies.yaml` — default-deny + control-plane
+  allow (gp-edge / gp-bff / gp-services / gp-workers /
+  gp-argocd / gp-platform / gp-data / gp-observability).
+
+**Source-of-truth** (`platform/grafana/`):
+
+- `otel-collector.yaml` — pipeline `otlp/grpc` + `otlp/http`
+  + `prometheus` + `otlp/audit` → 9 mandatory processors
+  (memory_limiter / resourcedetection / k8sattributes /
+  `attributes/tenant-pseudonym` / transform / redaction /
+  `filter/logs` / batch / `resource/audit`) → 5 exporters
+  (prometheus / loki / tempo / `otlp/audit` / `debug/dev-only`).
+  Redaction regex: SSN / passport / driver-license / email /
+  phone / ipv4 / JWT / `raw-dna-marker` / Authorization header
+  (9 rules). `tenant_pseudo_id` / `user_pseudo_id` /
+  `actor_pseudo_id` chỉ — raw `tenant_id` / `user_id` /
+  `email` / `oidc_subject` / `raw_dna` / `raw_pii` bị cấm ở
+  mọi exporter boundary.
+- `prometheus.yaml` — 6 scrape jobs (otel-collector-self /
+  services / workers / platform / audit + self) + 9 recording
+  rules (`red_rate_api` / `red_errors_api` / `kong_latency` /
+  `kong_status` / `consumer_lag` / `outbox_age` /
+  `workflow_failure` / `dq_size` / `redaction_coverage`) + 4
+  SLO burn-rate alerts (`api-availability` / `canary-success`
+  / `consumer-lag` / `pii-redaction-coverage`).
+- `loki.yaml` — schema `v13` + boltdb-shipper + 6 mandatory
+  stream labels + 4 deny_labels + retention ≥ 720h + compactor
+  retention_enabled.
+- `tempo.yaml` — OTLP receiver + 5 generators
+  (service-graphs / span-metrics / local-blocks /
+  search-queries / audit-events) + search_tags (allow +
+  deny) + `block_retention` ≥ 720h.
+- `dashboards.yaml` — 9 mandatory dashboards (api-overview /
+  kong / kafka / temporal / openfga / istio / vault / database
+  / workload) + `templateVariablesForbidden` + `auditFields`
+  (`actor_pseudo_id` only).
+- `grafana.yaml` — Keycloak OIDC SSO + anonymous access
+  FORBIDDEN + admin password / client secret sourced từ ESO
+  (`REPLACE_VIA_ESO`) + audit fields `actor_pseudo_id` only.
+
+**Retention** (per-env, §values-{dev,onprem,saas}.yaml):
+
+| Env     | Prometheus | Loki | Tempo |
+| ------- | ---------- | ---- | ----- |
+| dev     | 7d         | 7d   | 3d    |
+| onprem  | 30d        | 30d  | 14d   |
+| saas    | 90d        | 90d  | 30d   |
+
+**Validation**:
+
+```bash
+pnpm lint:grafana           # E2.10 deep validator
+pnpm smoke:grafana          # E2.10 structural smoke
+pnpm check:platform:baseline # E2.10 invariants (image pins + alert rules)
+```
+
+Kỳ vọng: `lint:grafana` clean với
+`receivers=4, processors=9, exporters=5, redaction-rules=9, recording-rules=9, slo-alerts=4, dashboards=9`; `smoke:grafana` 36/36 PASS.
+
+**Runbook**: `runbook/observability.md`.
 
 ## 5. Verify toàn bộ platform
 
@@ -1432,9 +1512,10 @@ pnpm lint:s3
 pnpm check:s3:compat
 pnpm lint:flagsmith
 pnpm lint:argo
+pnpm lint:grafana
 pnpm check:platform:baseline
 pnpm test:scripts
-# Kỳ vọng: tất cả clean, 75/75 tests pass (68 cũ + 7 E2.9)
+# Kỳ vọng: tất cả clean, 84/84 tests pass (75 cũ + 9 E2.10)
 
 # 2. Helm render check (xác nhận chart không lỗi)
 docker run --rm -v "${PWD}:/src:ro" -w /src alpine/helm:3.16.3 \
@@ -1450,6 +1531,7 @@ pnpm smoke:vault         # E2.6
 pnpm smoke:s3            # E2.7
 pnpm smoke:flagsmith     # E2.8
 pnpm smoke:argo          # E2.9
+pnpm smoke:grafana       # E2.10
 # Kỳ vọng: tất cả PASS
 
 # 4. Resource counts per environment
@@ -1654,15 +1736,20 @@ kubectl -n gp-data run temporal-tctl --rm -it --restart=Never \
 - `.kiro/specs/genealogy-platform/evidence/E2.4.md`
 - `.kiro/specs/genealogy-platform/evidence/E2.5.md`
 - `.kiro/specs/genealogy-platform/evidence/E2.6.md`
+- `.kiro/specs/genealogy-platform/evidence/E2.9.md`
+- `.kiro/specs/genealogy-platform/evidence/E2.10.md`
 - `runbook/temporal.md` — operator runbook cho Temporal.
 - `runbook/istio.md` — operator runbook cho Istio service mesh.
 - `runbook/vault.md` — operator runbook cho Vault + cloud KMS.
+- `runbook/argo.md` — operator runbook cho Argo CD + Rollouts.
+- `runbook/observability.md` — operator runbook cho Grafana OSS stack.
 
 ### 10.3 Source-of-truth trong repo
 
 - `platform/helm/genealogy-platform/` — umbrella chart.
 - `platform/kong/` + `platform/kafka/` + `platform/apicurio/` +
-  `platform/temporal/` + `platform/istio/` + `platform/vault/` —
+  `platform/temporal/` + `platform/istio/` + `platform/vault/` +
+  `platform/argo/` + `platform/grafana/` —
   config-as-code cho từng thành phần.
 - `platform/observability/alerts/` — PrometheusRule.
 - `scripts/lint-*.mjs` + `scripts/check-*.mjs` + `scripts/smoke-*.mjs` —

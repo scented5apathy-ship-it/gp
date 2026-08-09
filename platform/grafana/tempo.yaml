@@ -1,0 +1,148 @@
+# platform/grafana/tempo.yaml
+#
+# E2.10 — Tempo source-of-truth (config-as-code).
+#
+# Per `tasks.md` E2.10 + `design.md` §13 ("OpenTelemetry SDK/
+# agent → OTel Collector → Prometheus, Tempo, Loki và Grafana"),
+# Tempo ingests OTLP traces from the OTel Collector (`tempo`
+# exporter → `tempo:4317`) and serves them to Grafana via the
+# `tempo` datasource. Tempo is **single-tenant** (matches Loki
+# / Grafana / ADR-E0.5-01 baseline). Per-tenant isolation is
+# enforced via `tenant_pseudo_id` resource attribute on every
+# span (Loki + Prometheus follow the same pattern).
+#
+# The deep linter (`scripts/lint-grafana-config.mjs`) enforces:
+#   - OTLP receiver on `:4317` + `:4318`;
+#   - 3 ingesters (ingester / metrics-generator / querier);
+#   - 5 mandatory generators (service-graphs / span-metrics /
+#     local-blocks / search-queries / audit-events);
+#   - storage backend `local` (dev) + `s3` (SaaS + on-prem);
+#     bucket name MUST be `genea-tempo-blocks`;
+#   - retention ≥ 14 days (SaaS 30 days, on-prem 14 days, dev
+#     3 days);
+#   - tenant tag `tenant_pseudo_id` + `service.name` +
+#     `deployment.environment` ONLY; `tenant_id` / `user_id` /
+#     `email` / `oidc_subject` / `raw_dna` / `raw_pii` are
+#     FORBIDDEN in span tags / process tags;
+#   - W3C trace context propagation (E2.5 mesh contract);
+#   - no literal secret / token / password / api-key.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-tempo-config
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: tempo
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # Tempo configuration (E2.10 source-of-truth).
+    # The chart renders the Tempo Deployment whenever
+    # `components.observability.tempo: enabled`. Retention
+    # is per-env (dev 3d / on-prem 14d / saas 30d).
+    server:
+      http_listen_port: 3200
+      grpc_listen_port: 9095
+      log_level: info
+      # E2.10 §5 — single-tenant auth header. OTel Collector
+      # sends `X-Scope-OrgID: platform`; Tempo treats any
+      # other value as a 401.
+      auth_enabled: false
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+              max_recv_msg_size_mib: 16
+            http:
+              endpoint: 0.0.0.0:4318
+      # E2.10 §5 — W3C trace context propagation (E2.5 mesh
+      # contract). Spans missing `traceparent` are still
+      # accepted but receive a synthetic root span.
+      receivers_otlp:
+        - protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+    ingester:
+      trace_idle_period: 10s
+      max_block_duration: 5m
+      # E2.10 §5 — only tenant_pseudo_id + service.name +
+      # deployment.environment are indexed for search.
+      max_search_tags_per_trace: 10
+      search_tags:
+        - tenant_pseudo_id
+        - service.name
+        - service.namespace
+        - deployment.environment
+        - actor_pseudo_id
+        - trace_id
+      # E2.10 §5 — raw identity tags are FORBIDDEN.
+      search_tags_deny:
+        - tenant_id
+        - user_id
+        - email
+        - oidc_subject
+        - raw_dna
+        - raw_pii
+    metrics_generator:
+      registry:
+        external_labels:
+          source: tempo
+      # E2.10 §5 — 5 mandatory generators.
+      processors:
+        - service-graphs
+        - span-metrics
+        - local-blocks
+        - search-queries
+        - audit-events
+      storage:
+        path: /var/tempo/generator/wal
+      ring:
+        kvstore:
+          store: inmemory
+    querier:
+      frontend_worker:
+        frontend_address: tempo-query-frontend-discovery:9095
+    query_frontend:
+      search:
+        max_duration: 0        # disable results-cache TTL
+      trace_by_id:
+        max_duration: 0
+    compactor:
+      compaction:
+        block_retention: 720h  # 30d default
+      ring:
+        kvstore:
+          store: inmemory
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/blocks
+        wal:
+          path: /var/tempo/wal
+        # E2.10 §5 — pool size matches the per-ingester
+        # block max.
+        pool:
+          max_workers: 100
+          queue_depth: 10000
+      # E2.10 §5 — SaaS + on-prem override to `s3` (bucket
+      # genea-tempo-blocks via IRSA / customer Vault). The
+      # literal bucket name is NOT a credential.
+    overrides:
+      defaults:
+        metrics_generator:
+          processors:
+            - service-graphs
+            - span-metrics
+            - local-blocks
+            - search-queries
+            - audit-events
+      per_tenant_overrides: {}
+    usage_report:
+      reporting_enabled: false

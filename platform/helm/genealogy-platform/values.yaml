@@ -1077,15 +1077,142 @@ components:
         memory: 512Mi
   observability:
     # OTel Collector + Prometheus + Loki + Tempo + Grafana (E2.10).
-    otelCollector: enabled
-    prometheus: enabled
-    loki: enabled
-    tempo: enabled
-    grafana: enabled
+    # Per `tasks.md` E2.10 + `design.md` §13 + NFR1/NFR3/NFR4
+    # the chart renders the observability stack whenever this
+    # block is present. The five source-of-truth files
+    # (`platform/grafana/*.yaml`) are mirrored into
+    # `files/grafana/`. The deep linter
+    # (`scripts/lint-grafana-config.mjs`) enforces:
+    #   - otel-collector.yaml declares 4 receivers
+    #     (otlp-grpc + otlp-http + prometheus + otlp-audit),
+    #     9 mandatory processors in the documented order
+    #     (memory_limiter / resourcedetection / k8sattributes /
+    #     attributes-tenant-pseudonym / transform / redaction /
+    #     filter-logs / batch / resource-audit),
+    #     5 mandatory exporters (prometheus / loki / tempo /
+    #     otlp-audit / debug-dev-only);
+    #   - redaction regex covers SSN / passport / driver-license /
+    #     email / phone / ipv4 / JWT / raw DNA marker pattern /
+    #     Authorization header;
+    #   - prometheus.yaml declares 6 scrape jobs (otel-collector /
+    #     services / workers / platform / self / audit) + 9
+    #     recording rules + 4 SLO burn-rate alerts;
+    #   - loki.yaml declares 6 mandatory stream labels
+    #     (service.name / service.namespace / deployment.environment
+    #     / tenant_pseudo_id / actor_pseudo_id / trace_id) +
+    #     4 deny_labels (email / oidc_subject / raw_dna /
+    #     raw_pii);
+    #   - tempo.yaml declares OTLP receiver + 5 generators +
+    #     search_tags allow/deny + retention block_retention;
+    #   - dashboards.yaml declares the 9 mandatory dashboards
+    #     (api-overview / kong / kafka / temporal / openfga /
+    #     istio / vault / database / workload) with template
+    #     variables using `tenant_pseudo_id` only;
+    #   - grafana.yaml declares Keycloak OIDC SSO + 2FA + audit
+    #     fields = `actor_pseudo_id` only;
+    #   - resource attributes use `tenant_pseudo_id` /
+    #     `user_pseudo_id` / `actor_pseudo_id` — raw
+    #     `tenant_id` / `user_id` / `email` / `oidc_subject` /
+    #     `raw_dna` / `raw_pii` are FORBIDDEN at every
+    #     exporter boundary;
+    #   - no literal secret / token / password / api-key /
+    #     pepper / jwt in any values file;
+    #   - retention ≥ 30 days Prometheus / Loki + ≥ 14 days
+    #     Tempo on production.
+    enabled: true
+    # Image pin — ADR-E0.5-01 baseline.
+    otelCollectorConfig:
+      image:
+        repository: otel/opentelemetry-collector-contrib
+        tag: "0.110.0"
+        registry: docker.io
+      replicas: 2
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+    prometheusConfig:
+      image:
+        repository: prom/prometheus
+        tag: v2.55.0
+        registry: docker.io
+      replicas: 2
+      storage:
+        size: 50Gi
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 4Gi
+    lokiConfig:
+      image:
+        repository: grafana/loki
+        tag: 3.4.0
+        registry: docker.io
+      replicas: 2
+      storage:
+        size: 50Gi
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 4Gi
+    tempoConfig:
+      image:
+        repository: grafana/tempo
+        tag: 2.7.0
+        registry: docker.io
+      replicas: 2
+      storage:
+        size: 50Gi
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 4Gi
+    grafanaConfig:
+      image:
+        repository: grafana/grafana
+        tag: 11.3.0
+        registry: docker.io
+      replicas: 2
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    # Retention — per-env override in values-{dev,onprem,saas}.yaml.
     retention:
       prometheus: 30d
       loki: 30d
       tempo: 14d
+    # Source-of-truth list of ConfigMaps mirrored from
+    # `platform/grafana/`. The chart mounts them into the
+    # StatefulSets / Deployments.
+    configPaths:
+      otelCollector: grafana/otel-collector.yaml
+      prometheus: grafana/prometheus.yaml
+      loki: grafana/loki.yaml
+      tempo: grafana/tempo.yaml
+      dashboards: grafana/dashboards.yaml
+      grafana: grafana/grafana.yaml
+    # External Secrets references — NEVER literal credentials.
+    secretRefs:
+      clusterSecretStore: vault-backend
+      grafanaAdminVaultPath: secret/dev/data/grafana/admin
+      grafanaKeycloakClientVaultPath: secret/dev/data/keycloak/grafana-client
+      otelBearerVaultPath: secret/dev/data/otel-collector/bearertoken
 
 # Backups (Per design §13). The `scripts/check-platform-baseline.mjs`
 # helper requires a CronJob manifest in this section for every

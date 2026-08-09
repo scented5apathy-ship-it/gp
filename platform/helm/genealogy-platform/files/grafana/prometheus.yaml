@@ -1,0 +1,210 @@
+# platform/grafana/prometheus.yaml
+#
+# E2.10 — Prometheus source-of-truth (config-as-code).
+#
+# Per `tasks.md` E2.10 ("Dashboard cho Kong, Kafka, Temporal,
+# OpenFGA, Istio, Vault, database và workloads") + `design.md`
+# §13 ("RED metrics cho API; Kong latency/status, Temporal
+# workflow failure, OpenFGA latency, consumer lag, outbox age,
+# DLQ size, media job và projection freshness") + NFR4
+# ("Service SHALL stateless khi có thể và scale ngang"), the
+# Prometheus instance scrapes:
+#
+#   1. The OTel Collector Prometheus exporter (`:9464`).
+#   2. Per-namespace ServiceMonitors (auto-discovered via
+#      `gp.genealogy/scrape: "true"` label selector on
+#      ServiceMonitor CRD).
+#   3. PodMonitor for the 11 services + 5 workers + Kong /
+#      Flagsmith / Vault / Argo Rollouts / Apicurio / Temporal /
+#      Istio control plane / Loki / Tempo / Grafana self.
+#   4. Recording rules for SLO burn-rate alerting.
+#   5. Remote-write to managed Prometheus (SaaS) or local
+#      Thanos sidecar (on-prem).
+#
+# The deep linter (`scripts/lint-grafana-config.mjs`) enforces:
+#   - 6 scrape jobs declared (otel-collector, services,
+#     workers, platform, self, audit);
+#   - 9 mandatory recording rules (RED + queue + workflow);
+#   - 4 SLO burn-rate alerts (api-availability, canary-success,
+#     consumer-lag, pii-redaction-coverage);
+#   - retention ≥ 30 days (SaaS 90 days, on-prem 30 days, dev
+#     7 days);
+#   - cardinality cap (≤ 50 labels per series, ≤ 10 active
+#     series per service);
+#   - service / version / environment / tenant_pseudo_id only;
+#     `tenant_id` / `user_id` / `email` / `oidc_subject` /
+#     `raw_dna` / `raw_pii` labels FORBIDDEN;
+#   - no literal secret / token / password / api-key.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-prometheus-config
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: prometheus
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # Prometheus configuration (E2.10 source-of-truth).
+    # The chart renders the Prometheus StatefulSet whenever
+    # `components.observability.prometheus: enabled`. Retention
+    # is per-env (dev 7d / on-prem 30d / saas 90d).
+    global:
+      scrape_interval: 30s
+      scrape_timeout: 10s
+      evaluation_interval: 30s
+      external_labels:
+        cluster: genealogy-platform
+        environment: dev
+        region: ap-southeast-1
+    rule_files:
+      - /etc/prometheus/rules/*.yaml
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager.gp-observability.svc.cluster.local:9093
+    scrape_configs:
+      - job_name: otel-collector-self
+        scrape_interval: 15s
+        static_configs:
+          - targets:
+              - otel-collector.gp-observability.svc.cluster.local:9464
+      - job_name: services
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - gp-edge
+                - gp-bff
+                - gp-services
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_gp_genealogy_scrape]
+            regex: "true"
+            action: keep
+          - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_component]
+            target_label: service.name
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: service.namespace
+          - source_labels: [__meta_kubernetes_pod_label_gp_genealogy_environment]
+            target_label: deployment.environment
+      - job_name: workers
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - gp-workers
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_gp_genealogy_scrape]
+            regex: "true"
+            action: keep
+          - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_component]
+            target_label: service.name
+      - job_name: platform
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - gp-platform
+                - gp-data
+                - gp-argocd
+                - gp-observability
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_gp_genealogy_scrape]
+            regex: "true"
+            action: keep
+          - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_component]
+            target_label: service.name
+      - job_name: audit
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - gp-observability
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_gp_genealogy_audit_scrape]
+            regex: "true"
+            action: keep
+    recording_rules:
+      file: /etc/prometheus/rules/recording.yaml
+      rules:
+        # 9 mandatory recording rules per E2.10 §3.
+        - name: red_rate_api
+          metric: genea:api_request_duration_seconds:rate5m
+          expr: sum by (service.name, route) (rate(http_server_request_duration_seconds_count[5m]))
+        - name: red_errors_api
+          metric: genea:api_request_errors:rate5m
+          expr: sum by (service.name, route, status_class) (rate(http_server_request_duration_seconds_count{status_class=~"5.."}[5m]))
+        - name: kong_latency
+          metric: genea:kong_request_duration_seconds:p99
+          expr: histogram_quantile(0.99, sum by (le, route, service) (rate(kong_request_duration_seconds_bucket[5m])))
+        - name: kong_status
+          metric: genea:kong_requests_total:rate5m
+          expr: sum by (service, route, status) (rate(kong_request_duration_seconds_count[5m]))
+        - name: consumer_lag
+          metric: genea:kafka_consumer_lag:sum
+          expr: sum by (topic, consumer_group) (kafka_consumergroup_lag)
+        - name: outbox_age
+          metric: genea:outbox_oldest_pending_seconds
+          expr: max by (service.name) (outbox_oldest_pending_age_seconds)
+        - name: workflow_failure
+          metric: genea:temporal_workflow_failure:rate5m
+          expr: sum by (namespace, workflow_type) (rate(temporal_workflow_failed[5m]))
+        - name: dq_size
+          metric: genea:kafka_deadletter_size:sum
+          expr: sum by (topic, consumer_group) (kafka_deadletter_messages)
+        - name: redaction_coverage
+          metric: genea:otelcol_redaction_matches_total:rate5m
+          expr: sum by (service.name, rule) (rate(otelcol_redaction_matches_total[5m]))
+    slo_alerts:
+      - name: api-availability
+        description: "API availability < 99.9% over 1h (NFR3)"
+        expr: |
+          (
+            sum(rate(http_server_request_duration_seconds_count{status_class!~"5.."}[5m]))
+            /
+            sum(rate(http_server_request_duration_seconds_count[5m]))
+          ) < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          slo: api-availability
+        annotations:
+          dashboard: grafana/dashboards/api-overview.json
+      - name: canary-success
+        description: "Canary success rate < 99.5% over 30m (E2.9)"
+        expr: |
+          (
+            sum(rate(rollout_analysis_success_total[5m]))
+            /
+            sum(rate(rollout_analysis_run_total[5m]))
+          ) < 0.995
+        for: 15m
+        labels:
+          severity: high
+          slo: canary-success
+        annotations:
+          dashboard: grafana/dashboards/argo-rollouts.json
+      - name: consumer-lag
+        description: "Consumer lag > 10000 messages for > 10m"
+        expr: kafka_consumergroup_lag > 10000
+        for: 10m
+        labels:
+          severity: high
+          slo: consumer-lag
+        annotations:
+          dashboard: grafana/dashboards/kafka.json
+      - name: pii-redaction-coverage
+        description: "Redaction metric missing (collector / processor dropped)"
+        expr: absent(otelcol_redaction_matches_total) == 1
+        for: 10m
+          # E2.10 §3 — coverage alert fires if the collector
+          # stops emitting redaction matches for 10m, which
+          # indicates the processor or exporter is broken.
+        labels:
+          severity: critical
+          slo: pii-redaction
+        annotations:
+          dashboard: grafana/dashboards/observability-pipeline.json

@@ -765,5 +765,132 @@ data:
         `actor_pseudo_id` + `window_id` + `reason` + `ticket` fields.
       - `dna-blackout` window enforces E10.2 isolation: a release-approver
         + MFA human action is required to roll any DNA workload.
+{{- if eq $name "grafana" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-contract-stub
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: grafana
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Grafana OSS stack contract (E2.10).
+    responsibilities:
+      - OpenTelemetry Collector pipeline (otlp-grpc / otlp-http / prometheus / otlp-audit)
+      - Prometheus scrape + recording rules + SLO burn-rate alerts
+      - Loki structured log ingestion + retention + compactor
+      - Tempo OTLP receiver + ingester + storage backend
+      - Grafana dashboards + datasources + Keycloak OIDC SSO + 2FA
+      - Audit log to OTel Collector (actor_pseudo_id only)
+      - Reuse upstream `otel/opentelemetry-collector-contrib` / `prom/prometheus` /
+        `grafana/loki` / `grafana/tempo` / `grafana/grafana` (ADR-E0.5-01)
+      - Byte-identity mirror of source-of-truth files
+    pipelines:
+      traces:
+        receivers: [otlp/grpc, otlp/http]
+        processors: [memory_limiter, resourcedetection, k8sattributes,
+                     attributes/tenant-pseudonym, transform, redaction, batch]
+        exporters: [tempo]
+      metrics:
+        receivers: [otlp/grpc, otlp/http, prometheus]
+        processors: [memory_limiter, resourcedetection, k8sattributes,
+                     attributes/tenant-pseudonym, transform, batch]
+        exporters: [prometheus]
+      logs:
+        receivers: [otlp/grpc, otlp/http]
+        processors: [memory_limiter, resourcedetection, k8sattributes,
+                     attributes/tenant-pseudonym, transform, redaction,
+                     filter/logs, batch]
+        exporters: [loki]
+      audit:
+        receivers: [otlp/audit]
+        processors: [memory_limiter, resourcedetection, k8sattributes,
+                     attributes/tenant-pseudonym, transform, redaction,
+                     batch, resource/audit]
+        exporters: [otlp/audit]
+    redaction_rules:
+      - ssn
+      - passport
+      - driver-license
+      - email
+      - phone
+      - ipv4
+      - jwt
+      - raw-dna-marker
+      - authorization-header
+    mandatory_stream_labels:
+      - service.name
+      - service.namespace
+      - deployment.environment
+      - tenant_pseudo_id
+      - actor_pseudo_id
+      - trace_id
+    deny_labels:
+      - tenant_id
+      - user_id
+      - email
+      - oidc_subject
+      - raw_dna
+      - raw_pii
+    recording_rules:
+      - red_rate_api
+      - red_errors_api
+      - kong_latency
+      - kong_status
+      - consumer_lag
+      - outbox_age
+      - workflow_failure
+      - dq_size
+      - redaction_coverage
+    slo_alerts:
+      - api-availability
+      - canary-success
+      - consumer-lag
+      - pii-redaction-coverage
+    mandatory_dashboards:
+      - api-overview
+      - kong
+      - kafka
+      - temporal
+      - openfga
+      - istio
+      - vault
+      - database
+      - workload
+    retention:
+      prometheus: 30d    # saas: 90d; onprem: 30d; dev: 7d
+      loki: 30d          # saas: 90d; onprem: 30d; dev: 7d
+      tempo: 14d         # saas: 30d; onprem: 14d; dev: 3d
+    forbidden:
+      - emitting raw `tenant_id` / `user_id` / `email` / `oidc_subject` / `raw_dna` / `raw_pii` labels
+      - literal admin password / OAuth client secret / bearer token / pepper / API key
+      - bypassing the OTel Collector redaction processor
+      - Prometheus / Loki / Tempo storage without retention enforcement
+      - Grafana anonymous access (Keycloak OIDC SSO only)
+      - Grafana without 2FA conditional flow
+      - audit log without `actor_pseudo_id` (no raw email / oidc_subject)
+      - SLO alert without burn-rate annotation + dashboard link
+      - tenant-scoped Loki multi-tenancy (single-tenant cluster by design)
+    notes:
+      - Source-of-truth: platform/grafana/{otel-collector,prometheus,loki,tempo,dashboards,grafana}.yaml.
+      - Mirror: platform/helm/genealogy-platform/files/grafana/*.yaml.
+      - Reuses upstream `otel/opentelemetry-collector-contrib:0.110.0` /
+        `prom/prometheus:v2.55.0` / `grafana/loki:3.4.0` /
+        `grafana/tempo:2.7.0` / `grafana/grafana:11.3.0`
+        (ADR-E0.5-01 latest stable baseline).
+      - Tempo block storage: SaaS + on-prem use the
+        `genea-tempo-blocks` S3 bucket (IRSA / customer Vault
+        credentials); dev uses local filesystem.
+      - PII / DNA redaction is enforced at the OTel Collector
+        `redaction` processor; Loki + Tempo + Prometheus deny
+        labels are a second-line defense.
+      - Every Grafana dashboard view + every Prometheus / Loki /
+        Tempo query publishes a `dashboard_viewed` /
+        `query_executed` audit event to OTel Collector with
+        `actor_pseudo_id` only.
 {{- end }}
 {{- end }}

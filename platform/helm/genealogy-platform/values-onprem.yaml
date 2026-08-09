@@ -121,10 +121,34 @@ components:
         cpu: 1
         memory: 1Gi
   observability:
+    # E2.10 — on-prem runs the full observability stack on the
+    # customer cluster. Customer-managed secret store backs the
+    # ESO-managed Secrets.
+    otelCollectorConfig:
+      replicas: 2
+    prometheusConfig:
+      replicas: 2
+      storage:
+        size: 100Gi
+    lokiConfig:
+      replicas: 2
+      storage:
+        size: 100Gi
+    tempoConfig:
+      replicas: 2
+      storage:
+        size: 100Gi
+    grafanaConfig:
+      replicas: 2
     retention:
       prometheus: 30d
       loki: 30d
       tempo: 14d
+    secretRefs:
+      clusterSecretStore: vault-customer
+      grafanaAdminVaultPath: secret/onprem/data/grafana/admin
+      grafanaKeycloakClientVaultPath: secret/onprem/data/keycloak/grafana-client
+      otelBearerVaultPath: secret/onprem/data/otel-collector/bearertoken
   gitops:
     # E2.9 — on-prem customer cluster runs the full Argo CD
     # control plane with rollouts controller enabled. AppProject

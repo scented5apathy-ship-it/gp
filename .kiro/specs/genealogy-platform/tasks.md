@@ -171,7 +171,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - Canary dựa trên error rate/latency; tự abort và rollback khi vượt threshold.
   - Tách quyền merge code, đổi config production và approve promotion.
 
-- [ ] E2.10 Cấu hình Grafana OSS stack
+- [x] E2.10 Cấu hình Grafana OSS stack
   - OTel Collector, Prometheus, Loki, Tempo và Grafana với retention đã chốt.
   - Dashboard cho Kong, Kafka, Temporal, OpenFGA, Istio, Vault, database và workloads.
   - Áp log redaction và tenant pseudonymous labels để tránh cardinality/PII leak.

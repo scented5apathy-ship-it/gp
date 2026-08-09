@@ -409,10 +409,10 @@ observability:
     image: prom/prometheus:v2.55.0
     port: 9090
   loki:
-    image: grafana/loki:3.3.2
+    image: grafana/loki:3.4.0
     port: 3100
   tempo:
-    image: grafana/tempo:2.6.0
+    image: grafana/tempo:2.7.0
     port: 3200
 
 # Kong Gateway (E2.2) — DB-less, declarative config. The same

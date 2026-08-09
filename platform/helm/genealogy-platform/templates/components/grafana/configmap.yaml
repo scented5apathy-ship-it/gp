@@ -1,0 +1,91 @@
+{{/*
+Grafana / observability config ConfigMaps — mirror the six
+source-of-truth files into the cluster. The chart never
+mutates the source-of-truth files; the contracts are enforced
+by the deep linter + the byte-identity check on the mirror.
+*/}}
+{{- $obs := .Values.components.observability }}
+{{- $sourceOtel := printf "files/%s" ($obs.configPaths.otelCollector | default "grafana/otel-collector.yaml") }}
+{{- $sourceProm := printf "files/%s" ($obs.configPaths.prometheus | default "grafana/prometheus.yaml") }}
+{{- $sourceLoki := printf "files/%s" ($obs.configPaths.loki | default "grafana/loki.yaml") }}
+{{- $sourceTempo := printf "files/%s" ($obs.configPaths.tempo | default "grafana/tempo.yaml") }}
+{{- $sourceDashboards := printf "files/%s" ($obs.configPaths.dashboards | default "grafana/dashboards.yaml") }}
+{{- $sourceGrafana := printf "files/%s" ($obs.configPaths.grafana | default "grafana/grafana.yaml") }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-otel-collector-config
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: otel-collector
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+    {{- (.Files.Get $sourceOtel) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-prometheus-config
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: prometheus
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+    {{- (.Files.Get $sourceProm) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-loki-config
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: loki
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+    {{- (.Files.Get $sourceLoki) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-tempo-config
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: tempo
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+    {{- (.Files.Get $sourceTempo) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-grafana-dashboards
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: grafana
+    gp.genealogy/contract-only: "true"
+data:
+  catalogue.yaml: |-
+    {{- (.Files.Get $sourceDashboards) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-grafana-config
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: grafana
+    gp.genealogy/contract-only: "true"
+data:
+  config.ini: |-
+    {{- (.Files.Get $sourceGrafana) | nindent 4 }}

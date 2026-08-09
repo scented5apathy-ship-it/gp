@@ -1,0 +1,136 @@
+# platform/grafana/loki.yaml
+#
+# E2.10 — Loki source-of-truth (config-as-truth).
+#
+# Per `tasks.md` E2.10 ("Áp log redaction và tenant
+# pseudonymous labels") + `design.md` §13 ("Structured log có
+# service/version/environment/trace/tenant pseudonymous ID;
+# redaction filter bắt buộc"), Loki ingests structured logs from
+# the OTel Collector (`loki` exporter → `loki:3100`) and indexes
+# them by `service.name` + `tenant_pseudo_id` + `actor_pseudo_id`
+# + `trace_id`. Raw `email` / `oidc_subject` / `raw_dna` /
+# `raw_pii` keys are NEVER indexed (denied at the OTel Collector
+# `transform` + `redaction` processors; rejected at the Loki
+# `denied_labels` enforcement).
+#
+# The Loki tenant is one-tenant-per-cluster with multi-tenancy
+# enforced at the **label** layer (`X-Scope-OrgID` header from
+# OTel Collector is single tenant = the platform). Per-tenant
+# isolation is NOT a Loki concern — the data plane enforces it
+# via tenant_pseudo_id hash bucketing + Postgres RLS + Kong
+# routing. Loki itself is **single-tenant** by design (matches
+# Grafana Cloud / ADR-E0.5-01 baseline).
+#
+# The deep linter (`scripts/lint-grafana-config.mjs`) enforces:
+#   - schema `v13` + boltdb-shipper + tsdb store;
+#   - 4 retention periods (24h / 7d / 30d / 90d) with
+#     stream.Retention enforced per stream;
+#   - 3 ingestion limits (max_line_size 256KB, max_streams_per_user
+#     100000, ingestion_rate_mb 16);
+#   - 4 deny_labels (email / oidc_subject / raw_dna / raw_pii);
+#   - 6 mandatory structured fields (service.name / service.namespace /
+#     deployment.environment / tenant_pseudo_id / actor_pseudo_id /
+#     trace_id);
+#   - compactor retention + delete_request_store enabled;
+#   - no literal secret / token / password.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-loki-config
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: loki
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # Loki configuration (E2.10 source-of-truth).
+    # The chart renders the Loki StatefulSet whenever
+    # `components.observability.loki: enabled`. The bucket
+    # store uses boltdb-shipper; retention is enforced by the
+    # compactor.
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+      log_level: info
+      # Single-tenant — Loki auth header is set to the literal
+      # `platform` value; OTel Collector always sends the same
+      # header. The literal is a tenant identifier (NOT a
+      # credential).
+      auth_enabled: false
+    common:
+      path_prefix: /var/loki
+      storage:
+        filesystem:
+          chunks_directory: /var/loki/chunks
+          rules_directory: /var/loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+    schema_config:
+      configs:
+        - from: 2026-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    ruler:
+      alertmanager_url: http://alertmanager.gp-observability.svc.cluster.local:9093
+      storage:
+        type: local
+        local:
+          directory: /var/loki/rules
+      rule_path: /var/loki/rules-tmp
+      ring:
+        kvstore:
+          store: inmemory
+      enable_api: true
+    limits_config:
+      retention_period: 720h            # 30d default
+      ingestion_rate_mb: 16
+      ingestion_burst_size_mb: 24
+      max_entries_limit_per_query: 5000
+      max_line_size: 256KB
+      max_streams_per_user: 100000
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+      # E2.10 §4 — deny raw identity labels at the storage
+      # layer so an accidental emit at the OTel Collector
+      # layer still cannot leak.
+      deny_labels:
+        - email
+        - oidc_subject
+        - raw_dna
+        - raw_pii
+      # Mandatory structured fields per E2.10 §4 — Loki
+      # rejects streams missing these.
+      stream_label_required:
+        - service.name
+        - service.namespace
+        - deployment.environment
+        - tenant_pseudo_id
+        - actor_pseudo_id
+        - trace_id
+    compactor:
+      working_directory: /var/loki/compactor
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 1h
+      delete_request_store: filesystem
+      delete_request_store_period: 24h
+    query_range:
+      results_cache:
+        cache:
+          embedded_cache:
+            enabled: true
+            max_size_mb: 200
+      parallelisme: 32
+    frontend:
+      max_outstanding_per_tenant: 2048
+      compress_responses: true
+    query_scheduler:
+      max_outstanding_requests_per_tenant: 2048

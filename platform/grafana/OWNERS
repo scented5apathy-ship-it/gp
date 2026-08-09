@@ -1,0 +1,112 @@
+# OWNERS — platform/grafana (E2.10 Grafana OSS stack)
+#
+# Per `tasks.md` E0.6 + `ownership-catalog.md` §3 (Grafana
+# OSS + OTel Collector owner = platform-secondary, AppSec
+# partner, on-call sre-primary, SLO 99.9 %, dashboard load <
+# 5 s) + ADR §C #3, this file mirrors `config/teams.yaml`
+# and labels the primary owner, secondary reviewer and
+# on-call lead for the observability stack (OTel Collector +
+# Prometheus + Loki + Tempo + Grafana).
+#
+# The four-eyes principle applies to dashboard / alert / SLO
+# changes (any change to `platform/grafana/*.yaml` or
+# `platform/observability/alerts/*.yaml` requires PR review
+# by the secondary owner):
+#   sre-secondary          — review dashboard / alert / SLO
+#                            JSON before merge
+#   appsec-partner         — review redaction rules + tenant
+#                            pseudonym mapping before merge
+#   platform-admin         — break-glass (Keycloak OIDC + MFA)
+primary: platform-secondary
+secondary: "@genealogy/platform"
+on-call: sre-primary
+review-cadence: quarterly
+components:
+  - id: otel-collector
+    name: OpenTelemetry Collector (DaemonSet + singleton sidecar)
+    primary: platform-secondary
+    secondary: "@genealogy/platform"
+    on-call: sre-primary
+    syncs:
+      - dependency: services (11)
+        direction: "OTLP gRPC/HTTP traces + metrics + logs"
+        contract: "E2.10 tenant_pseudo_id + redaction processor"
+      - dependency: workers (5)
+        direction: "OTLP gRPC/HTTP traces + metrics + logs"
+        contract: "E2.10 tenant_pseudo_id + redaction processor"
+      - dependency: kong / flagsmith / vault / argocd / istio
+        direction: "scraped via Prometheus receiver"
+        contract: "E2.10 allow_labels / deny_labels"
+      - dependency: audit
+        direction: "publishes otelcol_redaction_matches_total + dashboard_viewed"
+        contract: "E2.10 audit pipeline (actor_pseudo_id only)"
+  - id: prometheus
+    name: Prometheus (metrics + recording rules + SLO alerts)
+    primary: platform-secondary
+    secondary: "@genealogy/platform"
+    on-call: sre-primary
+    syncs:
+      - dependency: otel-collector
+        direction: "scrapes Prometheus exporter (:9464)"
+        contract: "E2.10 allow_labels + deny_labels"
+      - dependency: services (11) + workers (5)
+        direction: "ServiceMonitor + PodMonitor endpoints"
+        contract: "E2.10 service.name + tenant_pseudo_id only"
+      - dependency: alertmanager
+        direction: "forwards SLO burn-rate alerts"
+        contract: "E2.10 slo_alerts block"
+  - id: loki
+    name: Loki (log aggregation + retention + structured fields)
+    primary: platform-secondary
+    secondary: "@genealogy/platform"
+    on-call: sre-primary
+    syncs:
+      - dependency: otel-collector
+        direction: "loki exporter push"
+        contract: "E2.10 stream_label_required + deny_labels"
+      - dependency: services (11) + workers (5)
+        direction: "structured log via OTLP"
+        contract: "E2.10 redaction + filter/logs"
+  - id: tempo
+    name: Tempo (distributed tracing + span metrics)
+    primary: platform-secondary
+    secondary: "@genealogy/platform"
+    on-call: sre-primary
+    syncs:
+      - dependency: otel-collector
+        direction: "tempo exporter push"
+        contract: "E2.10 search_tags + search_tags_deny"
+      - dependency: services (11) + workers (5)
+        direction: "W3C trace context propagation"
+        contract: "E2.5 mesh contract"
+  - id: grafana
+    name: Grafana (dashboard + alerting + audit)
+    primary: platform-secondary
+    secondary: "@genealogy/platform"
+    on-call: sre-primary
+    syncs:
+      - dependency: prometheus / loki / tempo
+        direction: "datasource queries"
+        contract: "E2.10 datasources block"
+      - dependency: keycloak
+        direction: "OIDC SSO + 2FA flow"
+        contract: "E2.10 auth.keycloak block"
+      - dependency: audit
+        direction: "publishes dashboard_viewed event"
+        contract: "E2.10 audit fields (actor_pseudo_id only)"
+version-policy:
+  - component: otel-collector
+    pin: "0.110.0"
+    review: "2026-11-01"
+  - component: prometheus
+    pin: "v2.55.0"
+    review: "2026-11-01"
+  - component: loki
+    pin: "3.4.0"
+    review: "2026-11-01"
+  - component: tempo
+    pin: "2.7.0"
+    review: "2026-11-01"
+  - component: grafana
+    pin: "11.3.0"
+    review: "2026-11-01"

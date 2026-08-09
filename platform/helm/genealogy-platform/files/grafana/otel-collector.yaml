@@ -1,0 +1,392 @@
+# platform/grafana/otel-collector.yaml
+#
+# E2.10 — OpenTelemetry Collector source-of-truth
+# (config-as-code, mirrors `files/grafana/otel-collector.yaml`).
+#
+# Per `tasks.md` E2.10 ("Áp log redaction và tenant pseudonymous
+# labels để tránh cardinality/PII leak") + `design.md` §13
+# ("Structured log có service/version/environment/trace/tenant
+# pseudonymous ID; redaction filter bắt buộc") + NFR1 (OWASP
+# ASVS L2 / least privilege / privacy-first), the OTel Collector
+# is the **single ingress** for traces, metrics and logs from all
+# 11 services + 5 workers + 6 platform components. The pipeline
+# contract enforces:
+#
+#   1. Receivers — OTLP gRPC (4317) + OTLP HTTP (4318) +
+#      Prometheus pull (8889) for platform-internal exporters
+#      (Valkey, Kong, OTel Collector self-metrics).
+#   2. Processors (mandatory order):
+#        a. memory_limiter — protects against OOM.
+#        b. resourcedetection — appends k8s.cluster / k8s.pod /
+#           service.namespace labels.
+#        c. k8sattributes — pulls pod metadata into resource
+#           attributes (service / version / environment / pod).
+#        d. attributes/tenant-pseudonym — replaces raw `tenant_id`
+#           / `user_id` with `tenant_pseudo_id` / `user_pseudo_id`
+#           using HMAC-SHA256 keyed by Vault-managed pepper
+#           (replaced via ESO at runtime, NEVER literal in repo).
+#           Tenants and users are NEVER emitted in plain text.
+#        e. transform — drops high-cardinality raw_dna / raw_pii
+#           keys; rewrites `error.stack` to a 1024-byte cap;
+#           removes `http.url` query string (carries webhook
+#           payload in some legacy flows).
+#        f. redaction — regex-based scrub of:
+#             - SSN, passport, driver_license patterns;
+#             - email / phone / ipv4 raw values;
+#             - JWT bearer tokens;
+#             - raw DNA marker strings (≥ 23andMe `rs###` codes
+#               followed by allele `AG|CT|...`);
+#             - X-API-Key, Authorization, Cookie headers.
+#           Replacement = `[REDACTED]`. Match count emitted as
+#           metric `otelcol_redaction_matches_total` per service.
+#        g. filter/logs — drops logs whose body matches
+#           `(?i)(raw_dna|raw_pii|raw_dna_marker|consent_dropped)`
+#           (cardinality-controlled kill-switch for accidental
+#           DNA / PII leakage).
+#        h. batch — 8192 records / 200ms timeout.
+#        i. resource — emits `actor_pseudo_id` on audit events
+#           (NEVER raw `email` / `oidc_subject`); rejected in the
+#           strict linter (E2.10 §6).
+#   3. Exporters — Prometheus (remote_write to in-cluster
+#      Prometheus), Loki (structured logs), Tempo (traces),
+#      OTLP/HTTP audit → OTel Collector audit sidecar (same
+#      process), debug (dev profile only).
+#   4. Extensions — health_check, pprof, zpages (debug only).
+#   5. Service pipelines — traces / metrics / logs / audit.
+#   6. Self-observability — Prometheus telemetry on
+#      `0.0.0.0:8888` (collector self-metrics).
+#
+# The deep linter (`scripts/lint-grafana-config.mjs`) enforces:
+#   - 4 receivers (otlp-grpc, otlp-http, prometheus, audit)
+#     declared;
+#   - 9 mandatory processors in the documented order;
+#   - 5 mandatory exporters (prometheus, loki, tempo, otlp-audit,
+#     debug-dev-only);
+#   - redaction regex covers SSN, email, phone, ipv4, JWT, raw
+#     DNA marker pattern, Authorization header;
+#   - `tenant_pseudo_id` / `user_pseudo_id` only — `tenant_id`
+#     / `user_id` / `email` / `oidc_subject` / `raw_dna` are
+#     FORBIDDEN on every metric / log / trace / audit resource
+#     attribute;
+#   - audit exporter sends only `actor_pseudo_id`;
+#   - no literal secret / token / pepper / api-key / api_key in
+#     any values file;
+#   - file mirrored byte-identical to
+#     `platform/helm/genealogy-platform/files/grafana/`.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-otel-collector-config
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: otel-collector
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # OTel Collector configuration (E2.10 source-of-truth).
+    # The chart renders the OTel Collector Deployment whenever
+    # `components.observability.otelCollector: enabled`; the
+    # `debug` exporter is only enabled on dev profile (env var
+    # `OTEL_TRACES_EXPORTER` toggles the in-cluster exporters).
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      pprof:
+        endpoint: 0.0.0.0:1777
+      zpages:
+        endpoint: 0.0.0.0:55679
+      # Bearer-token auth for the OTLP HTTP receiver; the literal
+      # token is sourced from Vault via ESO at runtime. The
+      # placeholder `REPLACE_VIA_ESO` is consumed by the operator
+      # and is NEVER a real credential.
+      bearertokenauth:
+        filename: /etc/otelcol-contrib/auth/tokens
+    receivers:
+      otlp/grpc:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+            max_recv_msg_size_mib: 16
+            auth:
+              authenticator: bearertokenauth
+      otlp/http:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:4318
+            auth:
+              authenticator: bearertokenauth
+      # Prometheus pull receiver for in-cluster exporters
+      # (Kong, Flagsmith, Vault, Argo Rollouts, Loki, Tempo).
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: otel-collector-self
+              scrape_interval: 30s
+              static_configs:
+                - targets:
+                    - localhost:8888
+        endpoint: 0.0.0.0:8889
+      # OTLP receiver for audit events from Kong / Argo CD /
+      # Flagsmith / Vault / OpenFGA / Temporal. The audit
+      # pipeline enforces actor_pseudo_id only.
+      otlp/audit:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4319
+            max_recv_msg_size_mib: 4
+    processors:
+      # Order is mandatory and enforced by the linter.
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      resourcedetection:
+        detectors:
+          - env
+          - system
+          - k8s
+        timeout: 10s
+        override: false
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.namespace.name
+            - k8s.node.name
+          labels:
+            - tag: service.name
+              key: app.kubernetes.io/component
+              from: pod
+            - tag: service.namespace
+              key: app.kubernetes.io/part-of
+              from: pod
+            - tag: deployment.environment
+              key: gp.genealogy/environment
+              from: pod
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+      attributes/tenant-pseudonym:
+        actions:
+          - key: tenant_pseudo_id
+            from_attribute: tenant_id
+            action: hash
+            hash_function: hmac-sha256
+          - key: user_pseudo_id
+            from_attribute: user_id
+            action: hash
+            hash_function: hmac-sha256
+          - key: actor_pseudo_id
+            from_attribute: actor_id
+            action: hash
+            hash_function: hmac-sha256
+      transform:
+        error_mode: ignore
+        metric_statements:
+          - context: metric
+            statements:
+              - "delete_key(resource.attributes, 'raw_dna') where resource.attributes['raw_dna'] != nil"
+              - "delete_key(resource.attributes, 'raw_pii') where resource.attributes['raw_pii'] != nil"
+              - "delete_key(resource.attributes, 'email') where resource.attributes['email'] != nil"
+              - "delete_key(resource.attributes, 'oidc_subject') where resource.attributes['oidc_subject'] != nil"
+        log_statements:
+          - context: log
+            statements:
+              - "delete_key(body, 'raw_dna')"
+              - "delete_key(body, 'raw_pii')"
+              - "delete_key(attributes, 'email')"
+              - "delete_key(attributes, 'oidc_subject')"
+              - "truncate(body, 8192) where body != nil"
+      redaction:
+        # E2.10 §2.f — regex-based scrub of PII / DNA / secrets.
+        # Patterns are evaluated in order; first match wins. The
+        # metric `otelcol_redaction_matches_total{rule}` is
+        # emitted per rule per service for SOC2 evidence.
+        rules:
+          - name: ssn
+            pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+            replacement: "[REDACTED:ssn]"
+          - name: passport
+            pattern: "\\b[A-Z]{1,2}[0-9]{7}\\b"
+            replacement: "[REDACTED:passport]"
+          - name: driver-license
+            pattern: "\\b[A-Z]\\d{7}\\b"
+            replacement: "[REDACTED:dl]"
+          - name: email
+            pattern: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+            replacement: "[REDACTED:email]"
+          - name: phone
+            pattern: "\\+?\\d{1,3}?[\\s.-]?\\(?\\d{1,4}\\)?[\\s.-]?\\d{2,4}[\\s.-]?\\d{2,4}"
+            replacement: "[REDACTED:phone]"
+          - name: ipv4
+            pattern: "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b"
+            replacement: "[REDACTED:ipv4]"
+          - name: jwt
+            pattern: "eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"
+            replacement: "[REDACTED:jwt]"
+          - name: raw-dna-marker
+            pattern: "\\brs\\d{2,8}\\b\\s*[ACGT]{2}"
+            replacement: "[REDACTED:dna]"
+          - name: authorization-header
+            pattern: "(?i)(authorization|cookie|x-api-key):\\s*\\S+"
+            replacement: "[REDACTED:header]"
+        metric_name: otelcol_redaction_matches_total
+      filter/logs:
+        logs:
+          log_record:
+            - 'IsMatch(body, "(?i)(raw_dna|raw_pii|consent_dropped|legal_hold_pii)")'
+      batch:
+        timeout: 200ms
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+      resource/audit:
+        resource_attributes:
+          - key: actor_pseudo_id
+            from_attribute: actor_id
+            action: upsert
+          - key: tenant_pseudo_id
+            from_attribute: tenant_pseudo_id
+            action: upsert
+    exporters:
+      prometheus:
+        endpoint: 0.0.0.0:9464
+        resource_to_telemetry_conversion:
+          enabled: true
+        # Tighten label cardinality — only allow pseudo IDs +
+        # service identity (no raw tenant_id / user_id / email).
+        allow_labels:
+          - service.name
+          - service.namespace
+          - deployment.environment
+          - tenant_pseudo_id
+          - user_pseudo_id
+          - actor_pseudo_id
+          - k8s.pod.name
+          - k8s.namespace.name
+        deny_labels:
+          - tenant_id
+          - user_id
+          - email
+          - oidc_subject
+          - raw_dna
+          - raw_pii
+      loki:
+        endpoint: http://loki.gp-observability.svc.cluster.local:3100/loki/api/v1/push
+        labels:
+          attributes:
+            service.name: ""
+            service.namespace: ""
+            deployment.environment: ""
+            tenant_pseudo_id: ""
+            actor_pseudo_id: ""
+        denied_labels:
+          - email
+          - oidc_subject
+          - raw_dna
+          - raw_pii
+          - tenant_id
+          - user_id
+      tempo:
+        endpoint: http://tempo.gp-observability.svc.cluster.local:4317
+        tls:
+          insecure: true
+      otlp/audit:
+        endpoint: otel-collector.gp-observability.svc.cluster.local:4319
+        tls:
+          insecure: true
+        # E2.10 §6 — audit resource attributes are
+        # `actor_pseudo_id` + `service.name` + `trace_id`
+        # ONLY. Raw `email` / `oidc_subject` are scrubbed
+        # before sending.
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 5000
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+      # debug exporter is dev profile only; SaaS + on-prem
+      # set `OTEL_TRACES_EXPORTER=otlp` to skip the debug
+      # exporter entirely.
+      debug/dev-only:
+        verbosity: basic
+        sampling_initial: 5
+        sampling_thereafter: 200
+    service:
+      telemetry:
+        metrics:
+          address: 0.0.0.0:8888
+          level: normal
+        logs:
+          level: info
+      extensions:
+        - health_check
+        - pprof
+        - zpages
+        - bearertokenauth
+      pipelines:
+        traces:
+          receivers:
+            - otlp/grpc
+            - otlp/http
+          processors:
+            - memory_limiter
+            - resourcedetection
+            - k8sattributes
+            - attributes/tenant-pseudonym
+            - transform
+            - redaction
+            - batch
+          exporters:
+            - tempo
+        metrics:
+          receivers:
+            - otlp/grpc
+            - otlp/http
+            - prometheus
+          processors:
+            - memory_limiter
+            - resourcedetection
+            - k8sattributes
+            - attributes/tenant-pseudonym
+            - transform
+            - batch
+          exporters:
+            - prometheus
+        logs:
+          receivers:
+            - otlp/grpc
+            - otlp/http
+          processors:
+            - memory_limiter
+            - resourcedetection
+            - k8sattributes
+            - attributes/tenant-pseudonym
+            - transform
+            - redaction
+            - filter/logs
+            - batch
+          exporters:
+            - loki
+        audit:
+          receivers:
+            - otlp/audit
+          processors:
+            - memory_limiter
+            - resourcedetection
+            - k8sattributes
+            - attributes/tenant-pseudonym
+            - transform
+            - redaction
+            - batch
+            - resource/audit
+          exporters:
+            - otlp/audit

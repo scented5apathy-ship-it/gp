@@ -99,6 +99,9 @@ Every change must respect:
 - [ ] `pnpm lint:argo` passes (Argo CD + Argo Rollouts
       config-as-code + AppProject RBAC + canary strategy +
       sync-windows validator — E2.9)
+- [ ] `pnpm lint:grafana` passes (Grafana OSS stack
+      config-as-code + OTel redaction + tenant pseudonym +
+      dashboard catalogue + retention validator — E2.10)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

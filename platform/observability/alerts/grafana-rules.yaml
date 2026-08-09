@@ -1,0 +1,311 @@
+# Prometheus alert rules for the Grafana OSS stack
+# (OTel Collector + Prometheus + Loki + Tempo + Grafana).
+#
+# Per `tasks.md` E2.10 + `design.md` §13 + NFR3
+# ("RPO ≤ 15 phút, RTO ≤ 4 giờ") the platform declares 9
+# alerts across 5 rule groups covering:
+#   1. OTel Collector pipeline health (memory / drop / queue).
+#   2. Prometheus scrape health + SLO burn-rate (api /
+#      canary / consumer-lag / pii-redaction-coverage).
+#   3. Loki ingestion health + retention / denied label /
+#      stream count.
+#   4. Tempo ingestion health + block retention / WAL size.
+#   5. Grafana health + dashboard audit volume.
+#
+# Labels follow the platform convention:
+#   severity: critical | warning
+#   component: observability
+#   owner: "@genealogy/platform"
+#   runbook: runbook/observability.md
+#
+# All metrics are pseudonymous — never raw tenant / user IDs.
+#
+# Per `agent-execution.md` §4.5 these alerts are validated
+# by `scripts/check-platform-baseline.mjs` (E2.10 invariants).
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-grafana-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: grafana
+    prometheus: kubernetes
+    role: alert-rules
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # OTel Collector pipeline
+    # ----------------------------------------------------------------
+    - name: otel.collector
+      interval: 30s
+      rules:
+        - alert: OtelCollectorMemoryPressure
+          expr: |
+            process_runtime_go_memstats_heap_alloc_bytes{job="otel-collector-self"}
+              > 8 * 1024 * 1024 * 1024
+          for: 10m
+          labels:
+            severity: warning
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "OTel Collector memory pressure"
+            description: |
+              OTel Collector heap allocation > 8 GiB for 10m.
+              Possible cause: redaction regex backtracking,
+              or unbounded tail-based sampler. See
+              runbook/observability.md §otel-memory.
+        - alert: OtelCollectorDroppedSpans
+          expr: |
+            increase(otelcol_processor_dropped_spans_total[10m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "OTel Collector dropped spans"
+            description: |
+              OTel Collector dropped spans in the last 10m.
+              Most likely cause: filter/logs regex firing on
+              legitimate log records (E2.10 §2.g). Inspect
+              `body` for `raw_dna` / `raw_pii` /
+              `consent_dropped` substrings.
+        - alert: OtelCollectorQueueNearFull
+          expr: |
+            otelcol_exporter_queue_size / otelcol_exporter_queue_capacity > 0.9
+          for: 10m
+          labels:
+            severity: warning
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "OTel Collector exporter queue near full"
+            description: |
+              OTel Collector exporter queue > 90 % capacity
+              for 10m. Likely cause: downstream Tempo / Loki
+              outage. See runbook/observability.md §otel-queue.
+    # ----------------------------------------------------------------
+    # Prometheus + SLO burn-rate
+    # ----------------------------------------------------------------
+    - name: prometheus
+      interval: 30s
+      rules:
+        - alert: PrometheusScrapeFailing
+          expr: |
+            up{job=~"services|workers|platform|otel-collector-self"} == 0
+          for: 10m
+          labels:
+            severity: critical
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Prometheus scrape failing"
+            description: |
+              Prometheus has been unable to scrape a target
+              for 10m. Check ServiceMonitor / PodMonitor
+              + NetworkPolicy (E2.10 §3). See
+              runbook/observability.md §scrape-failing.
+        - alert: PrometheusTSDBCompactionFailing
+          expr: |
+            increase(prometheus_tsdb_compactions_failed_total[30m]) > 0
+          for: 15m
+          labels:
+            severity: warning
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Prometheus TSDB compaction failing"
+            description: |
+              Prometheus TSDB compaction has failed in the
+              last 30m. Retention enforcement may be at risk.
+        - alert: GrafanaApiAvailabilityBurn
+          expr: |
+            (
+              sum(rate(http_server_request_duration_seconds_count{status_class!~"5.."}[5m]))
+              /
+              sum(rate(http_server_request_duration_seconds_count[5m]))
+            ) < 0.999
+          for: 5m
+          labels:
+            severity: critical
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+            slo: api-availability
+          annotations:
+            summary: "API availability < 99.9% (NFR3 SLO)"
+            description: |
+              5xx error rate > 0.1 % for 5m (burn-rate
+              exceedance on the api-availability SLO). See
+              runbook/observability.md §api-availability.
+        - alert: GrafanaPiiRedactionCoverageLost
+          expr: |
+            absent(otelcol_redaction_matches_total) == 1
+          for: 10m
+          labels:
+            severity: critical
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+            slo: pii-redaction
+          annotations:
+            summary: "PII redaction coverage lost"
+            description: |
+              The OTel Collector `redaction` processor has
+              stopped emitting matches for 10m. This means
+              the redaction pipeline is broken — page the
+              on-call SRE + AppSec immediately. See
+              runbook/observability.md §redaction-coverage.
+    # ----------------------------------------------------------------
+    # Loki
+    # ----------------------------------------------------------------
+    - name: loki
+      interval: 30s
+      rules:
+        - alert: LokiWritePathDown
+          expr: |
+            up{job=~"loki"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Loki write path down"
+            description: |
+              Loki is unreachable from the OTel Collector for
+              5m. All structured log ingestion is paused.
+        - alert: LokiDeniedLabelSpike
+          expr: |
+            increase(loki_request_duration_seconds_count{status_code="400"}[10m]) > 100
+          for: 10m
+          labels:
+            severity: warning
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Loki denied label spike"
+            description: |
+              Loki returned > 100 HTTP 400 responses in the
+              last 10m. Likely cause: a service accidentally
+              emitted `email` / `oidc_subject` / `raw_dna` /
+              `raw_pii`. Identify via
+              `service.name` + `tenant_pseudo_id` and remove
+              the label at the source.
+        - alert: LokiStreamCountHigh
+          expr: |
+            loki_active_streams > 50000
+          for: 30m
+          labels:
+            severity: warning
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Loki stream count > 50 000"
+            description: |
+              Loki active stream count exceeds 50 000 for
+              30m. Possible cause: high-cardinality labels
+              leaking through. The OTel Collector `transform`
+              + `redaction` processors are the source of
+              truth — verify they reject raw identity labels.
+    # ----------------------------------------------------------------
+    # Tempo
+    # ----------------------------------------------------------------
+    - name: tempo
+      interval: 30s
+      rules:
+        - alert: TempoWritePathDown
+          expr: |
+            up{job=~"tempo"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Tempo write path down"
+            description: |
+              Tempo is unreachable from the OTel Collector
+              for 5m. All trace ingestion is paused.
+        - alert: TempoBlockRetentionExpiring
+          expr: |
+            tempo_blocklist_blocks / tempo_blocklist_max_block_age_seconds > 0.8
+          for: 60m
+          labels:
+            severity: warning
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Tempo block retention expiring"
+            description: |
+              Tempo block retention is at 80 % of the
+              configured `block_retention` window. Likely
+              cause: compactor lagging behind WAL growth.
+              Increase compactor resources or shorten
+              `block_retention` (E2.10 §5).
+        - alert: TempoWALGrowthHigh
+          expr: |
+            rate(tempo_ingester_wal_traces_created_total[10m]) > 1000
+          for: 15m
+          labels:
+            severity: warning
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Tempo WAL growth high"
+            description: |
+              Tempo WAL trace creation > 1000/s for 15m.
+              Likely cause: trace explosion from a noisy
+              service or misconfigured sampler.
+    # ----------------------------------------------------------------
+    # Grafana
+    # ----------------------------------------------------------------
+    - name: grafana
+      interval: 30s
+      rules:
+        - alert: GrafanaDown
+          expr: |
+            up{job=~"grafana"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Grafana down"
+            description: |
+              Grafana is unreachable for 5m. Dashboard access
+              is blocked. Verify the `gp-observability`
+              NetworkPolicy allows ingress from `gp-edge`
+              + `gp-platform`.
+        - alert: GrafanaDashboardAuditVolumeZero
+          expr: |
+            rate(otelcol_exporter_sent_spans{ exporter="otlp/audit"}[10m]) == 0
+          for: 30m
+          labels:
+            severity: warning
+            component: observability
+            owner: "@genealogy/platform"
+            runbook: runbook/observability.md
+          annotations:
+            summary: "Dashboard audit volume zero"
+            description: |
+              No dashboard audit events have been emitted
+              for 30m. The Grafana audit pipeline may be
+              broken — verify the `actor_pseudo_id` audit
+              context is bound on every request.

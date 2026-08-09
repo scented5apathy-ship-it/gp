@@ -64,6 +64,11 @@ function makeFixture() {
   mkdirSync(join(dir, "platform", "apicurio"), { recursive: true });
   mkdirSync(join(dir, "platform", "temporal"), { recursive: true });
   mkdirSync(join(dir, "platform", "istio"), { recursive: true });
+  mkdirSync(join(dir, "platform", "vault"), { recursive: true });
+  mkdirSync(join(dir, "platform", "storage"), { recursive: true });
+  mkdirSync(join(dir, "platform", "featureflags"), { recursive: true });
+  mkdirSync(join(dir, "platform", "argo"), { recursive: true });
+  mkdirSync(join(dir, "platform", "grafana"), { recursive: true });
   mkdirSync(join(dir, "platform", "observability", "alerts"), { recursive: true });
   copyTree(
     join(ROOT, "platform", "helm", "genealogy-platform"),
@@ -75,6 +80,11 @@ function makeFixture() {
   copyTree(join(ROOT, "platform", "apicurio"), join(dir, "platform", "apicurio"));
   copyTree(join(ROOT, "platform", "temporal"), join(dir, "platform", "temporal"));
   copyTree(join(ROOT, "platform", "istio"), join(dir, "platform", "istio"));
+  copyTree(join(ROOT, "platform", "vault"), join(dir, "platform", "vault"));
+  copyTree(join(ROOT, "platform", "storage"), join(dir, "platform", "storage"));
+  copyTree(join(ROOT, "platform", "featureflags"), join(dir, "platform", "featureflags"));
+  copyTree(join(ROOT, "platform", "argo"), join(dir, "platform", "argo"));
+  copyTree(join(ROOT, "platform", "grafana"), join(dir, "platform", "grafana"));
   copyTree(
     join(ROOT, "platform", "observability", "alerts"),
     join(dir, "platform", "observability", "alerts"),

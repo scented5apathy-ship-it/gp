@@ -1396,4 +1396,144 @@ if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// E2.10 — Grafana OSS stack runtime invariants (static check;
+// `scripts/lint-grafana-config.mjs` runs the deep YAML validation).
+// ---------------------------------------------------------------------------
+const GRAFANA_DIR = join(ROOT, "platform", "grafana");
+const GRAFANA_FILES = [
+  join(GRAFANA_DIR, "otel-collector.yaml"),
+  join(GRAFANA_DIR, "prometheus.yaml"),
+  join(GRAFANA_DIR, "loki.yaml"),
+  join(GRAFANA_DIR, "tempo.yaml"),
+  join(GRAFANA_DIR, "dashboards.yaml"),
+  join(GRAFANA_DIR, "grafana.yaml"),
+];
+for (const f of GRAFANA_FILES) {
+  if (!existsSync(f)) {
+    fail(`E2.10 source-of-truth file missing — ${relative(ROOT, f)}`);
+  }
+}
+const grafanaTemplates = join(HELM_DIR, "templates", "components", "grafana");
+for (const tpl of [
+  "configmap.yaml",
+  "secrets.yaml",
+  "serviceaccounts.yaml",
+  "services.yaml",
+  "statefulset.yaml",
+  "network-policies.yaml",
+]) {
+  const p = join(grafanaTemplates, tpl);
+  if (!existsSync(p)) {
+    fail(`E2.10 grafana helm template missing — ${relative(ROOT, p)}`);
+  }
+}
+// values.yaml must declare the components.observability block
+// with the ADR-E0.5-01 image pins (OTel Collector 0.110.x,
+// Prometheus v2.55.x, Loki 3.4.x, Tempo 2.7.x, Grafana
+// 11.3.x).
+const observabilityValuesPath = join(HELM_DIR, "values.yaml");
+if (existsSync(observabilityValuesPath)) {
+  const v = readFileSync(observabilityValuesPath, "utf8");
+  if (!/otel\/opentelemetry-collector-contrib[\s\S]*?0\.110\.\d+/.test(v)) {
+    fail("values.yaml must pin OTel Collector image to 0.110.x (ADR-E0.5-01)");
+  }
+  if (!/prom\/prometheus[\s\S]*?v2\.55\.\d+/.test(v)) {
+    fail("values.yaml must pin Prometheus image to v2.55.x (ADR-E0.5-01)");
+  }
+  if (!/grafana\/loki[\s\S]*?3\.4\.\d+/.test(v)) {
+    fail("values.yaml must pin Loki image to 3.4.x (ADR-E0.5-01)");
+  }
+  if (!/grafana\/tempo[\s\S]*?2\.7\.\d+/.test(v)) {
+    fail("values.yaml must pin Tempo image to 2.7.x (ADR-E0.5-01)");
+  }
+  if (!/grafana\/grafana[\s\S]*?11\.3\.\d+/.test(v)) {
+    fail("values.yaml must pin Grafana image to 11.3.x (ADR-E0.5-01)");
+  }
+  // observability component block + retention values.
+  if (!/^  observability:/m.test(v)) {
+    fail("values.yaml must declare a 'observability' component block (E2.10 §1)");
+  }
+  if (!/prometheus:\s*30d/.test(v)) {
+    fail("values.yaml must declare observability.retention.prometheus (≥ 30d on production)");
+  }
+  if (!/loki:\s*30d/.test(v)) {
+    fail("values.yaml must declare observability.retention.loki (≥ 30d on production)");
+  }
+  if (!/tempo:\s*14d/.test(v)) {
+    fail("values.yaml must declare observability.retention.tempo (≥ 14d on production)");
+  }
+  // Source-of-truth ConfigMap paths.
+  for (const path of [
+    "otelCollector:",
+    "prometheus:",
+    "loki:",
+    "tempo:",
+    "dashboards:",
+    "grafana:",
+  ]) {
+    if (!new RegExp(`${path}\\s*grafana/`).test(v)) {
+      fail(`values.yaml must declare components.observability.configPaths.${path} (E2.10 §1)`);
+    }
+  }
+}
+
+// Alert rules must cover the 15 E2.10 signal classes.
+if (!existsSync(ALERTS_DIR) || !existsSync(join(ALERTS_DIR, "grafana-rules.yaml"))) {
+  fail("platform/observability/alerts/grafana-rules.yaml missing (E2.10 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR, "grafana-rules.yaml"), "utf8");
+  for (const alert of [
+    "OtelCollectorMemoryPressure",
+    "OtelCollectorDroppedSpans",
+    "OtelCollectorQueueNearFull",
+    "PrometheusScrapeFailing",
+    "PrometheusTSDBCompactionFailing",
+    "GrafanaApiAvailabilityBurn",
+    "GrafanaPiiRedactionCoverageLost",
+    "LokiWritePathDown",
+    "LokiDeniedLabelSpike",
+    "LokiStreamCountHigh",
+    "TempoWritePathDown",
+    "TempoBlockRetentionExpiring",
+    "TempoWALGrowthHigh",
+    "GrafanaDown",
+    "GrafanaDashboardAuditVolumeZero",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/grafana-rules.yaml missing alert '${alert}' (E2.10)`);
+    }
+  }
+}
+
+// Profile.yaml must pin the 5 ADR-E0.5-01 Grafana OSS images.
+if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
+  const p = readFileSync(join(LOCAL_DIR, "profile.yaml"), "utf8");
+  if (!/image:\s*otel\/opentelemetry-collector-contrib:0\.110\.\d+/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin OTel Collector image to 0.110.x (ADR-E0.5-01)",
+    );
+  }
+  if (!/image:\s*prom\/prometheus:v2\.55\.\d+/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin Prometheus image to v2.55.x (ADR-E0.5-01)",
+    );
+  }
+  if (!/image:\s*grafana\/loki:3\.4\.\d+/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin Loki image to 3.4.x (ADR-E0.5-01)",
+    );
+  }
+  if (!/image:\s*grafana\/tempo:2\.7\.\d+/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin Tempo image to 2.7.x (ADR-E0.5-01)",
+    );
+  }
+  if (!/image:\s*grafana\/grafana:11\.3\.\d+/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin Grafana image to 11.3.x (ADR-E0.5-01)",
+    );
+  }
+}
+
 finish();

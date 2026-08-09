@@ -1,0 +1,260 @@
+{{/*
+E2.10 observability NetworkPolicies — default-deny + control
+plane allow.
+*/}}
+{{- $obs := .Values.components.observability }}
+{{- if $obs.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: genea-otel-collector-deny
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: otel-collector
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: otel-collector
+      app.kubernetes.io/part-of: genealogy-platform
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-edge
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-bff
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-argocd
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - port: 4317
+          protocol: TCP
+        - port: 4318
+          protocol: TCP
+        - port: 4319
+          protocol: TCP
+        - port: 9464
+          protocol: TCP
+        - port: 13133
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - port: 3100
+          protocol: TCP
+        - port: 4317
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+        - port: 9095
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: genea-prometheus-deny
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: prometheus
+      app.kubernetes.io/part-of: genealogy-platform
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-edge
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-bff
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - port: 9090
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: genea-loki-deny
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: loki
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: loki
+      app.kubernetes.io/part-of: genealogy-platform
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-edge
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-bff
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+      ports:
+        - port: 3100
+          protocol: TCP
+        - port: 9096
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: genea-tempo-deny
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: tempo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: tempo
+      app.kubernetes.io/part-of: genealogy-platform
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - port: 3200
+          protocol: TCP
+        - port: 4317
+          protocol: TCP
+        - port: 4318
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: genea-grafana-deny
+  namespace: {{ .Values.global.namespaceObservability | default "gp-observability" }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: grafana
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: grafana
+      app.kubernetes.io/part-of: genealogy-platform
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-edge
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - port: 3100
+          protocol: TCP
+        - port: 3200
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+{{- end }}

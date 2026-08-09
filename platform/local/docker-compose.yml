@@ -364,10 +364,108 @@ services:
     container_name: gp-otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
-      - ./observability/otel-collector.yaml/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ../grafana/otel-collector.yaml:/etc/otelcol-contrib/source.yaml:ro
+    environment:
+      # The container-side `/etc/otelcol-contrib/config.yaml`
+      # is rendered by the bootstrap Job; for the local
+      # docker-compose stack we mount the source-of-truth
+      # directly via a wrapper entrypoint.
+      OTEL_CONFIG_FILE: /etc/otelcol-contrib/source.yaml
     ports:
       - "4317:4317"
       - "4318:4318"
+      - "4319:4319"
+      - "9464:9464"
+      - "13133:13133"
+
+  prometheus:
+    # E2.10 — local Prometheus pinned to ADR-E0.5-01 baseline
+    # (v2.55.0). Mounts the 6 source-of-truth ConfigMaps +
+    # 9 recording rules / 4 SLO alerts.
+    image: prom/prometheus:v2.55.0
+    container_name: gp-prometheus
+    command:
+      - "--config.file=/etc/prometheus/config/config.yaml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ../grafana/prometheus.yaml:/etc/prometheus/config/config.yaml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  loki:
+    # E2.10 — local Loki pinned to ADR-E0.5-01 baseline (3.4.0).
+    # Single-node mode; retention 7d; boltdb-shipper store.
+    image: grafana/loki:3.4.0
+    container_name: gp-loki
+    command: ["-config.file=/etc/loki/config/config.yaml"]
+    user: "0"
+    volumes:
+      - ../grafana/loki.yaml:/etc/loki/config/config.yaml:ro
+      - loki-data:/var/loki
+    ports:
+      - "3100:3100"
+
+  tempo:
+    # E2.10 — local Tempo pinned to ADR-E0.5-01 baseline
+    # (2.7.0). Single-node mode; retention 3d; local
+    # filesystem block store.
+    image: grafana/tempo:2.7.0
+    container_name: gp-tempo
+    command:
+      - "-config.file=/etc/tempo/config/config.yaml"
+      - "-storage.trace.block.retention=72h"
+    user: "0"
+    volumes:
+      - ../grafana/tempo.yaml:/etc/tempo/config/config.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+
+  grafana:
+    # E2.10 — local Grafana pinned to ADR-E0.5-01 baseline
+    # (11.3.0). Mounts the dashboard catalogue + server
+    # config; Keycloak SSO bypassed for dev (admin mode
+    # only).
+    image: grafana/grafana:11.3.0
+    container_name: gp-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-genealogy}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_KEYCLOAK_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../grafana/grafana.yaml:/etc/grafana/grafana.ini:ro
+      - ../grafana/dashboards.yaml:/etc/grafana/dashboards/catalogue.yaml:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+  grafana-bootstrap:
+    # E2.10 — one-shot bootstrap that verifies all 6
+    # source-of-truth files are byte-identical between
+    # `platform/grafana/` and `platform/helm/.../files/grafana/`.
+    image: grafana/grafana:11.3.0
+    container_name: gp-grafana-bootstrap
+    restart: "no"
+    entrypoint: ["/bin/sh", "/scripts/bootstrap.sh"]
+    environment:
+      SOURCE_DIR: /source
+      MIRROR_DIR: /mirror
+    volumes:
+      - ./observability/grafana-bootstrap.sh:/scripts/bootstrap.sh:ro
+      - ../grafana:/source:ro
+      - ../../platform/helm/genealogy-platform/files/grafana:/mirror:ro
 
   kong:
     image: kong:3.8.0
@@ -445,3 +543,7 @@ volumes:
   minio-data:
   valkey-data:
   kafka-data:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  grafana-data:

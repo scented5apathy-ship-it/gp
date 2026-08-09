@@ -1,0 +1,307 @@
+# platform/grafana/dashboards.yaml
+#
+# E2.10 — Grafana dashboard catalogue (config-as-code).
+#
+# Per `tasks.md` E2.10 ("Dashboard cho Kong, Kafka, Temporal,
+# OpenFGA, Istio, Vault, database và workloads") + `design.md`
+# §13 ("SLI/SLO dashboard cho mỗi service") + NFR1 ("access
+# control + audit cho mọi dashboard view"), every Grafana
+# dashboard ships in `grafana/dashboards/<name>.json` (mounted
+# from this ConfigMap) and carries the platform standard:
+#
+#   - 7 required panels (RED rate / RED errors / Latency p99 /
+#     Saturation / Consumer lag / Outbox age / DLQ size / Media
+#     job / Projection freshness) per service dashboard;
+#   - 4 mandatory links (runbook + alert rules + service OWNERS
+#     + contract registry);
+#   - 3 required variables (`service.name`, `tenant_pseudo_id`,
+#     `deployment.environment`) — `tenant_id` / `user_id` /
+#     `email` / `oidc_subject` / `raw_dna` / `raw_pii` are
+#     FORBIDDEN in template variables;
+#   - 2 annotation feeds (alertmanager / rollouts-controller);
+#   - 1 audit trail (every dashboard view publishes a
+#     `dashboard_viewed` event to OTel Collector with
+#     `actor_pseudo_id` only);
+#   - tenant filter MUST be via `tenant_pseudo_id` (HMAC-SHA256
+#     of raw tenant_id) — never raw.
+#
+# The 7 mandatory dashboards are referenced by name in the
+# service-owned AlertManager routes + runbooks. The contract
+# enforcer (`scripts/lint-grafana-config.mjs`) parses each
+# dashboard JSON via the same `yaml` parser (jq-like
+# structural check; the literal JSON is mounted via Helm
+# `Files.Get` and rendered into ConfigMap).
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-grafana-dashboards
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: grafana
+    gp.genealogy/contract-only: "true"
+data:
+  catalogue.yaml: |
+    # Grafana dashboard catalogue (E2.10 source-of-truth).
+    # The 7 mandatory dashboards cover every platform component
+    # called out in `tasks.md` E2.10. Each dashboard is shipped
+    # as JSON in `grafana/dashboards/<slug>.json` and mounted
+    # into the Grafana Deployment via the `dashboards-configmap`
+    # sidecar.
+    dashboards:
+      - slug: api-overview
+        title: API Overview (RED metrics per service)
+        service_class: stateless-api
+        owner: platform-secondary
+        runbook: runbook/observability.md#api-overview
+        alertRules: platform/observability/alerts/grafana-rules.yaml
+        requiredPanels:
+          - red-rate
+          - red-errors
+          - latency-p99
+          - saturation
+          - consumer-lag
+          - outbox-age
+          - dlq-size
+        templateVariables:
+          - service.name
+          - tenant_pseudo_id
+          - deployment.environment
+        annotationFeeds:
+          - alertmanager
+          - rollouts-controller
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+            - trace_id
+        slo:
+          - api-availability
+          - canary-success
+      - slug: kong
+        title: Kong Gateway (latency, status, rate-limit, JWT)
+        service_class: edge-gateway
+        owner: platform-primary
+        runbook: runbook/kong.md#overview
+        alertRules: platform/observability/alerts/kong-rules.yaml
+        requiredPanels:
+          - kong-latency-p99
+          - kong-status-rate
+          - kong-rate-limit-drop
+          - kong-jwt-failure
+          - kong-cors-rejection
+        templateVariables:
+          - service.name
+          - route
+          - deployment.environment
+        annotationFeeds:
+          - alertmanager
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+        slo:
+          - edge-latency
+          - edge-error-rate
+      - slug: kafka
+        title: Kafka consumer / producer (lag, DLQ, throughput)
+        service_class: event-stream
+        owner: platform-secondary
+        runbook: runbook/kafka.md#consumer-lag
+        alertRules: platform/observability/alerts/kafka-rules.yaml
+        requiredPanels:
+          - consumer-lag
+          - dlq-size
+          - outbox-age
+          - producer-error-rate
+          - throughput-by-topic
+          - apicurio-schema-validation-failure
+        templateVariables:
+          - topic
+          - consumer_group
+          - deployment.environment
+        annotationFeeds:
+          - alertmanager
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+        slo:
+          - consumer-lag
+          - canary-success
+      - slug: temporal
+        title: Temporal workflow + activity (failure, timeout)
+        service_class: workflow
+        owner: platform-primary
+        runbook: runbook/temporal.md#workflow-failure
+        alertRules: platform/observability/alerts/temporal-rules.yaml
+        requiredPanels:
+          - workflow-failure-rate
+          - workflow-timeout-rate
+          - workflow-pending-count
+          - activity-retry-rate
+          - activity-heartbeat-lag
+          - namespace-throughput
+        templateVariables:
+          - namespace
+          - workflow_type
+          - deployment.environment
+        annotationFeeds:
+          - alertmanager
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+        slo:
+          - workflow-success
+      - slug: openfga
+        title: OpenFGA authorization (latency, denial rate)
+        service_class: authorization
+        owner: appsec-primary
+        runbook: runbook/openfga.md#denial-spike
+        alertRules: platform/observability/alerts/openfga-rules.yaml
+        requiredPanels:
+          - openfga-check-latency-p99
+          - openfga-denial-rate
+          - openfga-cache-hit-rate
+          - openfga-store-mismatch
+        templateVariables:
+          - store_id
+          - deployment.environment
+        annotationFeeds:
+          - alertmanager
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+        slo:
+          - authz-latency
+          - authz-correctness
+      - slug: istio
+        title: Istio mesh (mTLS, sidecar, retry)
+        service_class: service-mesh
+        owner: platform-primary
+        runbook: runbook/istio.md#mtls-coverage
+        alertRules: platform/observability/alerts/istio-rules.yaml
+        requiredPanels:
+          - mtls-coverage
+          - sidecar-injection-rate
+          - mesh-retry-amplification
+          - authorization-policy-deny
+          - request-volume
+        templateVariables:
+          - service.namespace
+          - source_workload
+          - destination_workload
+        annotationFeeds:
+          - alertmanager
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+        slo:
+          - mesh-mtls-coverage
+      - slug: vault
+        title: Vault + cloud KMS (token TTL, audit, seal)
+        service_class: secret-management
+        owner: appsec-primary
+        runbook: runbook/vault.md#token-ttl
+        alertRules: platform/observability/alerts/vault-rules.yaml
+        requiredPanels:
+          - vault-token-ttl-distribution
+          - vault-audit-failure
+          - vault-seal-status
+          - vault-kms-call-rate
+          - vault-policy-violation
+        templateVariables:
+          - namespace
+          - policy
+          - deployment.environment
+        annotationFeeds:
+          - alertmanager
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+        slo:
+          - vault-availability
+          - kms-availability
+      - slug: database
+        title: PostgreSQL (connections, lock, replication, RLS)
+        service_class: database
+        owner: data-primary
+        runbook: runbook/postgres.md#connection-saturation
+        alertRules: platform/observability/alerts/postgres-rules.yaml
+        requiredPanels:
+          - pg-active-connections
+          - pg-idle-in-transaction
+          - pg-lock-wait
+          - pg-replication-lag
+          - pg-rls-policy-violation
+          - pg-statement-timeout
+          - pg-backup-age
+        templateVariables:
+          - database
+          - service.name
+          - deployment.environment
+        annotationFeeds:
+          - alertmanager
+          - backup-cronjob
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+        slo:
+          - db-availability
+          - rpo
+          - rto
+      - slug: workload
+        title: Workload overview (11 services + 5 workers + 6 platform)
+        service_class: workload
+        owner: platform-secondary
+        runbook: runbook/observability.md#workload
+        alertRules: platform/observability/alerts/grafana-rules.yaml
+        requiredPanels:
+          - pod-restart-rate
+          - pod-cpu-throttle
+          - pod-memory-saturation
+          - hpa-target
+          - pdb-eviction
+          - node-pressure
+          - rollout-progress
+          - canary-analysis-pass
+        templateVariables:
+          - service.name
+          - deployment.environment
+        annotationFeeds:
+          - alertmanager
+          - rollouts-controller
+        audit:
+          event: dashboard_viewed
+          fields:
+            - actor_pseudo_id
+            - dashboard.slug
+        slo:
+          - workload-availability
+          - canary-success
+    templateVariablesForbidden:
+      - tenant_id
+      - user_id
+      - email
+      - oidc_subject
+      - raw_dna
+      - raw_pii
+    auditFields:
+      - actor_pseudo_id
+      - dashboard.slug
+      - trace_id
+      - tenant_pseudo_id
