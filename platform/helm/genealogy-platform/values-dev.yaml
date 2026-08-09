@@ -85,6 +85,22 @@ components:
     # preflight script refuses to start with this mode in any other
     # environment.
     unsealMode: dev
+    # Dev profile always uses Shamir seal (no cloud KMS in dev).
+    seal:
+      type: shamir
+    # Dev profile mounts the auth-methods + policies + KMS
+    # abstraction ConfigMaps from the chart mirror. The
+    # bootstrap Job still runs on every `helm upgrade`.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    persistence:
+      storageClass: standard
+      size: 2Gi
   storage:
     driver: minio
     encryption: envelope

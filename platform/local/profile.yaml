@@ -335,3 +335,38 @@ istio:
     outboundPolicy: REGISTRY_ONLY
     inboundPolicy: MUTUAL_TLS
     retryBudget: null
+
+# Vault + cloud KMS abstraction (E2.6) — local dev profile.
+# The local stack runs the upstream `hashicorp/vault` server
+# in `dev` mode with auto-unseal + the four source-of-truth
+# ConfigMaps. The `vault-bootstrap` Helm-hook Job is rendered
+# by the umbrella chart; on dev it no-ops (the dev server is
+# already unsealed via `VAULT_DEV_ROOT_TOKEN_ID`).
+#
+# Cloud KMS is NOT exercised locally — the SaaS values file
+# declares `awskms` + an IRSA-backed key ARN. On dev the
+# `seal.type: shamir` override means the Vault server
+# never touches the cloud KMS endpoint.
+vault:
+  # Image pin — ADR-E0.5-01 baseline (Vault 1.17.x).
+  image: hashicorp/vault:1.17.1
+  # Vault Agent Injector image — same upstream pin as
+  # `components.vault.injectorImage` in `values.yaml`.
+  injectorImage: hashicorp/vault-k8s:1.5.0
+  # Dev profile always uses Shamir seal.
+  seal:
+    type: shamir
+  # Dev-mode auto-unseal token (NEVER use in production).
+  devRootTokenId: genealogy-dev-root-token
+  # Dev-mode listener port (8200 + cluster 8201).
+  apiPort: 8200
+  clusterPort: 8201
+  # Dev profile mounts the source-of-truth ConfigMaps via
+  # the docker-compose volume below.
+  configPath: /vault/config/config.hcl
+  # KMS abstraction — dev always uses Vault transit (no cloud
+  # KMS in dev). The bootstrap Job no-ops the awskms seal
+  # block.
+  kmsAbstraction:
+    activeProvider: vault-transit
+

@@ -1,0 +1,203 @@
+# Prometheus alert rules for Vault + cloud KMS (E2.6).
+#
+# Per `tasks.md` E2.6 + ADR-E0.5-01 the Vault cluster must be
+# observable. The SLI sources are:
+#   - Vault server Prometheus metrics on port 8200
+#     (`vault_core_unsealed`, `vault_audit_log_request`,
+#     `vault_runtime_alloc_bytes`, `vault_token_count`).
+#   - Vault Agent Injector Prometheus metrics (per workload).
+#   - Cloud KMS API metrics (SaaS — CloudWatch exporter).
+#   - Vault seal status (`vault_seal_status`).
+#
+# The rules below mirror the istio + temporal rule groups in
+# `platform/observability/alerts/`: severity ladder (warning →
+# critical), `for:` clause tuned per severity, and `runbook_url`
+# pointing at `runbook/vault.md`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-vault-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    app.kubernetes.io/version: "1.17"
+    gp.genealogy/contract-only: "true"
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    # -----------------------------------------------------------------
+    # Vault server availability — the canonical SLO SLI from
+    # `ownership-catalog.md` §3 (99.99%, secret retrieval p95 < 100 ms).
+    # -----------------------------------------------------------------
+    - name: vault.availability
+      interval: 30s
+      rules:
+        - alert: VaultServerDown
+          expr: up{job="vault"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: vault
+            slo: vault.availability
+          annotations:
+            summary: "Vault server is unreachable"
+            description: "Prometheus has not been able to scrape the Vault server for 2m. Secret retrieval will fail across the platform."
+            runbook_url: "https://runbooks.genealogy.local/vault#server-down"
+        - alert: VaultSealed
+          expr: vault_core_unsealed == 0
+          for: 1m
+          labels:
+            severity: critical
+            component: vault
+            slo: vault.availability
+          annotations:
+            summary: "Vault is sealed"
+            description: "Vault has been sealed for 1m. The platform cannot issue or renew tokens. Investigate the active KMS seal provider immediately."
+            runbook_url: "https://runbooks.genealogy.local/vault#sealed"
+        - alert: VaultSecretRetrievalLatencyHigh
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (
+                rate(vault_audit_log_response_time_bucket{type="response"}[5m])
+              )
+            ) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+            component: vault
+            slo: vault.availability
+          annotations:
+            summary: "Vault secret retrieval p95 latency > 100 ms"
+            description: "p95 of secret retrieval exceeds the 100 ms SLO target (`ownership-catalog.md` §3)."
+            runbook_url: "https://runbooks.genealogy.local/vault#retrieval-latency"
+    # -----------------------------------------------------------------
+    # Token / lease lifecycle. A token pile-up signals a leak
+    # (workload not revoking on shutdown); a near-empty token
+    # store signals a workload that cannot authenticate.
+    # -----------------------------------------------------------------
+    - name: vault.tokens
+      interval: 30s
+      rules:
+        - alert: VaultTokenCountHigh
+          expr: vault_token_count > 50000
+          for: 10m
+          labels:
+            severity: warning
+            component: vault
+            slo: vault.token_count
+          annotations:
+            summary: "Vault token count > 50000"
+            description: "More than 50000 active tokens for 10m. A workload is likely leaking tokens. Investigate the workload's `agent-revoke-on-shutdown` annotation."
+            runbook_url: "https://runbooks.genealogy.local/vault#token-count-high"
+        - alert: VaultTokenCountCritical
+          expr: vault_token_count > 100000
+          for: 5m
+          labels:
+            severity: critical
+            component: vault
+            slo: vault.token_count
+          annotations:
+            summary: "Vault token count > 100000 (critical)"
+            description: "More than 100000 active tokens for 5m. Page security on-call — a leaked-token incident is likely."
+            runbook_url: "https://runbooks.genealogy.local/vault#token-count-critical"
+        - alert: VaultTokenCreationFailureRateHigh
+          expr: |
+            sum(rate(vault_audit_log_response_time_count{path="auth/token/create",type="request"}[5m]))
+              -
+            sum(rate(vault_audit_log_response_time_count{path="auth/token/create",type="response"}[5m]))
+              > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            component: vault
+            slo: vault.token_create_failure_rate
+          annotations:
+            summary: "Vault token creation failure rate > 5%"
+            description: "More than 5% of token-creation requests are failing. The Kubernetes auth method may be misconfigured."
+            runbook_url: "https://runbooks.genealogy.local/vault#token-create-failure"
+    # -----------------------------------------------------------------
+    # KMS provider (SaaS cloud KMS or on-prem Vault transit).
+    # -----------------------------------------------------------------
+    - name: vault.kms
+      interval: 30s
+      rules:
+        - alert: VaultKMSProviderUnhealthy
+          expr: |
+            absent(vault_seal_status{type="awskms"}) == 0
+            and
+            vault_seal_status{type="awskms"} == 0
+          for: 5m
+          labels:
+            severity: warning
+            component: vault
+            slo: vault.kms_provider
+          annotations:
+            summary: "Vault KMS provider unhealthy"
+            description: "The active KMS provider (AWS KMS / Vault transit) is unhealthy. Auto-unseal may be failing. Check the IRSA / pod identity binding or the transit token."
+            runbook_url: "https://runbooks.genealogy.local/vault#kms-unhealthy"
+        - alert: VaultKMSProviderUnhealthyCritical
+          expr: |
+            vault_seal_status{type="awskms"} == 0
+            for: 15m
+          labels:
+            severity: critical
+            component: vault
+            slo: vault.kms_provider
+          annotations:
+            summary: "Vault KMS provider unhealthy for 15m (critical)"
+            description: "The active KMS provider has been unhealthy for 15m. Vault cannot auto-unseal on a restart. Page sre on-call."
+            runbook_url: "https://runbooks.genealogy.local/vault#kms-unhealthy-critical"
+    # -----------------------------------------------------------------
+    # Storage backend (Raft integrated storage). A failed
+    # leader election or low free disk signals an imminent
+    # outage.
+    # -----------------------------------------------------------------
+    - name: vault.storage
+      interval: 1m
+      rules:
+        - alert: VaultRaftStorageLowDisk
+          expr: |
+            (1 - (vault_raft_storage_free_bytes / vault_raft_storage_total_bytes)) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+            component: vault
+            slo: vault.storage
+          annotations:
+            summary: "Vault Raft storage > 85% full"
+            description: "Raft storage is > 85% full. Audit + KV entries cannot be retained indefinitely. Expand the StatefulSet PVC."
+            runbook_url: "https://runbooks.genealogy.local/vault#storage-low"
+        - alert: VaultRaftNoLeader
+          expr: vault_raft_leader_id == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: vault
+            slo: vault.raft_leader
+          annotations:
+            summary: "Vault Raft cluster has no leader"
+            description: "Raft leader election has failed for 2m. The cluster cannot accept writes. Page sre on-call."
+            runbook_url: "https://runbooks.genealogy.local/vault#raft-no-leader"
+    # -----------------------------------------------------------------
+    # Bootstrap Job — the Helm-hook Job that initialises the
+    # cluster on first install. A failed Job blocks every
+    # subsequent `helm upgrade`.
+    # -----------------------------------------------------------------
+    - name: vault.bootstrap
+      interval: 1m
+      rules:
+        - alert: VaultBootstrapJobFailed
+          expr: |
+            kube_job_status_failed{job_name="vault-bootstrap"} > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: vault
+            slo: vault.bootstrap
+          annotations:
+            summary: "Vault bootstrap Job failing"
+            description: "The vault-bootstrap Job has been failing for 5m. Check the Helm-hook logs."
+            runbook_url: "https://runbooks.genealogy.local/vault#bootstrap-failed"

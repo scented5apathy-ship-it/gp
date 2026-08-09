@@ -147,7 +147,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - Quy định nơi cấu hình timeout/retry để tránh retry amplification.
   - Kiểm thử deny-by-default và service identity giả mạo.
 
-- [ ] E2.6 Cấu hình Vault và cloud KMS abstraction
+- [x] E2.6 Cấu hình Vault và cloud KMS abstraction
 
   - Thiết lập auth method, short-lived credentials, policy theo workload và rotation.
   - Cloud KMS bọc key SaaS; Vault/on-premise key provider dùng cùng application contract.

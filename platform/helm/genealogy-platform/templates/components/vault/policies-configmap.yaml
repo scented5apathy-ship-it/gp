@@ -1,0 +1,140 @@
+{{/*
+Vault policies ConfigMap — renders the per-component policy
+bodies as individual files. The `vault-bootstrap` Helm-hook
+Job iterates over `/vault/policies/*.hcl` and calls
+`vault policy write <name> <file>` for each.
+
+The bodies are extracted from the source-of-truth
+`platform/vault/policies.yaml` so the chart mirrors the
+single source of truth. The deep linter asserts that the
+bodies here are byte-identical to the source-of-truth (the
+`scripts/check-platform-baseline.mjs` E2.6 invariants
+enforce this).
+*/}}
+{{- $vault := .Values.components.vault }}
+{{- if $vault.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-vault-policies-body
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    app.kubernetes.io/version: {{ $vault.image.tag | quote }}
+data:
+  default.hcl: |
+    # Default policy — deny all (E2.6 §3.1).
+    path "*" {
+      capabilities = ["deny"]
+    }
+  services-read-secrets.hcl: |
+    # services-read-secrets — E2.6 §3.2.
+    path "secret/data/services/{{identity.entity.aliases.auth_kubernetes_4a3d.accessor.metadata.service_account_name}}/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/services/{{identity.entity.aliases.auth_kubernetes_4a3d.accessor.metadata.service_account_name}}/*" {
+      capabilities = ["list"]
+    }
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+  bff-read-secrets.hcl: |
+    # bff-read-secrets — E2.6 §3.3.
+    path "secret/data/bff/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/bff/*" {
+      capabilities = ["list"]
+    }
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+  workers-read-secrets.hcl: |
+    # workers-read-secrets — E2.6 §3.4.
+    path "secret/data/workers/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/workers/*" {
+      capabilities = ["list"]
+    }
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+  data-read-secrets.hcl: |
+    # data-read-secrets — E2.6 §3.5.
+    path "secret/data/data/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/data/*" {
+      capabilities = ["list"]
+    }
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+  data-rotate-secrets.hcl: |
+    # data-rotate-secrets — E2.6 §3.6.
+    path "secret/data/data/*" {
+      capabilities = ["read", "create", "update"]
+    }
+    path "secret/metadata/data/*" {
+      capabilities = ["read", "list"]
+    }
+    path "database/creds/*" {
+      capabilities = ["read"]
+    }
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+  observability-read-secrets.hcl: |
+    # observability-read-secrets — E2.6 §3.7.
+    path "secret/data/observability/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/observability/*" {
+      capabilities = ["list"]
+    }
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+  ci-read-secrets.hcl: |
+    # ci-read-secrets — E2.6 §3.8.
+    path "secret/data/ci/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/ci/*" {
+      capabilities = ["list"]
+    }
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+  ci-write-deploy-markers.hcl: |
+    # ci-write-deploy-markers — E2.6 §3.9.
+    path "secret/data/ci/deploy-markers/*" {
+      capabilities = ["read", "create", "update"]
+    }
+    path "secret/metadata/ci/deploy-markers/*" {
+      capabilities = ["read", "list"]
+    }
+{{- end }}

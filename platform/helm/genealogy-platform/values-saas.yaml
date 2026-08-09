@@ -52,6 +52,15 @@ components:
       enabled: true
   vault:
     replicas: 5
+    # SaaS uses AWS KMS auto-unseal. The key ARN is injected
+    # via `secretRefs.vault.kms.keyArn` (External Secrets
+    # Operator resolves it from the AWS KMS-backed secret).
+    # The literal ARN NEVER lives in this file.
+    seal:
+      type: awskms
+      # kmsKeyId is the canonical ARN pattern; the actual
+      # ARN is resolved by External Secrets at runtime.
+      kmsKeyId: arn:aws:kms:ap-southeast-1:REPLACE_ME:alias/genea-vault-root
   storage:
     driver: s3-managed
     region: ap-southeast-1

@@ -203,6 +203,48 @@ services:
       timeout: 5s
       retries: 10
 
+  vault:
+    # E2.6 — Vault dev server. The local stack runs Vault in
+    # `dev` mode with auto-unseal; the production / staging
+    # chart renders the same image with the `awskms` or
+    # `transit` seal. The four source-of-truth ConfigMaps
+    # (`platform/vault/*.yaml`) are mounted into `/vault/config`
+    # so the smoke + contract tests exercise the same files
+    # the umbrella chart applies.
+    image: hashicorp/vault:1.17.1
+    container_name: gp-vault
+    command: ["server", "-dev", "-dev-root-token-id=genealogy-dev-root-token", "-dev-listen-address=0.0.0.0:8200"]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: genealogy-dev-root-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_API_ADDR: http://0.0.0.0:8200
+      VAULT_LOCAL_CONFIG: |
+        ui = true
+        disable_mlock = true
+        default_lease_ttl_duration = "30m"
+        max_lease_ttl_duration = "24h"
+        telemetry {
+          prometheus {
+            is_enabled = true
+            retain_for = "24h"
+          }
+        }
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"     # Vault API (dev mode only; production uses 8200 + 8201)
+    volumes:
+      - ../vault/server-config.yaml:/vault/config/server-config.yaml:ro
+      - ../vault/auth-methods.yaml:/vault/config/auth-methods.yaml:ro
+      - ../vault/policies.yaml:/vault/config/policies.yaml:ro
+      - ../vault/kms-abstraction.yaml:/vault/config/kms-abstraction.yaml:ro
+      - ../vault/injector-templates.yaml:/vault/config/injector-templates.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8200/v1/sys/health?standbyok=true || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres-data:
   minio-data:

@@ -1,0 +1,87 @@
+{{/*
+Vault auth-methods ConfigMap — mirrors the source-of-truth
+`platform/vault/auth-methods.yaml` so the `vault-bootstrap`
+Helm-hook Job can render the per-namespace role bindings
+after Vault initialisation.
+
+The bootstrap Job iterates over the `roles` list and calls
+`vault write auth/kubernetes/role/<name>` for each entry.
+The Kubernetes host + CA cert are templated by the chart at
+deploy time.
+*/}}
+{{- $vault := .Values.components.vault }}
+{{- if $vault.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-vault-auth-methods
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    app.kubernetes.io/version: {{ $vault.image.tag | quote }}
+data:
+  roles.yaml: |
+    # Per-namespace role bindings (E2.6 §2).
+    authMethods:
+      - name: kubernetes
+        type: kubernetes
+        config:
+          host: https://kubernetes.default.svc.cluster.local
+          kubernetes_ca_cert: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      - name: keycloak-oidc
+        type: jwt
+        config:
+          oidc_discovery_url: https://keycloak.gp-platform.svc.cluster.local/realms/genealogy-platform
+          oidc_client_id: vault-operator
+          bound_audiences:
+            - vault
+      - name: github-actions
+        type: approle
+        config:
+          secret_id_ttl: 2160h
+          token_policies:
+            - ci-read-secrets
+            - ci-write-deploy-markers
+    roles:
+      - name: genea-services-default
+        namespace: gp-services
+        serviceAccounts:
+          - genea-services-default
+        policies:
+          - services-read-secrets
+      - name: genea-workers-default
+        namespace: gp-workers
+        serviceAccounts:
+          - genea-workers-default
+        policies:
+          - workers-read-secrets
+      - name: genea-bff-default
+        namespace: gp-bff
+        serviceAccounts:
+          - web-bff
+          - public-api
+        policies:
+          - bff-read-secrets
+      - name: genea-data-default
+        namespace: gp-data
+        serviceAccounts:
+          - postgres
+          - kafka
+          - vault-bootstrap
+        policies:
+          - data-read-secrets
+          - data-rotate-secrets
+      - name: genea-observability-default
+        namespace: gp-observability
+        serviceAccounts:
+          - otel-collector
+          - prometheus
+        policies:
+          - observability-read-secrets
+      - name: ci-runner
+        approle: github-actions
+        policies:
+          - ci-read-secrets
+          - ci-write-deploy-markers
+{{- end }}

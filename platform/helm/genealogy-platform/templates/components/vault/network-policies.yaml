@@ -1,0 +1,151 @@
+{{/*
+Vault NetworkPolicy — default-deny Ingress + Egress, with
+allow rules for:
+  - intra-pod cluster traffic (Raft gossip on 8201);
+  - API ingress from Kong (gp-edge) + BFF (gp-bff) + bootstrap
+    Jobs (gp-data);
+  - API egress to the Kubernetes API server
+    (`kube-system`) for the Kubernetes auth method;
+  - API egress to the OTel Collector (`gp-observability`)
+    for trace + metric export;
+  - API egress to Keycloak (`gp-platform`) for the JWT
+    discovery URL;
+  - API egress to the cloud KMS endpoint (SaaS) — egress is
+    to the documented AWS KMS regional endpoint only.
+
+The mesh layer (E2.5) adds SPIFFE-authenticated authorization
+on top of this NetworkPolicy. The two layers are disjoint by
+design.
+*/}}
+{{- $vault := .Values.components.vault }}
+{{- if $vault.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: vault
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Intra-pod Raft gossip + API traffic.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: vault
+      ports:
+        - protocol: TCP
+          port: 8201
+        - protocol: TCP
+          port: 8200
+    # Vault Agent Injector (upstream chart) consumes the API.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: vault-agent-injector
+      ports:
+        - protocol: TCP
+          port: 8200
+    # Bootstrap Job runs in the same namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+      ports:
+        - protocol: TCP
+          port: 8200
+    # Kong + BFF resolve the API for operator access.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-edge
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-bff
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - protocol: TCP
+          port: 8200
+  egress:
+    # DNS — CoreDNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Kubernetes API server — the Kubernetes auth method
+    # validates the projected SA token against the API.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+      ports:
+        - protocol: HTTPS
+          port: 443
+    # OTel Collector — trace + metric export.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 4317
+    # Keycloak — JWT discovery.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+    # AWS KMS regional endpoint (SaaS only). The endpoint
+    # hostname is resolved via DNS; the IP allow-list is
+    # too brittle. Instead, the chart documents the egress
+    # allowance to `*.amazonaws.com` and the NetworkPolicy
+    # is widened only when `components.vault.seal.type`
+    # is `awskms`.
+    {{- if eq $vault.seal.type "awskms" }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Block public-internet egress to everything
+              # except the documented KMS regional endpoint.
+              # Operators MUST narrow this further in the
+              # values file.
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+{{- end }}

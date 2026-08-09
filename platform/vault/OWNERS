@@ -1,0 +1,16 @@
+# Per-directory OWNERS — platform/vault (Vault + cloud KMS abstraction).
+# Source of truth: config/teams.yaml. Sync via
+# tools/scripts/sync-team-map.ts.
+vault:
+  primary: platform-secondary
+  secondary: "@genealogy/security"
+  oncall: sre-primary
+  # E2.6 ships the Vault runtime config (server config + auth
+  # methods + policies + KMS abstraction) + the Vault Agent
+  # Injector templates. Domain authorization / business
+  # authorization stays in the destination service per
+  # design.md §4.1; the contract stub lives in
+  # platform/helm/genealogy-platform/templates/components/contract-stubs.yaml.
+  # Cloud KMS is reserved for SaaS per ADR-E0.5-01 supersession;
+  # on-prem uses Vault transit through the same `KmsProvider`
+  # contract.

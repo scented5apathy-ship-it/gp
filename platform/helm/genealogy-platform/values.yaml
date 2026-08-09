@@ -513,10 +513,160 @@ components:
         memory: 256Mi
   vault:
     enabled: true
-    # KMS abstraction (E2.6) wires cloud KMS for SaaS, transit Vault
-    # for on-premise; the chart only ships the server + agent.
+    # E2.6 — Vault + cloud KMS abstraction. The chart ships
+    # the Vault server (StatefulSet), the Vault Agent Injector
+    # (via the upstream `hashicorp/vault-k8s` subchart), the
+    # `vault-bootstrap` Helm-hook Job that initialises the
+    # Raft cluster + enables the auth methods + writes the
+    # per-component policies, and the four source-of-truth
+    # ConfigMaps that mirror `platform/vault/`.
+    #
+    # SaaS uses `awskms` (AWS KMS auto-unseal via IRSA /
+    # pod identity). On-prem uses `transit` (Vault transit
+    # auto-unseal against a bootstrap Vault cluster). Dev
+    # uses `shamir` (operator unseals manually).
+    #
+    # The deep linter (`scripts/lint-vault-config.mjs`) enforces:
+    #   - server-config HCL declares the active seal stanza;
+    #   - policies.yaml carries deny-all default + path-scoped
+    #     per-component ACLs + no `root` capability;
+    #   - kms-abstraction.yaml pins the activeProvider per env;
+    #   - no literal AWS access key / secret key in any file;
+    #   - injector-templates.yaml carries agent-inject: "true"
+    #     + agent-revoke-on-shutdown: "true" for every
+    #     workload class.
     unsealMode: auto
     replicas: 3
+    # Image pin — ADR-E0.5-01 baseline (Vault 1.17.x). The
+    # umbrella chart renders the upstream `hashicorp/vault`
+    # subchart for the server; this image reference is the
+    # canonical baseline. Renovate bumps the patch line per
+    # ADR-E0.5-01.
+    image:
+      repository: hashicorp/vault
+      tag: "1.17.1"
+      registry: docker.io
+    # Injector image — used by the upstream
+    # `hashicorp/vault-k8s` subchart. Same pin as the server.
+    injectorImage:
+      repository: hashicorp/vault-k8s
+      tag: "1.5.0"
+      registry: docker.io
+    # KMS seal — SaaS uses AWS KMS auto-unseal; on-prem uses
+    # Vault transit auto-unseal; dev uses Shamir. The
+    # `kmsKeyId` + `transitAddress` are injected at deploy
+    # time via the per-env values files; the chart never
+    # inlines a literal AWS key.
+    seal:
+      # One of: `awskms`, `transit`, `shamir`.
+      type: awskms
+      # AWS KMS key ARN — only when `type == awskms`.
+      # The dev / on-prem values files override this.
+      kmsKeyId: arn:aws:kms:ap-southeast-1:000000000000:alias/genea-vault-root
+      # Vault transit address — only when `type == transit`.
+      transitAddress: https://vault-bootstrap.gp-platform.svc.cluster.local:8200
+      transitKeyName: genealogy-platform-root
+      # Kubernetes Secret carrying the transit token — only
+      # when `type == transit`. The Secret is created by
+      # External Secrets Operator against the bootstrap Vault.
+      tokenSecret: vault-bootstrap-token
+    # Source-of-truth list of ConfigMaps mirrored from
+    # `platform/vault/`. The chart mounts them into the
+    # StatefulSet + the `vault-bootstrap` Helm-hook Job.
+    configPaths:
+      serverConfig: files/vault/server-config.yaml
+      authMethods: files/vault/auth-methods.yaml
+      policies: files/vault/policies.yaml
+      kmsAbstraction: files/vault/kms-abstraction.yaml
+      injectorTemplates: files/vault/injector-templates.yaml
+    # Per-component policy ACL list — pinned posture for the
+    # platform. The `vault-bootstrap` Job writes each entry
+    # via `vault policy write`. Each policy is path-scoped to
+    # the documented KV v2 mount (`secret/data/<scope>/...`).
+    policies:
+      enabledPolicies:
+        - default
+        - services-read-secrets
+        - bff-read-secrets
+        - workers-read-secrets
+        - data-read-secrets
+        - data-rotate-secrets
+        - observability-read-secrets
+        - ci-read-secrets
+        - ci-write-deploy-markers
+      forbiddenCapabilities:
+        - root
+        - sudo
+    # Auth method list — pinned posture for the platform.
+    # The Kubernetes auth method is the canonical workload
+    # identity; Keycloak JWT is reserved for human operators;
+    # GitHub Actions AppRole is reserved for CI runners.
+    authMethods:
+      enabled:
+        - kubernetes
+        - keycloak-oidc
+        - github-actions
+      forbidden:
+        - userpass
+        - ldap
+        - cert
+    # KMS abstraction contract — application code binds to
+    # `com.genealogy.platform.kms.KmsProvider`. The runtime
+    # provider is selected by `seal.type` + per-env values.
+    kmsAbstraction:
+      contractInterface: com.genealogy.platform.kms.KmsProvider
+      activeProvider:
+        saas: aws-kms
+        onprem: vault-transit
+        dev: vault-transit
+      # Per-data-class key assignments per
+      # `privacy-and-legal-gate.md` §5. The linter rejects
+      # a reused keyId across two classes.
+      dataClasses:
+        - PII.IDENTITY
+        - PII.QUASI_ID
+        - PII.SENSITIVE
+        - GENETIC.RAW
+        - GENETIC.METADATA
+        - GENETIC.DERIVED
+        - MEDIA.RAW
+        - MEDIA.DERIVATIVE
+        - AUDIT.APPENDONLY
+        - OPS.METADATA
+        - SECRET
+    # Telemetry — Prometheus on 8200 (alert source) + OTel
+    # trace export to the platform OTel Collector (E2.10).
+    # The OTel endpoint is overridable per env; the default
+    # points at the gp-observability collector.
+    telemetry:
+      prometheusEnabled: true
+      otelCollectorHost: otel-collector.gp-observability.svc.cluster.local
+      otelCollectorPort: 4317
+    # Persistence — local cache + Raft storage on the gp-data
+    # StorageClass (encrypted-at-rest per ADR-E0.5-02 +
+    # `privacy-and-legal-gate.md` §6).
+    persistence:
+      storageClass: gp-data-ssd
+      size: 50Gi
+    # Resources — sized for SaaS / on-prem (3 replicas). The
+    # dev values file overrides to a single replica + smaller
+    # requests.
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    # Bootstrap Job resources — small, runs once per
+    # `helm upgrade`.
+    bootstrapResources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   storage:
     # S3/MinIO + bucket policy (E2.7).
     driver: minio

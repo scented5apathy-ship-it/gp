@@ -69,7 +69,171 @@ const fail = (msg) => {
 
 if (!existsSync(HELM_DIR)) {
   fail(`umbrella chart missing — expected ${relative(ROOT, HELM_DIR)}`);
-  finish();
+// ---------------------------------------------------------------------------
+// E2.6 — Vault + cloud KMS abstraction runtime invariants (static
+// check; `scripts/lint-vault-config.mjs` runs the deep YAML
+// validation).
+// ---------------------------------------------------------------------------
+const VAULT_DIR = join(ROOT, "platform", "vault");
+const VAULT_FILES = [
+  join(VAULT_DIR, "server-config.yaml"),
+  join(VAULT_DIR, "auth-methods.yaml"),
+  join(VAULT_DIR, "policies.yaml"),
+  join(VAULT_DIR, "kms-abstraction.yaml"),
+  join(VAULT_DIR, "injector-templates.yaml"),
+];
+const vaultTemplates = join(HELM_DIR, "templates", "components", "vault");
+const REQUIRED_VAULT_TEMPLATES = [
+  "statefulset.yaml",
+  "services.yaml",
+  "serviceaccounts.yaml",
+  "init-scripts-configmap.yaml",
+  "policies-configmap.yaml",
+  "kms-abstraction-configmap.yaml",
+  "auth-methods-configmap.yaml",
+  "bootstrap-job.yaml",
+  "network-policies.yaml",
+];
+
+for (const f of VAULT_FILES) {
+  if (!existsSync(f)) {
+    fail(`E2.6 source-of-truth file missing — ${relative(ROOT, f)}`);
+  }
+}
+
+for (const tpl of REQUIRED_VAULT_TEMPLATES) {
+  const p = join(vaultTemplates, tpl);
+  if (!existsSync(p)) {
+    fail(`E2.6 helm template missing — ${relative(ROOT, p)}`);
+  }
+}
+
+if (existsSync(valuesPath)) {
+  const v = readFileSync(valuesPath, "utf8");
+  // ADR-E0.5-01 baseline pin (Vault 1.17.x) plus the
+  // Vault Agent Injector image the chart's `vault-k8s`
+  // subchart consumes.
+  if (!/tag:\s*"1\.17\.1"/.test(v)) {
+    fail("values.yaml must pin Vault image tag to 1.17.1 (ADR-E0.5-01)");
+  }
+  if (!/repository:\s*hashicorp\/vault-k8s/.test(v)) {
+    fail("values.yaml must declare the Vault Agent Injector image (E2.6 §5)");
+  }
+  // KMS seal — the active seal type is rendered into the
+  // StatefulSet env block; the chart never inlines a literal
+  // AWS key.
+  if (!/seal:\s*\n\s*type:\s*awskms/.test(v)) {
+    fail("values.yaml must declare components.vault.seal.type: awskms (E2.6 §4)");
+  }
+  if (!/kmsKeyId:\s*arn:aws:kms/.test(v)) {
+    fail("values.yaml must declare components.vault.seal.kmsKeyId (E2.6 §4)");
+  }
+  // Source-of-truth ConfigMap paths.
+  for (const path of [
+    "serverConfig:",
+    "authMethods:",
+    "policies:",
+    "kmsAbstraction:",
+    "injectorTemplates:",
+  ]) {
+    if (!new RegExp(`${path}\\s*files/vault/`).test(v)) {
+      fail(`values.yaml must declare components.vault.configPaths.${path} (E2.6 §1)`);
+    }
+  }
+  // Policy + auth method allow-lists.
+  if (!/enabledPolicies:\s*\n\s*-\s*default/.test(v)) {
+    fail("values.yaml must declare components.vault.policies.enabledPolicies (E2.6 §3)");
+  }
+  if (!/forbiddenCapabilities:\s*\n\s*-\s*root/.test(v)) {
+    fail("values.yaml must declare components.vault.policies.forbiddenCapabilities (E2.6 §3)");
+  }
+  if (!/authMethods:\s*\n\s*enabled:\s*\n\s*-\s*kubernetes/.test(v)) {
+    fail("values.yaml must declare components.vault.authMethods.enabled (E2.6 §2)");
+  }
+  if (!/forbidden:\s*\n\s*-\s*userpass/.test(v)) {
+    fail("values.yaml must declare components.vault.authMethods.forbidden (E2.6 §2)");
+  }
+  // KMS abstraction contract.
+  if (!/contractInterface:\s*com\.genealogy\.platform\.kms\.KmsProvider/.test(v)) {
+    fail("values.yaml must declare components.vault.kmsAbstraction.contractInterface (E2.6 §4)");
+  }
+  // Per-data-class key assignments.
+  for (const cls of [
+    "PII.IDENTITY",
+    "PII.QUASI_ID",
+    "PII.SENSITIVE",
+    "GENETIC.RAW",
+    "GENETIC.METADATA",
+    "GENETIC.DERIVED",
+    "MEDIA.RAW",
+    "MEDIA.DERIVATIVE",
+    "AUDIT.APPENDONLY",
+    "OPS.METADATA",
+    "SECRET",
+  ]) {
+    if (!new RegExp(`-\\s*${cls.replace(/\./g, "\\.")}\\s*$`, "m").test(v)) {
+      fail(`values.yaml must declare data class '${cls}' in components.vault.kmsAbstraction.dataClasses (E2.6 §4)`);
+    }
+  }
+}
+
+// Alert rules must cover the 5 E2.6 signal classes.
+if (!existsSync(ALERTS_DIR) || !existsSync(join(ALERTS_DIR, "vault-rules.yaml"))) {
+  fail("platform/observability/alerts/vault-rules.yaml missing (E2.6 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR, "vault-rules.yaml"), "utf8");
+  for (const alert of [
+    "VaultServerDown",
+    "VaultSealed",
+    "VaultSecretRetrievalLatencyHigh",
+    "VaultTokenCountHigh",
+    "VaultTokenCountCritical",
+    "VaultTokenCreationFailureRateHigh",
+    "VaultKMSProviderUnhealthy",
+    "VaultKMSProviderUnhealthyCritical",
+    "VaultRaftStorageLowDisk",
+    "VaultRaftNoLeader",
+    "VaultBootstrapJobFailed",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/vault-rules.yaml missing alert '${alert}' (E2.6)`);
+    }
+  }
+}
+
+// Per-env overrides must declare the seal type. Dev uses
+// shamir; on-prem uses transit; saas uses awskms. The
+// chart-level default is awskms so dev + on-prem values
+// files MUST override.
+for (const envFile of REQUIRED_ENV_VALUES) {
+  const p = join(HELM_DIR, envFile);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, "utf8");
+  const envName = basename(envFile, ".yaml").replace(/^values-/, "");
+  if (envName === "dev") {
+    if (!/seal:\s*\n\s*type:\s*shamir/.test(text)) {
+      fail(`${envFile} must declare components.vault.seal.type: shamir (E2.6 §4)`);
+    }
+  } else if (envName === "onprem") {
+    if (!/seal:\s*\n\s*type:\s*transit/.test(text)) {
+      fail(`${envFile} must declare components.vault.seal.type: transit (E2.6 §4)`);
+    }
+  } else if (envName === "saas") {
+    if (!/seal:\s*\n\s*type:\s*awskms/.test(text)) {
+      fail(`${envFile} must declare components.vault.seal.type: awskms (E2.6 §4)`);
+    }
+  }
+}
+
+// Profile.yaml must declare the Vault dev pin.
+if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
+  const p = readFileSync(join(LOCAL_DIR, "profile.yaml"), "utf8");
+  if (!/image:\s*hashicorp\/vault:1\.17\.1/.test(p)) {
+    fail("platform/local/profile.yaml must pin Vault image to hashicorp/vault:1.17.1 (ADR-E0.5-01)");
+  }
+}
+
+finish();
 }
 
 const chartYamlPath = join(HELM_DIR, "Chart.yaml");

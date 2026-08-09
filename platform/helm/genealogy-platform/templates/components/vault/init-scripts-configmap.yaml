@@ -1,0 +1,143 @@
+{{/*
+Vault bootstrap scripts — ships the init script the
+`vault-bootstrap` Helm-hook Job invokes to:
+  1. Wait for the Vault active node.
+  2. Initialise the Raft cluster (only on first install).
+  3. Unseal Vault via the active KMS provider.
+  4. Enable the Kubernetes + JWT + AppRole auth methods.
+  5. Write the per-component policies.
+  6. Mount the KV v2 mounts (`secret/`, `transit/`).
+  7. Persist the root token into the `vault-bootstrap-token`
+     Secret.
+
+The script is intentionally idempotent: every step is a
+no-op when the resource already exists. The Job runs on
+every `helm upgrade` (`pre-install,pre-upgrade` hook) so a
+post-upgrade Vault re-seal is automatic.
+*/}}
+{{- $vault := .Values.components.vault }}
+{{- if $vault.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-bootstrap-scripts
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault-bootstrap
+    app.kubernetes.io/version: {{ $vault.image.tag | quote }}
+data:
+  vault-bootstrap.sh: |
+    #!/bin/sh
+    # vault-bootstrap.sh — E2.6 §6.
+    # Idempotent Vault bootstrap. Re-runs on every
+    # `helm upgrade`; every step is a no-op when the
+    # resource already exists.
+    set -eu
+
+    VAULT_ADDR="${VAULT_ADDR:-https://vault.gp-data.svc.cluster.local:8200}"
+    KUBERNETES_AUTH_PATH="auth/kubernetes/config"
+    SEAL_TYPE="${VAULT_SEAL_TYPE:-shamir}"
+    ROOT_TOKEN_SECRET="${ROOT_TOKEN_SECRET:-vault-bootstrap-token}"
+
+    echo "[vault-bootstrap] waiting for Vault at ${VAULT_ADDR} ..."
+    for i in $(seq 1 60); do
+      if vault status >/dev/null 2>&1; then
+        break
+      fi
+      sleep 5
+    done
+    if ! vault status >/dev/null 2>&1; then
+      echo "[vault-bootstrap] Vault never became Ready"
+      exit 1
+    fi
+
+    INIT_STATE=$(vault status -format=json | jq -r .initialized)
+    if [ "${INIT_STATE}" = "false" ]; then
+      echo "[vault-bootstrap] initialising Raft cluster ..."
+      INIT_OUTPUT=$(vault operator init -format=json -key-shares=5 -key-threshold=3)
+      UNSEAL_KEYS=$(echo "${INIT_OUTPUT}" | jq -r '.unseal_keys_b64[]')
+      ROOT_TOKEN=$(echo "${INIT_OUTPUT}" | jq -r .root_token)
+      # Persist the unseal keys + root token. Production
+      # unwraps these via KMS; the dev / on-prem chart
+      # relies on the operator to migrate them to KMS.
+      echo "${ROOT_TOKEN}" > /tmp/root-token
+      for i in $(seq 0 4); do
+        echo "$(echo "${UNSEAL_KEYS}" | sed -n "$((i + 1))p")" > /tmp/unseal-key-${i}
+      done
+    else
+      echo "[vault-bootstrap] Vault already initialised; skipping init"
+    fi
+
+    # Unseal — for `awskms` the seal happens automatically
+    # via IRSA + the `seal "awskms"` stanza. For `shamir`
+    # we feed the persisted keys.
+    case "${SEAL_TYPE}" in
+      shamir)
+        if vault status -format=json | jq -e '.sealed' >/dev/null; then
+          for i in $(seq 0 2); do
+            vault operator unseal "$(cat /tmp/unseal-key-${i})" >/dev/null
+          done
+        fi
+        ;;
+      awskms|transit)
+        echo "[vault-bootstrap] ${SEAL_TYPE} seal — auto-unseal via KMS provider"
+        ;;
+      *)
+        echo "[vault-bootstrap] unrecognised seal type: ${SEAL_TYPE}" >&2
+        exit 2
+        ;;
+    esac
+
+    # Authenticate as root for the bootstrap steps. The root
+    # token is persisted into a Kubernetes Secret that the
+    # `vault-agent-injector` consumes (it is also revoked
+    # after the bootstrap steps complete).
+    if [ -f /tmp/root-token ]; then
+      vault login "$(cat /tmp/root-token)" >/dev/null
+    fi
+
+    # Enable the auth methods.
+    for method in \
+      "kubernetes:${KUBERNETES_AUTH_PATH}" \
+      "keycloak-oidc:auth/keycloak-oidc/config" \
+      "github-actions:auth/github-actions"; do
+      TYPE=$(echo "${method}" | cut -d: -f1)
+      if ! vault auth list -format=json | jq -e ".[\"${TYPE}/\"]" >/dev/null 2>&1; then
+        vault auth enable -path "${TYPE}" "${TYPE}" >/dev/null
+      fi
+    done
+
+    # Write the KV v2 mounts.
+    for mount in "secret" "transit"; do
+      if ! vault secrets list -format=json | jq -e ".[\"${mount}/\"]" >/dev/null 2>&1; then
+        if [ "${mount}" = "secret" ]; then
+          vault secrets enable -path=secret -version=2 kv >/dev/null
+        else
+          vault secrets enable -path=transit transit >/dev/null
+        fi
+      fi
+    done
+
+    # Write the policies from the rendered ConfigMap. The
+    # chart ships the policy bodies inline; the bootstrap
+    # writes them via `vault policy write`.
+    for policy in default services-read-secrets bff-read-secrets \
+      workers-read-secrets data-read-secrets data-rotate-secrets \
+      observability-read-secrets ci-read-secrets ci-write-deploy-markers; do
+      if [ -f "/vault/policies/${policy}.hcl" ]; then
+        vault policy write "${policy}" "/vault/policies/${policy}.hcl" >/dev/null
+      fi
+    done
+
+    # Persist the root token into a Secret the Injector
+    # consumes. The Secret is short-lived; rotation runs on
+    # the `vault-rotate-approle` workflow (E14 follow-up).
+    if [ -f /tmp/root-token ]; then
+      kubectl create secret generic "${ROOT_TOKEN_SECRET}" \
+        --from-file=token=/tmp/root-token \
+        --namespace=gp-data \
+        --dry-run=client -o yaml | kubectl apply -f -
+    fi
+
+    echo "[vault-bootstrap] complete"

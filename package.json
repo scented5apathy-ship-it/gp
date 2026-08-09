@@ -30,6 +30,8 @@
     "smoke:temporal": "node scripts/smoke-temporal.mjs",
     "lint:istio": "node scripts/lint-istio-config.mjs",
     "smoke:istio": "node scripts/smoke-istio.mjs",
+    "lint:vault": "node scripts/lint-vault-config.mjs",
+    "smoke:vault": "node scripts/smoke-vault.mjs",
     "lint:ownership": "node scripts/check-ownership-coverage.mjs",
     "lint:generated": "node scripts/check-generated-code.mjs",
     "typecheck": "pnpm run -r --parallel typecheck",
@@ -50,12 +52,13 @@
     "check:boundary": "node scripts/check-monorepo-boundaries.mjs",
     "check:ownership": "node scripts/check-ownership-coverage.mjs",
     "check:generated": "node scripts/check-generated-code.mjs",
-    "check:platform": "pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:temporal && pnpm lint:istio && node scripts/check-platform-baseline.mjs",
+    "check:platform": "pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:temporal && pnpm lint:istio && pnpm lint:vault && node scripts/check-platform-baseline.mjs",
     "check:platform:baseline": "node scripts/check-platform-baseline.mjs",
     "check:kong": "pnpm lint:kong && node scripts/check-platform-baseline.mjs",
     "check:kafka": "pnpm lint:kafka && node scripts/check-platform-baseline.mjs",
     "check:temporal": "pnpm lint:temporal && node scripts/check-platform-baseline.mjs",
     "check:istio": "pnpm lint:istio && node scripts/check-platform-baseline.mjs",
+    "check:vault": "pnpm lint:vault && node scripts/check-platform-baseline.mjs",
     "check:contracts": "pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events",
     "check:docs": "pnpm lint:markdown",
     "security": "node scripts/security-ci.mjs all",
@@ -69,7 +72,7 @@
     "check:all": "pnpm check:boundary && pnpm check:lockfile && pnpm check:gradle:lock && pnpm check:ownership && pnpm check:generated && pnpm lint:eslint && pnpm lint:yaml && pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events && pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:markdown && pnpm typecheck && pnpm test:unit && pnpm check:java:format && pnpm check:java && pnpm check:java:test && pnpm check:platform:baseline",
     "release": "turbo run build --filter=...{git origin/main...HEAD}",
     "ci:quality": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit && pnpm check:java && pnpm check:boundary",
-    "ci:full": "pnpm ci:quality && pnpm test:integration && pnpm test:contract && pnpm test:e2e && pnpm lint:ownership && pnpm lint:generated && pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:temporal && pnpm lint:istio && pnpm check:platform && pnpm check:platform:baseline && pnpm smoke:kong && pnpm smoke:apicurio && pnpm smoke:temporal && pnpm smoke:istio"
+    "ci:full": "pnpm ci:quality && pnpm test:integration && pnpm test:contract && pnpm test:e2e && pnpm lint:ownership && pnpm lint:generated && pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:temporal && pnpm lint:istio && pnpm lint:vault && pnpm check:platform && pnpm check:platform:baseline && pnpm smoke:kong && pnpm smoke:apicurio && pnpm smoke:temporal && pnpm smoke:istio && pnpm smoke:vault"
   },
   "devDependencies": {
     "@eslint/js": "9.13.0",

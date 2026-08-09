@@ -264,15 +264,68 @@ metadata:
     gp.genealogy/contract-only: "true"
 data:
   contract: |
-    # Vault runtime contract (E2.6).
+    # Vault + cloud KMS abstraction contract (E2.6).
     responsibilities:
-      - dynamic short-lived credentials
-      - per-workload policy
-      - key rotation
+      - dynamic short-lived credentials via Vault Agent Injector
+      - per-workload policy (deny-all default + path-scoped ACLs)
+      - key rotation per data class (30-365d per privacy-and-legal-gate.md §5)
+      - cloud KMS abstraction (SaaS = AWS KMS; on-prem = Vault transit)
+      - short-lived AppRole + JWT for CI + human operators
+      - emergency key revoke (DNA consent revocation path)
+    auth_methods:
+      - kubernetes      # canonical workload identity (E1.4 Spring Boot template)
+      - keycloak-oidc   # reserved for human operators (E3.1)
+      - github-actions  # reserved for CI / GitOps runners (ADR-E0.5-13)
+    forbidden_auth_methods:
+      - userpass
+      - ldap
+      - cert
+    kms_abstraction:
+      contract_interface: com.genealogy.platform.kms.KmsProvider
+      active_provider:
+        saas: aws-kms
+        onprem: vault-transit
+        dev: vault-transit
+      keys_per_class: 11    # one KMS key per data class in §5
+      rotation_days:
+        PII.IDENTITY: 90
+        PII.QUASI_ID: 90
+        PII.SENSITIVE: 30
+        GENETIC.RAW: 30
+        GENETIC.METADATA: 90
+        GENETIC.DERIVED: 90
+        MEDIA.RAW: 90
+        MEDIA.DERIVATIVE: 90
+        AUDIT.APPENDONLY: 365
+        OPS.METADATA: 90
+        SECRET: 30
+    seal:
+      saas: awskms     # via IRSA / pod identity (no literal key)
+      onprem: transit  # against customer-managed Vault cluster
+      dev: shamir      # operator-unsealed manually
+    injector_required_annotations:
+      - vault.hashicorp.com/agent-inject: "true"
+      - vault.hashicorp.com/agent-revoke-on-shutdown: "true"
+      - vault.hashicorp.com/role: <policy-from-policies.yaml>
     forbidden:
-      - storing raw DNA
-      - storing PII
+      - persisting raw DNA
+      - persisting raw PII
       - persisting secret material outside KMS-backed storage
+      - literal AWS access key / secret key in any values file
+      - root policy capability in any Vault policy
+      - business authorization (living / DNA / consent) — service-owned
+    notes:
+      - Source-of-truth files: platform/vault/server-config.yaml +
+        auth-methods.yaml + policies.yaml + kms-abstraction.yaml +
+        injector-templates.yaml.
+      - Mirror files: platform/helm/genealogy-platform/files/vault/*.yaml.
+      - Bootstrap Job: templates/components/vault/bootstrap-job.yaml.
+        Runs on every `helm upgrade` (pre-install,pre-upgrade hook).
+      - Domain authorization is at the service via OpenFGA + ABAC;
+        Vault only decides credential scope.
+      - The dna-data class (GENETIC.RAW) has its own KMS key + Vault
+        policy (E10.2 isolation); emergency revoke is wired to
+        E10.5 consent revocation.
 {{- end }}
 {{- if eq $name "observability" }}
 ---

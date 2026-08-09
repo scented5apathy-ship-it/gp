@@ -88,6 +88,8 @@ Every change must respect:
       dynamic-config / task-queue validator — E2.4)
 - [ ] `pnpm lint:istio` passes (Istio MeshConfig / PeerAuthentication /
       AuthorizationPolicy / disjoint retry validator — E2.5)
+- [ ] `pnpm lint:vault` passes (Vault server-config / auth-methods /
+      policies / KMS abstraction / injector templates validator — E2.6)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

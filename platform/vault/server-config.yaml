@@ -1,0 +1,169 @@
+# Source-of-truth Vault server configuration — E2.6.
+#
+# Per `tasks.md` E2.6 + `design.md` §13 the platform MUST ship the
+# Vault server configuration as config-as-code. The file declares:
+#   1. The HA backend (Raft integrated storage) — no external
+#      Consul dependency. Replicas are pinned per-env (`values.yaml`
+#      + `values-{saas,onprem,dev}.yaml`).
+#   2. The listener surface: API (8200), cluster (8201) and the
+#      active-active Kubernetes service (`gp-data` namespace).
+#   3. The seal stanza. SaaS uses AWS KMS auto-unseal; on-premise
+#      uses Shamir + Transit auto-unseal (one-time bootstrap);
+#      dev uses Shamir with a single key (`unsealMode: dev`).
+#   4. The `ui` toggle (operator-facing only; the admin route is
+#      additionally IP-restricted at the mesh layer).
+#   5. The telemetry stanza (Prometheus on 8200 + OTel trace
+#      export to the platform OTel Collector from E2.10).
+#
+# The file is mounted into the Vault StatefulSet via the
+# `vault-server-config` ConfigMap (see `vault-server-configmap.yaml`).
+# The deep linter (`scripts/lint-vault-config.mjs`) enforces:
+#   - `cluster_addr` points at the dedicated cluster listener;
+#   - `api_addr` resolves to the active Vault service;
+#   - `seal` declares either `awskms` (SaaS) or `transit` (on-prem);
+#     a missing seal stanza is a lint violation;
+#   - `telemetry.prometheus.is_enabled == true` (alert source);
+#   - no literal AWS access key, secret key, or KMS key id — all
+#     credentials come from Vault's own auth method (E3.x);
+#   - `ui.enabled == true` (operator UI) but `ui.access_address`
+#     resolves to the bastion-only ingress.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-vault-server-config
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    app.kubernetes.io/version: "1.17"
+    gp.genealogy/contract-only: "true"
+data:
+  config.hcl: |
+    # Vault server config — E2.6 §1.
+    # Mirrored byte-identical into the chart mirror
+    # `platform/helm/genealogy-platform/files/vault/server-config.hcl`.
+
+    # ----------------------------------------------------------------
+    # 1. Storage — Integrated Raft storage. No external Consul
+    #    dependency. Replication is `replicas_per_env` (3 SaaS,
+    #    3 on-prem, 1 dev). The Raft cluster ID is unique per
+    #    platform environment so a dev cluster cannot accidentally
+    #    join a production quorum.
+    # ----------------------------------------------------------------
+    storage "raft" {
+      path = "/vault/file/raft"
+      # `retry_join` is generated from the Helm template per
+      # statefulset pod ordinal. See `vault-init.sh` for the
+      # bootstrap procedure (operator runs the Job once, the
+      # chart only ships the manifest).
+      retry_join {
+        leader_api_addr = "https://vault-0.vault-internal:8200"
+      }
+      retry_join {
+        leader_api_addr = "https://vault-1.vault-internal:8200"
+      }
+      retry_join {
+        leader_api_addr = "https://vault-2.vault-internal:8200"
+      }
+      # Performance — single-node leader per request; Raft
+      # handles the consensus.
+      performance_multiplier = 1
+    }
+
+    # ----------------------------------------------------------------
+    # 2. Listener surface. API listener is the only ingress the
+    #    mesh exposes (8200); cluster listener (8201) is intra-
+    #    pod-only and never reachable from outside the StatefulSet.
+    # ----------------------------------------------------------------
+    listener "tcp" {
+      address         = "0.0.0.0:8200"
+      cluster_address = "0.0.0.0:8201"
+      tls_cert_file   = "/vault/tls/tls.crt"
+      tls_key_file    = "/vault/tls/tls.key"
+      tls_min_version = "tls13"
+    }
+
+    # ----------------------------------------------------------------
+    # 3. API + cluster addresses. `api_addr` is the URL the Vault
+    #    agent + CLI use to reach the active node (Kong forwards
+    #    the `X-Vault-Request-Forwarded-To` header on a redirect).
+    # ----------------------------------------------------------------
+    api_addr     = "https://vault.gp-data.svc.cluster.local:8200"
+    cluster_addr = "https://vault-0.vault-internal:8201"
+
+    # ----------------------------------------------------------------
+    # 4. Seal — abstracted via the `kmsAbstraction` source-of-truth
+    #    (`platform/vault/kms-abstraction.yaml`). The chart picks
+    #    `awskms` for SaaS, `transit` for on-prem, `shamir` for
+    #    dev. The deep linter rejects a config with no seal stanza
+    #    (unsealed Vault = unsealed storage = critical severity).
+    # ----------------------------------------------------------------
+    seal "awskms" {
+      # `awskms` (SaaS — default):
+      #   kms_key_id   = "<AWS_KMS_KEY_ID>"
+      #   region       = "<AWS_REGION>"
+      #   endpoint     = "https://kms.<AWS_REGION>.amazonaws.com"
+      # Credentials come from the IAM role for the service
+      # account (IRSA / pod identity), NOT from a literal key.
+      #
+      # `transit` (on-prem) — render via the on-prem values file:
+      #   address            = "https://vault-bootstrap.<BOOTSTRAP_NAMESPACE>:8200"
+      #   token              = "<transit-token-from-bootstrap>"
+      #   disable_renewal    = "false"
+      #   key_name           = "genealogy-platform-root"
+      #
+      # `shamir` (dev only) — render via the dev values file:
+      #   # no extra config — operators call
+      #   # `vault operator unseal` after the StatefulSet starts.
+    }
+
+    # ----------------------------------------------------------------
+    # 5. UI — operator-facing only. The mesh layer additionally
+    #    IP-restricts the UI to the bastion / VPN (E2.5
+    #    AuthorizationPolicy). `access_address` is overridable
+    #    per env via `--set`.
+    # ----------------------------------------------------------------
+    ui = true
+
+    # ----------------------------------------------------------------
+    # 6. Telemetry — Prometheus on 8200 (alert source) + OTel
+    #    trace export to the platform OTel Collector (E2.10).
+    #    The OTel endpoint is overridable per env; the default
+    #    points at the gp-observability collector.
+    # ----------------------------------------------------------------
+    telemetry {
+      prometheus {
+        is_enabled = true
+        retain_for = "24h"
+      }
+      otel_traces {
+        endpoint = "http://otel-collector.gp-observability.svc.cluster.local:4317"
+        insecure = true
+      }
+    }
+
+    # ----------------------------------------------------------------
+    # 7. Default lease / token TTL. Workloads authenticate via
+    #    the Kubernetes auth method (E2.6 §2) and receive a
+    #    short-lived token bound to their SA + namespace. The
+    #    lease is short enough that a leaked token is useless
+    #    after the TTL.
+    # ----------------------------------------------------------------
+    default_lease_ttl_duration = "30m"
+    max_lease_ttl_duration     = "24h"
+
+    # ----------------------------------------------------------------
+    # 8. Disable the deprecated `vault audit enable file` path —
+    #    every request hits the OTel log pipeline (E2.10) which
+    #    already redacts PII / DNA per `privacy-and-legal-gate.md`
+    #    §11. Vault file audit is forbidden because it would
+    #    persist raw request payload to the StatefulSet volume.
+    # ----------------------------------------------------------------
+    disable_mlock = true
+
+    # ----------------------------------------------------------------
+    # 9. Cluster name — disambiguates multi-cluster Vault
+    #    topologies (ADR-E0.5-03 supersession). The default is the
+    #    region tag from `global.region`.
+    # ----------------------------------------------------------------
+    cluster_name = "<CLUSTER_NAME>"

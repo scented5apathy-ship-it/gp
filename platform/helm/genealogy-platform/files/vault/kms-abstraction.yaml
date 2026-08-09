@@ -1,0 +1,197 @@
+# Source-of-truth cloud KMS abstraction — E2.6.
+#
+# Per `tasks.md` E2.6 the platform MUST ship a single abstraction
+# that wraps either cloud KMS (SaaS) or Vault transit (on-prem) so
+# the application code is provider-neutral. The file declares:
+#   1. The KMS adapter interface (`KmsProvider`) — every service
+#      that needs envelope encryption (S3, Postgres TDE, dna-raw
+#      bucket) consumes this interface; the implementation is
+#      selected at deploy time.
+#   2. The SaaS provider (AWS KMS) — key ARN + region + the
+#      envelope encryption format. Credentials come from IRSA /
+#      pod identity, NOT from a literal AWS key.
+#   3. The on-prem provider (Vault transit) — bootstrap Vault
+#      address + the transit key name.
+#   4. The key classification matrix (which key encrypts which
+#      data class per `privacy-and-legal-gate.md` §5).
+#   5. The rotation policy + emergency-revoke procedure
+#      (rotation cadence per data class).
+#
+# The application code uses one contract; the implementation
+# differs per env. The deep linter enforces:
+#   - exactly one provider is active per env (`activeProvider`);
+#   - the SaaS provider's key ARN is non-empty + region non-empty;
+#   - the on-prem provider's bootstrap Vault address is reachable
+#     in-cluster;
+#   - every data class has a key assignment;
+#   - rotation cadence is set per data class;
+#   - no literal AWS access key / secret key.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-vault-kms-abstraction
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    app.kubernetes.io/version: "1.17"
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # KMS abstraction — E2.6 §4.
+    # One contract, two providers. SaaS uses cloud KMS; on-prem
+    # uses Vault transit. The application code never branches on
+    # the provider — it calls `KmsProvider.generateDataKey /
+    # encrypt / decrypt` and the platform selects the impl.
+    kmsAbstraction:
+      # --------------------------------------------------------------
+      # 1. Adapter contract. Application code is bound to this
+      #    interface; the runtime provider is selected by the
+      #    activeProvider block below + the per-env values file.
+      # --------------------------------------------------------------
+      contract:
+        interface: com.genealogy.platform.kms.KmsProvider
+        methods:
+          - name: generateDataKey
+            signature: "(keyId: String, lengthBytes: Int) -> DataKey"
+            description: |
+              Returns a plaintext data key + the wrapped ciphertext.
+              The application uses the plaintext to encrypt locally;
+              the ciphertext is persisted alongside the encrypted
+              payload. On decrypt, the application provides the
+              ciphertext and the provider returns the plaintext.
+          - name: encrypt
+            signature: "(keyId: String, plaintext: ByteArray) -> Ciphertext"
+          - name: decrypt
+            signature: "(keyId: String, ciphertext: Ciphertext) -> ByteArray"
+          - name: rotateKey
+            signature: "(keyId: String) -> Unit"
+            description: |
+              Triggers a key rotation. Implementations either call
+              the cloud KMS rotate API or generate a new transit
+              key in Vault. Old ciphertext is re-wrapped lazily.
+          - name: emergencyRevoke
+            signature: "(keyId: String) -> Unit"
+            description: |
+              Revokes a key immediately. After this call,
+              `decrypt(keyId, ciphertext)` returns an error.
+              Critical for the DNA-data class (E10).
+
+      # --------------------------------------------------------------
+      # 2. SaaS provider — AWS KMS. Key ARNs are injected at
+      #    deploy time via `--set` from the SaaS values file;
+      #    the linter forbids a literal key id. Credentials
+      #    come from IRSA / pod identity, NOT from this file.
+      # --------------------------------------------------------------
+      saasProvider:
+        name: aws-kms
+        # `region` is the AWS region; `keyArnPattern` is the
+        # documented pattern. Per-data-class keys live under
+        # the `alias/genea-<class>-key` namespace.
+        region: ${AWS_REGION:-ap-southeast-1}
+        keyArnPattern: arn:aws:kms:${AWS_REGION:-ap-southeast-1}:${AWS_ACCOUNT_ID}:alias/genea-<class>-key
+        envelopeAlgorithm: AES_256
+        envelopeFormat: |
+          {
+            "Provider": "aws-kms",
+            "KeyId": "<key-arn>",
+            "Algorithm": "AES_256",
+            "CiphertextBlob": "<base64>",
+            "CreatedAt": "<rfc-3339>"
+          }
+        # Credentials — IRSA / pod identity only. The linter
+        # rejects a literal AWS_ACCESS_KEY_ID /
+        # AWS_SECRET_ACCESS_KEY in any file under
+        # `platform/vault/` or `values*.yaml`.
+        credentialsSource: irsa-pod-identity
+        forbidden:
+          - AWS_ACCESS_KEY_ID
+          - AWS_SECRET_ACCESS_KEY
+
+      # --------------------------------------------------------------
+      # 3. On-prem provider — Vault transit. The bootstrap Vault
+      #    cluster (one per environment) holds the master key
+      #    and exposes transit/encrypt + transit/decrypt to the
+      #    application via the same `KmsProvider` contract.
+      # --------------------------------------------------------------
+      onpremProvider:
+        name: vault-transit
+        address: https://vault-bootstrap.gp-platform.svc.cluster.local:8200
+        keyNamePattern: genea-<class>-key
+        # The bootstrap token is mounted as a Kubernetes Secret
+        # by External Secrets Operator (E2.6 follow-up).
+        tokenSource: kubernetes-secret/vault-bootstrap-token
+        envelopeFormat: |
+          {
+            "Provider": "vault-transit",
+            "KeyName": "<key-name>",
+            "Ciphertext": "vault:v<N>:<base64>",
+            "CreatedAt": "<rfc-3339>"
+          }
+        forbidden:
+          - literal-token
+
+      # --------------------------------------------------------------
+      # 4. Active provider — selected per env. The deep linter
+      #    rejects both providers being active at once.
+      # --------------------------------------------------------------
+      activeProvider:
+        saas: aws-kms
+        onprem: vault-transit
+        dev: vault-transit   # dev always uses transit (no cloud)
+
+      # --------------------------------------------------------------
+      # 5. Key classification — every data class in
+      #    `privacy-and-legal-gate.md` §5 has a dedicated
+      #    KMS key. Reusing a key across classes is forbidden
+      #    (blast-radius isolation).
+      # --------------------------------------------------------------
+      keys:
+        - class: PII.IDENTITY
+          keyId: genea-pii-identity-key
+          rotationDays: 90
+        - class: PII.QUASI_ID
+          keyId: genea-pii-quasi-key
+          rotationDays: 90
+        - class: PII.SENSITIVE
+          keyId: genea-pii-sensitive-key
+          rotationDays: 30
+        - class: GENETIC.RAW
+          keyId: genea-genetic-raw-key
+          rotationDays: 30
+          # DNA raw — separate key, separate Vault policy
+          # (E10.2 isolation). Emergency revoke per consent
+          # revocation (E10.5).
+        - class: GENETIC.METADATA
+          keyId: genea-genetic-metadata-key
+          rotationDays: 90
+        - class: GENETIC.DERIVED
+          keyId: genea-genetic-derived-key
+          rotationDays: 90
+        - class: MEDIA.RAW
+          keyId: genea-media-raw-key
+          rotationDays: 90
+        - class: MEDIA.DERIVATIVE
+          keyId: genea-media-derivative-key
+          rotationDays: 90
+        - class: AUDIT.APPENDONLY
+          keyId: genea-audit-appendonly-key
+          rotationDays: 365
+        - class: OPS.METADATA
+          keyId: genea-ops-metadata-key
+          rotationDays: 90
+        - class: SECRET
+          keyId: genea-secret-key
+          rotationDays: 30
+
+    # ----------------------------------------------------------------
+    # Forbidden — the linter rejects a kmsAbstraction that:
+    #   - sets BOTH saas and onprem as active (single provider);
+    #   - lacks a key for any data class in §5;
+    #   - reuses a keyId across two classes (blast-radius);
+    #   - declares a literal AWS access key.
+    # ----------------------------------------------------------------
+    forbidden:
+      - literal AWS credentials
+      - key reuse across data classes
+      - both providers active simultaneously

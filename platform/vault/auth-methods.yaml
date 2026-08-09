@@ -1,0 +1,164 @@
+# Source-of-truth Vault auth-method configuration — E2.6.
+#
+# Per `tasks.md` E2.6 the platform MUST declare the auth methods
+# that workloads use to reach Vault. The file declares:
+#   1. The Kubernetes auth method (`auth/kubernetes/config`)
+#      bound to the platform cluster API server.
+#   2. The per-namespace role bindings (one role per
+#      workload namespace; each role is bound to a specific
+#      SA + secret scope).
+#   3. The AppRole auth method reserved for CI / GitOps
+#      runners (per ADR-E0.5-13; rotated every 90d).
+#   4. The JWT (OIDC) auth method reserved for human
+#      operators (Keycloak-issued token).
+#   5. The forbidden-auth list (`auth/userpass`, `auth/ldap`,
+#      `auth/cert`, `auth/approle` for workload identities) —
+#      the linter enforces.
+#
+# The file is consumed by the `vault-bootstrap` Helm-hook Job
+# (see `platform/helm/genealogy-platform/templates/components/vault/`).
+# Operators never `vault auth enable` manually per `design.md` §13.
+#
+# The deep linter (`scripts/lint-vault-config.mjs`) enforces:
+#   - kubernetes auth method exists with the right cluster URL;
+#   - exactly one role per workload namespace;
+#   - AppRole bound to a dedicated CI SA + secret_id TTL ≤ 90d;
+#   - OIDC (JWT) auth method exists with Keycloak-issuer URL;
+#   - forbidden auth methods are not enabled.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-vault-auth-methods
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    app.kubernetes.io/version: "1.17"
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # Vault auth method + role config — E2.6 §2.
+    authMethods:
+      # ----------------------------------------------------------------
+      # 1. Kubernetes auth method. The canonical auth path for
+      #    platform workloads (E1.4 Spring Boot template wires the
+      #    Vault Agent sidecar). The host is the in-cluster API
+      #    server; the chart overrides `--set` per env.
+      # ----------------------------------------------------------------
+      - name: kubernetes
+        type: kubernetes
+        config:
+          host: https://kubernetes.default.svc.cluster.local
+          # The Kubernetes CA bundle is mounted at this path by the
+          # Vault Agent Injector; Vault uses it to verify the
+          # projected SA token the workload presents.
+          kubernetes_ca_cert: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        # Bound to the platform `Vault Agent Injector` annotation;
+        # see `vault-injector-template.yaml` for the template body.
+
+      # ----------------------------------------------------------------
+      # 2. JWT (OIDC) auth method. Reserved for human operators
+      #    authenticated by Keycloak (E3.1). Bound to the
+      #    `genealogy-platform` realm + the `vault-operator`
+      #    group claim. Service tokens (workload identity) MUST
+      #    use the kubernetes auth method instead.
+      # ----------------------------------------------------------------
+      - name: keycloak-oidc
+        type: jwt
+        config:
+          oidc_discovery_url: https://keycloak.gp-platform.svc.cluster.local/realms/genealogy-platform
+          oidc_client_id: vault-operator
+          # Audience must match the `vault` audience claim
+          # configured in the Keycloak client.
+          bound_audiences:
+            - vault
+          # JWKS URL is derived from the discovery URL; no
+          # literal JWKS in this file (rotation handled by Vault).
+        role: vault-operator
+
+      # ----------------------------------------------------------------
+      # 3. AppRole auth method. Reserved for CI / GitOps runners
+      #    (ADR-E0.5-13). Secret IDs are rotated every 90d by the
+      #    `vault-rotate-approle` workflow (E14 follow-up). The
+      #    `secret_id_ttl` is the canonical ceiling.
+      # ----------------------------------------------------------------
+      - name: github-actions
+        type: approle
+        config:
+          secret_id_ttl: 2160h   # 90 days
+          token_policies:
+            - ci-read-secrets
+            - ci-write-deploy-markers
+          # The CI SA is a Kubernetes SA in `gp-argocd`; the
+          # role binding happens in the `ci-runner-role.yaml`
+          # below.
+
+    # ----------------------------------------------------------------
+    # Per-namespace role bindings — one role per workload
+    # namespace. Each role maps a Kubernetes SA to a Vault
+    # policy; the policy name matches the namespace + component
+    # pattern documented in `policies.yaml`.
+    # ----------------------------------------------------------------
+    roles:
+      - name: genea-services-default
+        namespace: gp-services
+        serviceAccounts:
+          - genea-services-default
+        policies:
+          - services-read-secrets
+      - name: genea-workers-default
+        namespace: gp-workers
+        serviceAccounts:
+          - genea-workers-default
+        policies:
+          - workers-read-secrets
+      - name: genea-bff-default
+        namespace: gp-bff
+        serviceAccounts:
+          - web-bff
+          - public-api
+        policies:
+          - bff-read-secrets
+      - name: genea-data-default
+        namespace: gp-data
+        serviceAccounts:
+          - postgres
+          - kafka
+          - vault-bootstrap
+        policies:
+          - data-read-secrets
+          - data-rotate-secrets
+      - name: genea-observability-default
+        namespace: gp-observability
+        serviceAccounts:
+          - otel-collector
+          - prometheus
+        policies:
+          - observability-read-secrets
+
+      # ----------------------------------------------------------------
+      # CI / GitOps runner role — bound to the GitHub Actions
+      # AppRole, NOT to a Kubernetes SA. The `bound_cidrs` are
+      # the GitHub Actions IP ranges (best-effort; CI traffic
+      # is also gated by the mesh AuthorizationPolicy).
+      # ----------------------------------------------------------------
+      - name: ci-runner
+        approle: github-actions
+        policies:
+          - ci-read-secrets
+          - ci-write-deploy-markers
+
+    # ----------------------------------------------------------------
+    # Forbidden auth methods. The linter rejects any auth method
+    # not on the explicit allow-list:
+    #   - `userpass` — username/password never enters Vault;
+    #     Keycloak owns credentials per `design.md` §4.2.
+    #   - `ldap` — federation belongs to Keycloak (E3.1).
+    #   - `cert` — workload identity is Kubernetes SA, not x509
+    #     client cert (Istio mTLS already covers workload
+    #     identity per E2.5).
+    # ----------------------------------------------------------------
+    forbiddenAuthMethods:
+      - userpass
+      - ldap
+      - cert

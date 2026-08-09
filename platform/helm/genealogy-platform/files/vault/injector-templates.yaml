@@ -1,0 +1,169 @@
+# Vault Agent Injector annotation templates — E2.6.
+#
+# Per `tasks.md` E2.6 + `design.md` §13 every workload that needs
+# a secret gets a Vault Agent sidecar injected via the
+# `vault.hashicorp.com/agent-inject-*` annotations. The file
+# declares the canonical annotation set per workload class.
+#
+# The file is consumed by the platform's Helm templates that
+# render Workload manifests (E1.4 Spring Boot template); the
+# `scripts/lint-vault-config.mjs` deep linter enforces:
+#   - every workload carries the `agent-inject: "true"`
+#     annotation;
+#   - the `agent-inject-secret-...` block references a Vault
+#     path that exists in `policies.yaml` (no dangling path);
+#   - the `agent-inject-template-...` block is JSON or env
+#     format only (literal template body);
+#   - `agent-inject-policy` references a policy from
+#     `policies.yaml` (no dangling policy).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-vault-injector-templates
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    app.kubernetes.io/version: "1.17"
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # Vault Agent Injector templates — E2.6 §5.
+    injectorTemplates:
+      # ----------------------------------------------------------------
+      # services workload template — domain services (genealogy,
+      # tenant, research, ...). Mounts per-service DB credentials
+      # + Keycloak admin URL as env vars.
+      # ----------------------------------------------------------------
+      - workloadClass: services
+        annotations:
+          vault.hashicorp.com/agent-inject: "true"
+          vault.hashicorp.com/agent-inject-secret-db-creds: |
+            secret/data/services/{{ .Deployment.Name }}/db
+          vault.hashicorp.com/agent-inject-template-db-creds: |
+            {{- with secret "secret/data/services/{{ .Deployment.Name }}/db" -}}
+            {{- range $k, $v := .Data.data -}}
+            DB_{{ $k | upper }}="{{ $v }}"
+            {{ end -}}
+            {{- end -}}
+          vault.hashicorp.com/agent-inject-secret-keycloak: |
+            secret/data/services/{{ .Deployment.Name }}/keycloak
+          vault.hashicorp.com/agent-inject-template-keycloak: |
+            {{- with secret "secret/data/services/{{ .Deployment.Name }}/keycloak" -}}
+            {{- range $k, $v := .Data.data -}}
+            KEYCLOAK_{{ $k | upper }}="{{ $v }}"
+            {{ end -}}
+            {{- end -}}
+          vault.hashicorp.com/role: services-read-secrets
+          vault.hashicorp.com/agent-revoke-on-shutdown: "true"
+        secretPath: secret/data/services
+        policy: services-read-secrets
+
+      # ----------------------------------------------------------------
+      # workers workload template — async workers (media-worker,
+      # search-indexer, ...). Mounts per-worker DB credentials +
+      # storage credentials.
+      # ----------------------------------------------------------------
+      - workloadClass: workers
+        annotations:
+          vault.hashicorp.com/agent-inject: "true"
+          vault.hashicorp.com/agent-inject-secret-db-creds: |
+            secret/data/workers/{{ .Deployment.Name }}/db
+          vault.hashicorp.com/agent-inject-template-db-creds: |
+            {{- with secret "secret/data/workers/{{ .Deployment.Name }}/db" -}}
+            {{- range $k, $v := .Data.data -}}
+            DB_{{ $k | upper }}="{{ $v }}"
+            {{ end -}}
+            {{- end -}}
+          vault.hashicorp.com/agent-inject-secret-storage: |
+            secret/data/workers/{{ .Deployment.Name }}/storage
+          vault.hashicorp.com/agent-inject-template-storage: |
+            {{- with secret "secret/data/workers/{{ .Deployment.Name }}/storage" -}}
+            {{- range $k, $v := .Data.data -}}
+            STORAGE_{{ $k | upper }}="{{ $v }}"
+            {{ end -}}
+            {{- end -}}
+          vault.hashicorp.com/role: workers-read-secrets
+          vault.hashicorp.com/agent-revoke-on-shutdown: "true"
+        secretPath: secret/data/workers
+        policy: workers-read-secrets
+
+      # ----------------------------------------------------------------
+      # bff workload template — web-bff + public-api. Mounts
+      # session cookie signing keys + Keycloak client secret +
+      # outbound email provider key.
+      # ----------------------------------------------------------------
+      - workloadClass: bff
+        annotations:
+          vault.hashicorp.com/agent-inject: "true"
+          vault.hashicorp.com/agent-inject-secret-bff: |
+            secret/data/bff/{{ .Deployment.Name }}
+          vault.hashicorp.com/agent-inject-template-bff: |
+            {{- with secret "secret/data/bff/{{ .Deployment.Name }}" -}}
+            {{- range $k, $v := .Data.data -}}
+            BFF_{{ $k | upper }}="{{ $v }}"
+            {{ end -}}
+            {{- end -}}
+          vault.hashicorp.com/role: bff-read-secrets
+          vault.hashicorp.com/agent-revoke-on-shutdown: "true"
+        secretPath: secret/data/bff
+        policy: bff-read-secrets
+
+      # ----------------------------------------------------------------
+      # data workload template — Postgres / Kafka / MinIO
+      # operators. Mounts per-component DB / storage
+      # credentials. Uses `data-read-secrets` for read; the
+      # bootstrap + rotation Jobs use `data-rotate-secrets`
+      # (separate workload class).
+      # ----------------------------------------------------------------
+      - workloadClass: data
+        annotations:
+          vault.hashicorp.com/agent-inject: "true"
+          vault.hashicorp.com/agent-inject-secret-data: |
+            secret/data/data/{{ .Deployment.Name }}
+          vault.hashicorp.com/agent-inject-template-data: |
+            {{- with secret "secret/data/data/{{ .Deployment.Name }}" -}}
+            {{- range $k, $v := .Data.data -}}
+            DATA_{{ $k | upper }}="{{ $v }}"
+            {{ end -}}
+            {{- end -}}
+          vault.hashicorp.com/role: data-read-secrets
+          vault.hashicorp.com/agent-revoke-on-shutdown: "true"
+        secretPath: secret/data/data
+        policy: data-read-secrets
+
+      # ----------------------------------------------------------------
+      # observability workload template — OTel Collector +
+      # Prometheus + Grafana. Mounts storage + Tempo + Loki
+      # credentials.
+      # ----------------------------------------------------------------
+      - workloadClass: observability
+        annotations:
+          vault.hashicorp.com/agent-inject: "true"
+          vault.hashicorp.com/agent-inject-secret-obs: |
+            secret/data/observability/{{ .Deployment.Name }}
+          vault.hashicorp.com/agent-inject-template-obs: |
+            {{- with secret "secret/data/observability/{{ .Deployment.Name }}" -}}
+            {{- range $k, $v := .Data.data -}}
+            OBS_{{ $k | upper }}="{{ $v }}"
+            {{ end -}}
+            {{- end -}}
+          vault.hashicorp.com/role: observability-read-secrets
+          vault.hashicorp.com/agent-revoke-on-shutdown: "true"
+        secretPath: secret/data/observability
+        policy: observability-read-secrets
+
+    # ----------------------------------------------------------------
+    # Forbidden annotations — the linter rejects:
+    #   - a workload that does NOT carry `agent-inject: "true"`
+    #     when the workloadClass declares secrets;
+    #   - a template body that is not Go-template syntax
+    #     (`{{ ... }}` markers);
+    #   - a policy name that is not in `policies.yaml`.
+    # ----------------------------------------------------------------
+    forbiddenAnnotations:
+      - "vault.hashicorp.com/agent-inject-secret-.*:.*\\bsys\\b"
+      - "vault.hashicorp.com/agent-inject-secret-.*:.*\\broot\\b"
+    requiredAnnotations:
+      - "vault.hashicorp.com/agent-inject: \"true\""
+      - "vault.hashicorp.com/agent-revoke-on-shutdown: \"true\""

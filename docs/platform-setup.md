@@ -16,10 +16,10 @@
 > **Đọc phần này TRƯỚC khi chọn cách cài.** Hai cách có mục đích khác nhau
 > và không thay thế nhau:
 
-| Cách                              | Là gì                                                                  | Thành phần chạy được                                                                  | Thành phần KHÔNG chạy                                                                                    | Dùng khi                                                                                  |
-| --------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| **`docker compose up -d`** (cách A) | Plain Docker container, KHÔNG có Kubernetes                              | Postgres, Keycloak, OpenFGA, Kafka, Apicurio, Temporal, MinIO, Valkey, Flagsmith, OTel Collector, Kong | Istio mesh mTLS, NetworkPolicy default-deny, Vault HA Raft, External Secrets, Argo CD/Rollouts, HPA, PDB, ResourceQuota | **Smoke test app** nhanh trên laptop. Verify service có start được, kết nối DB, push event. Không phản ánh production. |
-| **`kind` + Helm umbrella chart** (cách B) | Kubernetes cluster (1 control-plane + 2 worker) + `helm upgrade --install` | Tất cả E2.1 → E2.10, gồm cả Istio / Vault / Argo CD                                  | (không có ngoại lệ)                                                                                      | **Verify toàn bộ platform** đúng kiến trúc production trên laptop. Verify NetworkPolicy, mTLS, Helm-hook Job, CRD reconcile. |
+| Cách                                      | Là gì                                                                      | Thành phần chạy được                                                                                   | Thành phần KHÔNG chạy                                                                                                   | Dùng khi                                                                                                                     |
+| ----------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **`docker compose up -d`** (cách A)       | Plain Docker container, KHÔNG có Kubernetes                                | Postgres, Keycloak, OpenFGA, Kafka, Apicurio, Temporal, MinIO, Valkey, Flagsmith, OTel Collector, Kong | Istio mesh mTLS, NetworkPolicy default-deny, Vault HA Raft, External Secrets, Argo CD/Rollouts, HPA, PDB, ResourceQuota | **Smoke test app** nhanh trên laptop. Verify service có start được, kết nối DB, push event. Không phản ánh production.       |
+| **`kind` + Helm umbrella chart** (cách B) | Kubernetes cluster (1 control-plane + 2 worker) + `helm upgrade --install` | Tất cả E2.1 → E2.10, gồm cả Istio / Vault / Argo CD                                                    | (không có ngoại lệ)                                                                                                     | **Verify toàn bộ platform** đúng kiến trúc production trên laptop. Verify NetworkPolicy, mTLS, Helm-hook Job, CRD reconcile. |
 
 ### Tại sao `docker compose` KHÔNG đủ?
 
@@ -36,7 +36,7 @@
 - Bạn cần **cả hai** (vd: smoke test app + verify NetworkPolicy) → hybrid: Postgres chạy bằng compose, workload chạy trong kind (xem `docs/local-k8s-setup.md` Step 12).
 
 **Trong doc này mặc định giả định cách B**. Nếu bạn chọn cách A, chỉ cần `cd platform/local && docker compose up -d` — KHÔNG theo các bước §2 trở đi.
->
+
 > Trạng thái epic theo `tasks.md`:
 >
 > - [x] **E2.1** Cluster baseline (namespace, quota, NetworkPolicy, PDB, StorageClass)
@@ -44,7 +44,7 @@
 > - [x] **E2.3** Strimzi Kafka + Apicurio Schema Registry
 > - [x] **E2.4** Temporal
 > - [x] **E2.5** Istio service mesh
-> - [ ] **E2.6** Vault + cloud KMS abstraction
+> - [x] **E2.6** Vault + cloud KMS abstraction
 > - [ ] **E2.7** S3/MinIO + Valkey
 > - [ ] **E2.8** Flagsmith / OpenFeature
 > - [ ] **E2.9** Argo CD / Rollouts
@@ -374,15 +374,15 @@ flowchart LR
 
 ### 1.2 Thành phần sẽ bổ sung (E2.5 – E2.10)
 
-| Thành phần                                           | Phiên bản (ADR-E0.5-01)            | Epic  | Vai trò                                       |
-| ---------------------------------------------------- | ---------------------------------- | ----- | --------------------------------------------- |
+| Thành phần                                           | Phiên bản (ADR-E0.5-01)            | Epic    | Vai trò                                       |
+| ---------------------------------------------------- | ---------------------------------- | ------- | --------------------------------------------- |
 | Istio (service mesh + mTLS)                          | `1.23.x`                           | E2.5 ✅ | mTLS workload identity + AuthorizationPolicy  |
-| Vault + cloud KMS abstraction                        | `1.17.x`                           | E2.6  | Short-lived credentials + envelope encryption |
-| S3/MinIO + bucket policy                             | n/a                                | E2.7  | Object storage + signed URL                   |
-| Valkey (Redis-compatible)                            | `7.2-alpine`                       | E2.7  | Cache/session/rate state                      |
-| Flagsmith + OpenFeature SDK                          | LTS                                | E2.8  | Feature flag với safe fallback                |
-| Argo CD + Rollouts                                   | Argo CD `2.13.x`, Rollouts `1.7.x` | E2.9  | GitOps + canary deploy                        |
-| OTel Collector + Prometheus + Loki + Tempo + Grafana | latest stable                      | E2.10 | Observability stack                           |
+| Vault + cloud KMS abstraction                        | `1.17.x`                           | E2.6    | Short-lived credentials + envelope encryption |
+| S3/MinIO + bucket policy                             | n/a                                | E2.7    | Object storage + signed URL                   |
+| Valkey (Redis-compatible)                            | `7.2-alpine`                       | E2.7    | Cache/session/rate state                      |
+| Flagsmith + OpenFeature SDK                          | LTS                                | E2.8    | Feature flag với safe fallback                |
+| Argo CD + Rollouts                                   | Argo CD `2.13.x`, Rollouts `1.7.x` | E2.9    | GitOps + canary deploy                        |
+| OTel Collector + Prometheus + Loki + Tempo + Grafana | latest stable                      | E2.10   | Observability stack                           |
 
 ## 2. Prerequisites (chung cho mọi môi trường)
 
@@ -559,20 +559,20 @@ stack** bằng Docker container, rồi **kind cluster** chạy workload pods
 qua Helm umbrella chart và **kết nối ngược vào Postgres/Keycloak/etc.
 trong compose**.
 
-| Service          | Image                                              | Vai trò                       | Chạy bằng    |
-| ---------------- | -------------------------------------------------- | ----------------------------- | ------------ |
-| `postgres`       | `postgres:16-alpine`                               | Persistence cho mọi DB        | docker compose |
-| `keycloak`       | `quay.io/keycloak/keycloak:26.0`                   | Identity (E3.1)               | docker compose |
-| `openfga`        | `openfga/openfga:1.10`                             | Authorization (E3.3)          | docker compose |
-| `kafka`          | `quay.io/strimzi/kafka:0.43.0-kafka-3.8.0`         | Event bus (E2.3, KRaft 1-node)| docker compose |
-| `apicurio`       | `apicurio/apicurio-registry:2.6`                   | Schema registry (E2.3)        | docker compose |
-| `temporal`       | `temporalio/auto-setup:1.26.2`                     | Workflow (E2.4)               | docker compose |
-| `minio`          | `minio/minio:RELEASE.2024-10-13T13-34-11Z`         | S3-compatible storage (E2.7)  | docker compose |
-| `valkey`         | `valkey/valkey:7.2-alpine`                         | Cache (E2.7)                  | docker compose |
-| `flagsmith`      | `flagsmith/flagsmith:latest`                       | Feature flag (E2.8)           | docker compose |
-| `otel-collector` | `otel/opentelemetry-collector-contrib:0.110.0`     | Telemetry pipeline (E2.10)    | docker compose |
-| `kong`           | `kong:3.8.0`                                       | Edge gateway (E2.2)           | docker compose |
-| Istio mesh / Vault HA / Argo CD / Rollouts / NetworkPolicy / PDB | (không có ở compose) | Platform K8s | **kind + Helm umbrella chart** |
+| Service                                                          | Image                                          | Vai trò                        | Chạy bằng                      |
+| ---------------------------------------------------------------- | ---------------------------------------------- | ------------------------------ | ------------------------------ |
+| `postgres`                                                       | `postgres:16-alpine`                           | Persistence cho mọi DB         | docker compose                 |
+| `keycloak`                                                       | `quay.io/keycloak/keycloak:26.0`               | Identity (E3.1)                | docker compose                 |
+| `openfga`                                                        | `openfga/openfga:1.10`                         | Authorization (E3.3)           | docker compose                 |
+| `kafka`                                                          | `quay.io/strimzi/kafka:0.43.0-kafka-3.8.0`     | Event bus (E2.3, KRaft 1-node) | docker compose                 |
+| `apicurio`                                                       | `apicurio/apicurio-registry:2.6`               | Schema registry (E2.3)         | docker compose                 |
+| `temporal`                                                       | `temporalio/auto-setup:1.26.2`                 | Workflow (E2.4)                | docker compose                 |
+| `minio`                                                          | `minio/minio:RELEASE.2024-10-13T13-34-11Z`     | S3-compatible storage (E2.7)   | docker compose                 |
+| `valkey`                                                         | `valkey/valkey:7.2-alpine`                     | Cache (E2.7)                   | docker compose                 |
+| `flagsmith`                                                      | `flagsmith/flagsmith:latest`                   | Feature flag (E2.8)            | docker compose                 |
+| `otel-collector`                                                 | `otel/opentelemetry-collector-contrib:0.110.0` | Telemetry pipeline (E2.10)     | docker compose                 |
+| `kong`                                                           | `kong:3.8.0`                                   | Edge gateway (E2.2)            | docker compose                 |
+| Istio mesh / Vault HA / Argo CD / Rollouts / NetworkPolicy / PDB | (không có ở compose)                           | Platform K8s                   | **kind + Helm umbrella chart** |
 
 #### Bước triển khai Lựa chọn C
 
@@ -641,14 +641,14 @@ Từ kind cluster, `kubectl exec postgres-0 -- psql ...` không hoạt động v
 
 **P4. Chạy §3.3 / §3.4 / §4 với chỉnh sửa sau**:
 
-| Step trong doc | Lựa chọn C làm gì? |
-| --- | --- |
-| §3.3 Tạo database nền tảng | Chạy lệnh `psql` qua **docker exec** (không `kubectl exec`). Đổi `PG_HOST=postgres` (container name) thay vì `postgres.gp-data.svc.cluster.local`. |
-| §3.4 Tạo secret | Giữ nguyên `kubectl create secret` — secret vẫn reference trong kind cluster. Username/password trỏ vào Postgres compose. |
-| §4 Apply umbrella chart | BỎ QUA mọi chart con tạo Postgres StatefulSet. Chạy `helm upgrade --install` với values override `temporal.postgresql.host=postgres.platform-local`, `apicurio.postgresql.host=postgres.platform-local` (xem `values-dev.yaml` patches). |
-| §4.1–4.3 Verify Kong/Kafka/Temporal | Có — nhưng Kafka/Temporal pods **trong kind** sẽ kết nối compose (qua NodePort hoặc ExternalName Service). Verify bằng `kubectl exec <pod> -- nc -zv <compose-svc> <port>`. |
-| §4.2.1 Cài Strimzi operator | **BỎ QUA** nếu Kafka đã chạy trong compose (operator chỉ cần khi chart tạo Kafka CR trong kind). |
-| §5 Verify | Có — kiểm tra cả pod trong kind lẫn container trong compose. |
+| Step trong doc                      | Lựa chọn C làm gì?                                                                                                                                                                                                                       |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| §3.3 Tạo database nền tảng          | Chạy lệnh `psql` qua **docker exec** (không `kubectl exec`). Đổi `PG_HOST=postgres` (container name) thay vì `postgres.gp-data.svc.cluster.local`.                                                                                       |
+| §3.4 Tạo secret                     | Giữ nguyên `kubectl create secret` — secret vẫn reference trong kind cluster. Username/password trỏ vào Postgres compose.                                                                                                                |
+| §4 Apply umbrella chart             | BỎ QUA mọi chart con tạo Postgres StatefulSet. Chạy `helm upgrade --install` với values override `temporal.postgresql.host=postgres.platform-local`, `apicurio.postgresql.host=postgres.platform-local` (xem `values-dev.yaml` patches). |
+| §4.1–4.3 Verify Kong/Kafka/Temporal | Có — nhưng Kafka/Temporal pods **trong kind** sẽ kết nối compose (qua NodePort hoặc ExternalName Service). Verify bằng `kubectl exec <pod> -- nc -zv <compose-svc> <port>`.                                                              |
+| §4.2.1 Cài Strimzi operator         | **BỎ QUA** nếu Kafka đã chạy trong compose (operator chỉ cần khi chart tạo Kafka CR trong kind).                                                                                                                                         |
+| §5 Verify                           | Có — kiểm tra cả pod trong kind lẫn container trong compose.                                                                                                                                                                             |
 
 **P5. Tham chiếu chi tiết**: xem `docs/local-k8s-setup.md` Step 12 (compose + kind hybrid với NetworkPolicy allow rule cho compose subnet) và `platform/local/README.md` §3.
 
@@ -964,7 +964,8 @@ pnpm smoke:istio
 
 **Prerequisite**: cert-manager (E2.1) + Istio base + istiod subchart
 phải được cài độc lập (chart chỉ ship 4 source-of-truth ConfigMaps
-+ Helm-hook Job; không ship control plane):
+
+- Helm-hook Job; không ship control plane):
 
 ```bash
 # Cài Istio base + istiod (một lần per cluster)
@@ -988,13 +989,180 @@ Chi tiết: `docs/e25-istio-setup.md` + `platform/istio/README.md` +
 
 ### 4.5 E2.6 Vault + cloud KMS abstraction
 
-**Trạng thái**: 🚧 planned. Chart đã có block `components.vault`
-(replicas: 3 cho SaaS, dev/onprem override).
+**Trạng thái**: ✅ DONE (chart render + Vault Agent Injector + 5
+source-of-truth ConfigMaps + `vault-bootstrap` Helm-hook Job).
 
-**Sẽ có**: Helm install Vault + Vault Agent Injector + K8s auth method
+**Auto-apply khi chạy lệnh §4**. Vault server StatefulSet +
+Vault Agent Injector (qua upstream `hashicorp/vault-k8s`
+subchart) + `vault-bootstrap` Helm-hook Job tự động khởi tạo
+Raft cluster + enable auth methods + viết policies + mount
+KV v2 + unseal qua KMS provider (SaaS = AWS KMS, on-prem =
+Vault transit, dev = Shamir).
 
-- short-lived DB credentials. Hiện tại chưa ship — theo dõi
-  `tasks.md` E2.6.
+#### 4.5.1 Prerequisites
+
+- **PostgreSQL đã chạy** ở `gp-data` (E2.1 §3.2) — Vault KHÔNG
+  cần Postgres (dùng Raft integrated storage), nhưng Temporal
+  share cùng cluster nên chart yêu cầu baseline trước.
+- **IRSA / pod identity** (SaaS only) — IAM role cho Vault SA
+  trong namespace `gp-data` đã bind với policy `kms:Decrypt +
+kms:GenerateDataKey + kms:DescribeKey` trên alias
+  `genea-vault-root`. Bind qua
+  `eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/gp-vault`
+  annotation trên ServiceAccount `vault` (chart tự annotate).
+- **Transit Vault cluster** (on-prem only) — customer-managed
+  Vault cluster reachable từ cluster platform (qua DNS +
+  NetworkPolicy); transit key `genealogy-platform-root` đã
+  enabled ở path `transit/`.
+- **External Secrets Operator** (khuyến nghị, không bắt buộc
+  cho lần cài đầu) — sync `vault-bootstrap-token` Secret
+  cho `seal.type == transit`. Cài qua §2.4.
+
+#### 4.5.2 Verify sau khi helm upgrade
+
+```bash
+# 1. StatefulSet Ready
+kubectl -n gp-data get pods -l app.kubernetes.io/component=vault
+# Kỳ vọng: vault-0  1/1 Running  (dev) hoặc 3/3 (SaaS) / 3/3 (onprem)
+
+# 2. Vault API đáp 200 (standby OK)
+kubectl -n gp-data exec vault-0 -- \
+  wget --spider -q https://127.0.0.1:8200/v1/sys/health?standbyok=true \
+  && echo OK || echo FAIL
+# Kỳ vọng: OK
+
+# 3. Vault sealed = false
+kubectl -n gp-data exec vault-0 -- vault status -format=json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["sealed"])'
+# Kỳ vọng: False
+
+# 4. 3 auth methods enabled
+kubectl -n gp-data exec vault-0 -- vault auth list
+# Kỳ vọng:
+#   kubernetes/
+#   keycloak-oidc/
+#   github-actions/
+
+# 5. 9 policies đã viết
+kubectl -n gp-data exec vault-0 -- vault policy list
+# Kỳ vọng: default + services-read-secrets + bff-read-secrets +
+#          workers-read-secrets + data-read-secrets +
+#          data-rotate-secrets + observability-read-secrets +
+#          ci-read-secrets + ci-write-deploy-markers
+
+# 6. KV v2 mount ở secret/
+kubectl -n gp-data exec vault-0 -- vault secrets list
+# Kỳ vọng: secret/  (kv v2)
+
+# 7. Transit mount ở transit/
+kubectl -n gp-data exec vault-0 -- vault secrets list | grep transit
+# Kỳ vọng: transit/  (transit)
+
+# 8. Bootstrap Job hoàn tất
+kubectl -n gp-data get jobs -l app.kubernetes.io/component=vault-bootstrap
+# Kỳ vọng: vault-bootstrap  Complete  1/1
+
+# 9. Vault Agent Injector DaemonSet Ready
+kubectl -n gp-data get pods -l app.kubernetes.io/component=vault-agent-injector
+# Kỳ vọng: vault-agent-injector-xxx  1/1 Running  (1 per node)
+
+# 10. 5 source-of-truth ConfigMap rendered
+kubectl -n gp-data get cm -l app.kubernetes.io/component=vault \
+  | grep -E "genea-vault-"
+# Kỳ vọng: genea-vault-server-config, genea-vault-auth-methods,
+#           genea-vault-policies-body, genea-vault-kms-abstraction,
+#           genea-vault-auth-methods
+
+# 11. 11 alert rules applied
+kubectl -n gp-observability get prometheusrule genea-vault-rules \
+  -o jsonpath='{.spec.groups[*].rules[*].alert}' | tr ' ' '\n' | sort -u
+# Kỳ vọng: VaultServerDown, VaultSealed, VaultSecretRetrievalLatencyHigh,
+#          VaultTokenCountHigh, VaultTokenCountCritical,
+#          VaultTokenCreationFailureRateHigh, VaultKMSProviderUnhealthy,
+#          VaultKMSProviderUnhealthyCritical, VaultRaftStorageLowDisk,
+#          VaultRaftNoLeader, VaultBootstrapJobFailed
+
+# 12. Smoke probe (structural-only khi không có kind/kubectl/helm)
+pnpm smoke:vault
+# Kỳ vọng: 5/5 PASS
+```
+
+#### 4.5.3 Verify workload nhận secret qua Vault Agent Injector
+
+Sau khi platform chart render xong, một workload (vd: BFF service
+scaffold) chỉ cần thêm annotation:
+
+```yaml
+metadata:
+  annotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: bff-read-secrets
+    vault.hashicorp.com/agent-inject-secret-bff: |
+      secret/data/bff/web-bff
+    vault.hashicorp.com/agent-inject-template-bff: |
+      {{- with secret "secret/data/bff/web-bff" -}}
+      {{- range $k, $v := .Data.data -}}
+      BFF_{{ $k | upper }}="{{ $v }}"
+      {{ end -}}
+      {{- end -}}
+```
+
+Verify token-bound ServiceAccount + workload identity:
+
+```bash
+# Trong pod BFF, Vault Agent sidecar đã login bằng Kubernetes auth
+kubectl -n gp-bff exec deploy/web-bff -c vault-agent -- \
+  cat /home/vault/.vault-token | head -c 32
+# Kỳ vọng: 32-char base64 token (revoked on pod shutdown)
+
+# Secret payload mount vào /vault/secrets/bff
+kubectl -n gp-bff exec deploy/web-bff -c app -- \
+  ls /vault/secrets/ 2>/dev/null
+# Kỳ vọng: bff (file) khi bạn wire annotation đúng
+```
+
+#### 4.5.4 KMS abstraction smoke
+
+Verify `KmsProvider` runtime provider cho env hiện tại:
+
+```bash
+# Trong pod có IAM/IRSA / transit access, kiểm tra AWS KMS key ARN
+# (SaaS):
+kubectl -n gp-data exec vault-0 -- \
+  curl -s http://169.254.170.23/v1/credentials 2>/dev/null | jq -r .RoleArn
+# Kỳ vọng: arn:aws:iam::<account>:role/gp-vault
+
+# Transit key (on-prem):
+kubectl -n gp-data exec vault-0 -- \
+  curl -sk https://vault-bootstrap.gp-platform.svc.cluster.local:8200/v1/transit/keys/genealogy-platform-root \
+  -H "X-Vault-Token: $(kubectl -n gp-data get secret vault-bootstrap-token -o jsonpath='{.data.token}' | base64 -d)"
+# Kỳ vọng: JSON với `name: "genealogy-platform-root"`, `keys: { ... }`
+```
+
+#### 4.5.5 Troubleshooting
+
+| #   | Symptom                                                                 | Cách xử lý                                                                                                                                                                                                                                                                                                                                             |
+| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `vault status` → `Sealed: true` (sau restart)                           | Kiểm tra KMS provider env: `kubectl -n gp-data exec vault-0 -- printenv \| grep VAULT_SEAL_TYPE`. AWS KMS (SaaS): verify IRSA binding (`kubectl -n gp-data describe sa vault \| grep role-arn`). Transit (on-prem): token trong `vault-bootstrap-token` Secret còn valid? Re-run `vault operator unseal` thủ công nếu cần (xem `runbook/vault.md` §2). |
+| 2   | `vault auth list` thiếu `kubernetes/`                                   | `vault-bootstrap` Job chưa chạy xong hoặc fail. `kubectl logs -l app.kubernetes.io/component=vault-bootstrap --tail=100`. Lỗi phổ biến: K8s API server không reachable từ Vault pod (NetworkPolicy block egress 443 đến `default`) — xem `templates/components/vault/network-policies.yaml` egress rule.                                               |
+| 3   | Vault Agent Injector không inject secret vào pod                        | Verify workload có annotation `vault.hashicorp.com/agent-inject: "true"` + `vault.hashicorp.com/role: <policy>`. Injector logs: `kubectl -n gp-data logs -l app.kubernetes.io/component=vault-agent-injector --tail=100 \| grep "policy"`. Role name phải match `policies.yaml` (case-sensitive).                                                      |
+| 4   | Pod CrashLoopBackOff "permission denied reading vault-token"            | Vault SA chưa bind với role ở Vault. Kiểm tra: `vault read auth/kubernetes/role/genea-bff-default` → `bound_service_account_names` phải bao gồm SA của pod. Lỗi phổ biến: SA name sai hoặc role binding thiếu trong `auth-methods.yaml`.                                                                                                               |
+| 5   | `pnpm lint:vault` fail "missing required policy"                        | Một policy trong 9 required (`default`, `services-read-secrets`, ...) bị xoá khỏi `platform/vault/policies.yaml`. Linter liệt kê tên cụ thể. Restore hoặc edit source-of-truth rồi sync mirror `platform/helm/genealogy-platform/files/vault/policies.yaml`.                                                                                           |
+| 6   | `pnpm lint:vault` fail "keyId reuse across classes"                     | Hai data class trong `kms-abstraction.yaml` share cùng `keyId`. Mỗi class trong `privacy-and-legal-gate.md` §5 cần key riêng. Đổi 1 trong 2 keyId cho khớp rotation cadence (30-365d).                                                                                                                                                                 |
+| 7   | `VaultSealed` / `VaultKMSProviderUnhealthyCritical` alert firing        | KMS provider không respond. Xem `runbook/vault.md` §3 (kms-unhealthy). Kiểm tra AWS KMS quota (SaaS) hoặc transit Vault availability (on-prem). Nếu `awskms`: `aws kms describe-key --key-id alias/genea-vault-root --region ap-southeast-1`.                                                                                                          |
+| 8   | Raft storage full (`VaultRaftStorageLowDisk`)                           | Expand PVC: `kubectl -n gp-data edit pvc data-vault-0` → tăng `spec.resources.requests.storage`. Hoặc rotate `vault audit enable` (đã disable mặc định) + compact Raft (`vault operator raft compact`).                                                                                                                                                |
+| 9   | `vault-bootstrap` Job fail "Vault already initialised" + Secret missing | Root token Secret đã xoá nhưng Vault vẫn initialized. Re-init: `kubectl -n gp-data exec vault-0 -- vault operator init -key-shares=5 -key-threshold=3` (operator thủ công); KHÔNG dùng auto-init script. Sau đó manually `vault operator unseal` × 3 rồi re-persist root token vào Secret.                                                             |
+| 10  | Vault pod không start: "permission denied /vault/file"                  | PVC mount path sai. `kubectl -n gp-data describe pod vault-0` → check volumeMount. Lỗi phổ biến trên kind cluster khi StorageClass `standard` không hỗ trợ `fsGroup: 1000`. Workaround: dùng `gp-data-ssd` hoặc override `securityContext.runAsGroup` trong `values-dev.yaml`.                                                                         |
+
+#### 4.5.6 Liên kết
+
+- **Source-of-truth**: `platform/vault/{server-config,auth-methods,policies,kms-abstraction,injector-templates}.yaml`
+- **Mirror**: `platform/helm/genealogy-platform/files/vault/*.yaml`
+- **Helm templates**: `platform/helm/genealogy-platform/templates/components/vault/{statefulset,services,serviceaccounts,init-scripts-configmap,policies-configmap,kms-abstraction-configmap,auth-methods-configmap,bootstrap-job,network-policies}.yaml`
+- **Alert rules**: `platform/observability/alerts/vault-rules.yaml` (11 alerts × 5 rule groups)
+- **Runbook**: `runbook/vault.md` (7 alert playbooks + Raft backup/restore)
+- **Validation scripts**: `scripts/lint-vault-config.mjs`, `scripts/smoke-vault.mjs`, `scripts/__tests__/lint-vault-config.test.mjs`
+- **Evidence**: `.kiro/specs/genealogy-platform/evidence/E2.6.md`
 
 ### 4.6 E2.7 S3/MinIO + Valkey
 
@@ -1044,9 +1212,10 @@ pnpm lint:temporal
 pnpm lint:kafka
 pnpm lint:kong
 pnpm lint:istio
+pnpm lint:vault
 pnpm check:platform:baseline
 pnpm test:scripts
-# Kỳ vọng: tất cả clean, 48/48 tests pass
+# Kỳ vọng: tất cả clean, 54/54 tests pass
 
 # 2. Helm render check (xác nhận chart không lỗi)
 docker run --rm -v "${PWD}:/src:ro" -w /src alpine/helm:3.16.3 \
@@ -1058,6 +1227,7 @@ pnpm smoke:kong          # E2.2
 pnpm smoke:apicurio      # E2.3
 pnpm smoke:temporal      # E2.4
 pnpm smoke:istio         # E2.5
+pnpm smoke:vault         # E2.6
 # Kỳ vọng: tất cả PASS
 
 # 4. Resource counts per environment
@@ -1134,18 +1304,18 @@ helm upgrade genealogy-platform platform/helm/genealogy-platform \
 
 ### 6.3 Rollback từng component
 
-| Component | Cách rollback                                             |
-| --------- | --------------------------------------------------------- |
-| Kong      | `helm rollback` (declarative config revert qua Git)       |
-| Kafka     | `kubectl delete kafkatopic <name>` rồi re-apply từ chart  |
-| Apicurio  | Publish lại schema version cũ qua REST API                |
-| Temporal  | `helm rollback` (namespace + task queue tự reconcile lại) |
+| Component | Cách rollback                                                                                                                        |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Kong      | `helm rollback` (declarative config revert qua Git)                                                                                  |
+| Kafka     | `kubectl delete kafkatopic <name>` rồi re-apply từ chart                                                                             |
+| Apicurio  | Publish lại schema version cũ qua REST API                                                                                           |
+| Temporal  | `helm rollback` (namespace + task queue tự reconcile lại)                                                                            |
 | Istio     | `helm rollback` (Helm-hook Job re-apply 4 source-of-truth); khi downgrade control plane: `istioctl uninstall` + reinstall version cũ |
-| Vault     | `helm rollback` (KV data vẫn còn trong Raft storage)      |
-| MinIO     | Snapshot bucket + restore                                 |
-| Flagsmith | `helm rollback`                                           |
-| Argo CD   | `helm rollback` + restore Application CR từ Git           |
-| Grafana   | `helm rollback` (dashboards vẫn còn trong ConfigMap)      |
+| Vault     | `helm rollback` (KV data vẫn còn trong Raft storage)                                                                                 |
+| MinIO     | Snapshot bucket + restore                                                                                                            |
+| Flagsmith | `helm rollback`                                                                                                                      |
+| Argo CD   | `helm rollback` + restore Application CR từ Git                                                                                      |
+| Grafana   | `helm rollback` (dashboards vẫn còn trong ConfigMap)                                                                                 |
 
 ## 7. Backup / Restore
 
@@ -1260,13 +1430,18 @@ kubectl -n gp-data run temporal-tctl --rm -it --restart=Never \
 - `.kiro/specs/genealogy-platform/evidence/E2.2.md`
 - `.kiro/specs/genealogy-platform/evidence/E2.3.md`
 - `.kiro/specs/genealogy-platform/evidence/E2.4.md`
+- `.kiro/specs/genealogy-platform/evidence/E2.5.md`
+- `.kiro/specs/genealogy-platform/evidence/E2.6.md`
 - `runbook/temporal.md` — operator runbook cho Temporal.
+- `runbook/istio.md` — operator runbook cho Istio service mesh.
+- `runbook/vault.md` — operator runbook cho Vault + cloud KMS.
 
 ### 10.3 Source-of-truth trong repo
 
 - `platform/helm/genealogy-platform/` — umbrella chart.
 - `platform/kong/` + `platform/kafka/` + `platform/apicurio/` +
-  `platform/temporal/` — config-as-code cho từng thành phần.
+  `platform/temporal/` + `platform/istio/` + `platform/vault/` —
+  config-as-code cho từng thành phần.
 - `platform/observability/alerts/` — PrometheusRule.
 - `scripts/lint-*.mjs` + `scripts/check-*.mjs` + `scripts/smoke-*.mjs` —
   CI checks.

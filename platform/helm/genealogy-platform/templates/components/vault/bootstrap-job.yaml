@@ -1,0 +1,87 @@
+{{/*
+Vault bootstrap Job — Helm hook (`pre-install,pre-upgrade`)
+that initialises the Raft cluster, unseals Vault via the
+active KMS provider, enables the auth methods, and writes
+the per-component policies. Runs once per `helm upgrade`;
+the Job deletes itself on success (`hook-succeeded`).
+
+The Job uses the upstream `hashicorp/vault:1.17.x` image
+(same as the StatefulSet) so the CLI matches the server.
+*/}}
+{{- $vault := .Values.components.vault }}
+{{- if $vault.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-bootstrap
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault-bootstrap
+    app.kubernetes.io/version: {{ $vault.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+    # Helm hook annotation — runs once per install + upgrade.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: vault-bootstrap
+    spec:
+      serviceAccountName: vault-bootstrap
+      restartPolicy: OnFailure
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: {{ include "genealogy-platform.image" (dict "image" $vault.image) }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/scripts/vault-bootstrap.sh"]
+          env:
+            - name: VAULT_ADDR
+              value: https://vault.gp-data.svc.cluster.local:8200
+            - name: VAULT_SKIP_VERIFY
+              value: "true"
+            - name: VAULT_SEAL_TYPE
+              value: {{ $vault.seal.type | quote }}
+            - name: ROOT_TOKEN_SECRET
+              value: vault-bootstrap-token
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: policies
+              mountPath: /vault/policies
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: scripts
+          configMap:
+            name: vault-bootstrap-scripts
+            defaultMode: 0500
+        - name: policies
+          configMap:
+            name: genea-vault-policies-body
+            defaultMode: 0444
+{{- end }}

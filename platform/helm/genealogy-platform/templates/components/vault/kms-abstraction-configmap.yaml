@@ -1,0 +1,77 @@
+{{/*
+Vault KMS abstraction ConfigMap — mirrors the source-of-truth
+`platform/vault/kms-abstraction.yaml` so the chart mounts the
+KMS abstraction contract alongside the server config. The
+runtime provider (aws-kms / vault-transit) is selected at
+deploy time via the values file.
+
+The ConfigMap also carries the workload-class → injector
+annotations so the Spring Boot template (E1.4) can copy the
+canonical annotation block into its generated Deployment
+manifest. The deep linter enforces the byte-identity invariant.
+*/}}
+{{- $vault := .Values.components.vault }}
+{{- if $vault.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-vault-kms-abstraction
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: vault
+    app.kubernetes.io/version: {{ $vault.image.tag | quote }}
+data:
+  contract.yaml: |
+    # KMS abstraction contract (E2.6 §4) — application code
+    # binds to the `KmsProvider` interface. The runtime
+    # provider is aws-kms (SaaS) or vault-transit (on-prem);
+    # the platform selects the implementation via the
+    # `components.vault.seal.type` values block.
+    contract:
+      interface: com.genealogy.platform.kms.KmsProvider
+      methods:
+        - generateDataKey
+        - encrypt
+        - decrypt
+        - rotateKey
+        - emergencyRevoke
+    activeProvider:
+      saas: aws-kms
+      onprem: vault-transit
+      dev: vault-transit
+    keys:
+      - class: PII.IDENTITY
+        keyId: genea-pii-identity-key
+        rotationDays: 90
+      - class: PII.QUASI_ID
+        keyId: genea-pii-quasi-key
+        rotationDays: 90
+      - class: PII.SENSITIVE
+        keyId: genea-pii-sensitive-key
+        rotationDays: 30
+      - class: GENETIC.RAW
+        keyId: genea-genetic-raw-key
+        rotationDays: 30
+      - class: GENETIC.METADATA
+        keyId: genea-genetic-metadata-key
+        rotationDays: 90
+      - class: GENETIC.DERIVED
+        keyId: genea-genetic-derived-key
+        rotationDays: 90
+      - class: MEDIA.RAW
+        keyId: genea-media-raw-key
+        rotationDays: 90
+      - class: MEDIA.DERIVATIVE
+        keyId: genea-media-derivative-key
+        rotationDays: 90
+      - class: AUDIT.APPENDONLY
+        keyId: genea-audit-appendonly-key
+        rotationDays: 365
+      - class: OPS.METADATA
+        keyId: genea-ops-metadata-key
+        rotationDays: 90
+      - class: SECRET
+        keyId: genea-secret-key
+        rotationDays: 30
+{{- end }}
