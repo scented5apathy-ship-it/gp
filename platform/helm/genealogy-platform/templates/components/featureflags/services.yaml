@@ -1,0 +1,42 @@
+{{/*
+Flagsmith + bootstrap Services.
+
+The API Service (port 8000) is the flag-evaluation endpoint
+consumed by application code (BFF, services, workers, PWA).
+It is cluster-internal only — public traffic reaches
+Flagsmith via the Kong `/api/v1/flagsmith/*` route (E2.2)
+which forwards through Istio strict mTLS with JWT auth.
+
+The admin Service (port 8080) is reserved for the operator
+admin UI. It is reachable only from the
+`platform-primary` / `sre-primary` workstation via the
+bastion VPN — never from the public ingress.
+*/}}
+{{- $ff := .Values.components.featureFlags }}
+{{- if and $ff.enabled (eq $ff.provider "flagsmith-self-hosted") }}
+{{- $ns := "gp-platform" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flagsmith
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+  ports:
+    - name: api
+      port: 8000
+      targetPort: api
+      protocol: TCP
+    - name: admin
+      port: 8080
+      targetPort: admin
+      protocol: TCP
+{{- end }}

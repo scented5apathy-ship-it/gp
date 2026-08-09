@@ -1,0 +1,170 @@
+# Flagsmith bootstrap + SDK configuration — E2.8 source-of-truth.
+#
+# Per `tasks.md` E2.8 + `design.md` §1 the platform declares the
+# bootstrap procedure + SDK wiring contract that every consumer
+# must respect.
+#
+# Bootstrap flow (idempotent — runs on every `helm upgrade`):
+#   1. The `featureflags-bootstrap` Helm-hook Job creates the
+#      five environments + the four RBAC roles if missing.
+#   2. The Job imports the legal-gate flags from
+#      `flag-taxonomy.yaml` if missing.
+#   3. The Job verifies that every declared flag exists in
+#      Flagsmith; the Job fails (and the upgrade aborts) on
+#      any drift between this file and the live taxonomy.
+#   4. The Job writes a `featureflags-bootstrap-done-<rev>`
+#      ConfigMap so subsequent upgrades can skip the work.
+#
+# SDK wiring contract — every service binds to:
+#   com.genealogy.platform.featureflags.FeatureFlagClient
+# which delegates to OpenFeature SDK + Flagsmith provider when
+# reachable, and to the typed safe default when not. The
+# `safe-defaults.yaml` rules guarantee the consumer never
+# observes `null`.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-bootstrap
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  bootstrap.yaml: |
+    # Flagsmith bootstrap + SDK wiring (E2.8 source-of-truth).
+    bootstrap:
+      # Helm-hook Job — runs on every `helm upgrade`.
+      job:
+        name: featureflags-bootstrap
+        hook: pre-install,pre-upgrade
+        hookWeight: "-10"
+        # Image — same Flagsmith image as the server. The Job
+        # uses the `flagsmith` CLI subcommand to import the
+        # environments + RBAC roles + flags.
+        image: "flagsmith/flagsmith:2.139.4"
+        # Bootstrap script — idempotent. Re-running on the same
+        # revision is a no-op.
+        scriptPath: /scripts/bootstrap.sh
+        # Resource limits — small, runs once per upgrade.
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        # Timeout — 60s. The script aborts on the first failure
+        # and lets the upgrade roll back.
+        activeDeadlineSeconds: 60
+      # Idempotency marker — written by the bootstrap Job after a
+      # successful run.
+      doneConfigMap: featureflags-bootstrap-done
+      # Step 1 — environments. The Job creates every environment
+      # from `environments.yaml.environments[]` if missing.
+      ensureEnvironments:
+        source: platforms/featureflags/environments.yaml
+        apiEndpoint: /api/v1/environments/
+        operation: POST
+        conflictResponseCode: 400
+        conflictMeans: exists
+      # Step 2 — RBAC roles. The Job creates every role from
+      # `environments.yaml.organisation.rbacRoles[]` if missing.
+      ensureRbacRoles:
+        source: platforms/featureflags/environments.yaml
+        apiEndpoint: /api/v1/organisations/{orgId}/roles/
+        operation: POST
+        conflictResponseCode: 400
+        conflictMeans: exists
+      # Step 3 — flag import. The Job imports the flag taxonomy
+      # from `flag-taxonomy.yaml` if missing.
+      ensureFlags:
+        source: platforms/featureflags/flag-taxonomy.yaml
+        apiEndpoint: /api/v1/environments/{envId}/features/
+        operation: POST
+        conflictResponseCode: 400
+        conflictMeans: exists
+      # Step 4 — drift check. The Job reads the live taxonomy
+      # via GET /api/v1/environments/{envId}/features/ and
+      # compares against the source-of-truth file. Any drift
+      # causes the Job to fail; the upgrade aborts.
+      driftCheck:
+        enabled: true
+        apiEndpoint: /api/v1/environments/{envId}/features/
+        operation: GET
+        onDrift: fail
+        onDriftMessage: |
+          Drift detected between platforms/featureflags/flag-taxonomy.yaml
+          and the live Flagsmith environment. Re-run the bootstrap with
+          `--force` to overwrite, or update the source-of-truth file.
+
+    sdkWiring:
+      # Application contract — the canonical consumer-side
+      # interface. Domain code binds to this interface; the
+      # implementation is provided by the Spring Boot starter
+      # (`SafeFeatureClient`) on the JVM and by the
+      # `@openfeature/flagsmith-client-provider` package in the
+      # Node.js / Next.js PWA.
+      applicationInterface:
+        java: com.genealogy.platform.featureflags.FeatureFlagClient
+        node: "@openfeature/js-sdk"
+      # Spring Boot properties — the starter reads these from
+      # `application.yaml`.
+      springProperties:
+        platform.openfeature.provider: flagsmith
+        platform.openfeature.flagsmith-base-url: ${FLAGSMITH_BASE_URL}
+        platform.openfeature.flagsmith-environment-id: ${FLAGSMITH_ENVIRONMENT_ID}
+        platform.openfeature.flagsmith-api-token: ${FLAGSMITH_API_TOKEN}
+        platform.openfeature.evaluation-timeout-ms: 200
+        platform.openfeature.per-evaluation-cache-seconds: 30
+        platform.openfeature.audit-event-enabled: true
+      # Next.js / PWA env — the PWA bootstrap reads these from
+      # `.env.local` (development) or Argo CD-managed secret
+      # (production).
+      webEnv:
+        NEXT_PUBLIC_FLAGSMITH_BASE_URL: ${FLAGSMITH_BASE_URL}
+        NEXT_PUBLIC_FLAGSMITH_ENVIRONMENT: ${FLAGSMITH_ENVIRONMENT_ID}
+        NEXT_PUBLIC_OPENFEATURE_PROVIDER: flagsmith
+      # Kong edge — the public edge (E2.2) routes
+      # `/api/v1/flagsmith/*` to the in-cluster Flagsmith
+      # service ONLY for admin tokens; the per-tenant SDK
+      # bypasses Kong and reads from the cluster-internal
+      # Service.
+      kongRoute:
+        path: /api/v1/flagsmith
+        upstream: flagsmith.gp-platform.svc.cluster.local:8000
+        auth: jwt
+        allowedRoles:
+          - Org Admin
+          - Environment Admin
+          - Audit Viewer
+        rateLimit:
+          requestsPerMinute: 600
+
+    # Resilience posture — the OpenFeature SDK MUST keep
+    # evaluating flags when Flagsmith is unreachable. The
+    # starter's `OpenFeatureAutoConfiguration` implements this
+    # via `NoOpProvider` (safe fallback) and a short
+    # evaluation timeout (200ms).
+    resilience:
+      # Circuit breaker — opens after 5 consecutive failures,
+      # half-opens after 30s, fully closes after 2 consecutive
+      # successes.
+      circuitBreaker:
+        failureThreshold: 5
+        openDurationSeconds: 30
+        halfOpenSuccessThreshold: 2
+      # Retry budget — bounded to 1 retry with 100ms backoff so
+      # a flag fetch can never amplify at the mesh layer (per
+      # `design.md` §13).
+      retry:
+        maxAttempts: 1
+        backoffMs: 100
+      # Bulkhead — 100 concurrent in-flight flag evaluations per
+      # service replica. Exceeding the bulkhead returns the
+      # safe default rather than blocking the request.
+      bulkhead:
+        maxConcurrent: 100
+        queueDepth: 0
+        onFull: safe-default

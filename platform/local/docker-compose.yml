@@ -214,7 +214,7 @@ services:
       retries: 5
 
   flagsmith:
-    image: flagsmith/flagsmith:latest
+    image: flagsmith/flagsmith:2.139.4
     container_name: gp-flagsmith
     restart: on-failure
     entrypoint: ["sh", "/app/scripts/run-docker-dev.sh"]
@@ -222,11 +222,48 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-genealogy}:${POSTGRES_PASSWORD}@postgres:5432/genea_flagsmith
       ENV: dev
       DJANGO_ALLOWED_HOSTS: "*"
+      # E2.8 — anonymous access is FORBIDDEN.
+      ALLOW_ANONYMOUS: "false"
+      # E2.8 — CORS allowlist (no wildcard).
+      CORS_ALLOWED_ORIGINS: "http://app.genealogy.localhost,http://api.genealogy.localhost,http://public-api.genealogy.localhost"
+      # E2.8 — TLS minimum.
+      TLS_MIN_VERSION: "tls12"
+      # E2.8 — audit log endpoint (OTel Collector).
+      AUDIT_LOG_ENDPOINT: "http://otel-collector:4318/v1/audit"
+      # E2.8 — pseudonymisation pepper (placeholder; replaced
+      # by ESO at runtime in production).
+      FEATURE_FLAGS_PSEUDONYM_PEPPER: "REPLACE_ME"
+    volumes:
+      # E2.8 — mount the 5 source-of-truth files into the
+      # container so the OpenFeature SDK can read them via
+      # Spring Boot properties. The deep linter
+      # (`scripts/lint-flagsmith-config.mjs`) enforces the
+      # contract; the byte-identity mirror check rejects drift.
+      - ../featureflags/flagsmith-server.yaml:/app/flagsmith-server.yaml:ro
+      - ../featureflags/environments.yaml:/app/environments.yaml:ro
+      - ../featureflags/flag-taxonomy.yaml:/app/flag-taxonomy.yaml:ro
+      - ../featureflags/safe-defaults.yaml:/app/safe-defaults.yaml:ro
+      - ../featureflags/sdk-config.yaml:/app/sdk-config.yaml:ro
     ports:
       - "8010:8000"
     depends_on:
       postgres:
         condition: service_healthy
+
+  featureflags-bootstrap:
+    image: flagsmith/flagsmith:2.139.4
+    container_name: gp-featureflags-bootstrap
+    restart: "no"
+    entrypoint: ["/bin/sh", "/scripts/bootstrap.sh"]
+    environment:
+      FLAGSMITH_BASE_URL: "http://flagsmith:8000"
+      FLAGSMITH_ORG_TOKEN: "REPLACE_ME"
+    volumes:
+      - ../featureflags:/source:ro
+      - ./featureflags/bootstrap.sh:/scripts/bootstrap.sh:ro
+    depends_on:
+      flagsmith:
+        condition: service_started
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.110.0

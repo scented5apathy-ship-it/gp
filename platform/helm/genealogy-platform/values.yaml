@@ -808,10 +808,128 @@ components:
     # Source-of-truth file.
     configPath: storage/valkey-config.yaml
   featureFlags:
-    # Flagsmith + OpenFeature (E2.8).
+    # E2.8 — Flagsmith + OpenFeature. The chart renders the
+    # upstream `flagsmith/flagsmith` Deployment on on-prem +
+    # dev; SaaS uses managed Flagsmith SaaS (provider:
+    # flagsmith-saas). The five source-of-truth files
+    # (`platform/featureflags/*.yaml`) are mirrored into
+    # `files/featureflags/`. The deep linter
+    # (`scripts/lint-flagsmith-config.mjs`) enforces:
+    #   - flagsmith-server.yaml pins the upstream
+    #     `flagsmith/flagsmith:2.139.4` image
+    #     (ADR-E0.5-01 baseline);
+    #   - backing store is postgresql (in-memory forbidden in
+    #     production);
+    #   - anonymous access is FORBIDDEN;
+    #   - CORS allowlist is restricted (no wildcard);
+    #   - 5 environments + 4 RBAC roles declared;
+    #   - 8 legal-gate flags from
+    #     `privacy-and-legal-gate.md` §12 + ≥ 4 rollout flags;
+    #   - safe-default rules enforced (typed fallback +
+    #     evaluation timeout + audit event contract);
+    #   - forbidden key patterns rejected (skip_auth /
+    #     skip_consent / bypass_audit / etc.);
+    #   - no literal secret / token / password in any file.
+    enabled: true
+    # `provider` selects which workload to render:
+    #   - `flagsmith-self-hosted` → Deployment (on-prem + dev)
+    #   - `flagsmith-saas`        → managed (SaaS, ADR-E0.5-03)
+    provider: flagsmith-self-hosted
+    # Legacy alias preserved for the dev profile.
     driver: flagsmith
+    # Image pin — ADR-E0.5-01 baseline (Flagsmith 2.139.4).
+    image:
+      repository: flagsmith/flagsmith
+      tag: "2.139.4"
+      registry: docker.io
+    # Replica count — per-env values files override.
     replicas: 2
+    # Backing store — Postgres is REQUIRED for production /
+    # staging / on-prem. In-memory is FORBIDDEN in any
+    # non-development environment.
+    backingStore: postgresql
+    # Anonymous access — FORBIDDEN. JWT auth + per-environment
+    # API tokens are mandatory.
+    allowAnonymous: false
+    # CORS allowlist — restricted to the platform public
+    # origins. Wildcard is forbidden per
+    # `privacy-and-legal-gate.md` §11.
+    corsAllowedOrigins:
+      - https://app.genealogy.local
+      - https://api.genealogy.local
+      - https://public-api.genealogy.local
+      - https://admin.genealogy.local
+    # TLS minimum — TLS 1.2 minimum, TLS 1.3 preferred.
+    tlsMinVersion: "tls12"
+    # OTel audit endpoint (E2.10).
+    auditEndpoint: "http://otel-collector.gp-observability.svc.cluster.local:4318/v1/audit"
+    # Cache — 5s in-process evaluation cache. The OpenFeature
+    # SDK (E1.4 Spring Boot starter) maintains its own 30s
+    # cache; server-side cache is intentionally small to keep
+    # rollout latency low.
+    cache:
+      ttlSeconds: 5
+      maxEntries: 10000
+    # Rate limit — flag evaluation endpoint is rate-limited
+    # at 100 req/s per identity (Kong edge rate limit applies
+    # globally; this is the per-flag-fetch defense in depth).
+    rateLimit:
+      flagFetchPerSecond: 100
+    # Resources — sized for SaaS / on-prem (2-3 replicas).
+    # The dev values file overrides to a single replica +
+    # smaller requests.
+    resources:
+      requests:
+        cpu: "200m"
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # Bootstrap Job resources — small, runs once per
+    # `helm upgrade`.
+    bootstrapResources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    # Source-of-truth list of ConfigMaps mirrored from
+    # `platform/featureflags/`. The chart mounts them into
+    # the Deployment + the `featureflags-bootstrap` Helm-hook
+    # Job.
+    configPaths:
+      serverConfig: featureflags/flagsmith-server.yaml
+      environments: featureflags/environments.yaml
+      flagTaxonomy: featureflags/flag-taxonomy.yaml
+      safeDefaults: featureflags/safe-defaults.yaml
+      sdkConfig: featureflags/sdk-config.yaml
+    # SDK safe-default — guaranteed by the
+    # `OpenFeatureAutoConfiguration` in the platform Spring
+    # Boot starter. The starter always installs the
+    # `NoOpProvider` as a safe default; the Flagsmith provider
+    # is wired here (E2.8).
     sdkSafeDefault: true
+    # SDK evaluation context — every evaluation is scoped by
+    # `tenant_pseudo_id` so a cross-tenant flag read cannot
+    # leak. The ABAC layer (E3.4) verifies the pseudo-id
+    # against the BFF-issued trusted context.
+    pseudonymisation:
+      algorithm: sha256
+      pepperSecretRef: feature-flag-pseudonym-pepper
+    # Resilience — circuit breaker + retry budget + bulkhead
+    # to prevent flag-fetch amplification at the mesh layer.
+    resilience:
+      circuitBreaker:
+        failureThreshold: 5
+        openDurationSeconds: 30
+        halfOpenSuccessThreshold: 2
+      retry:
+        maxAttempts: 1
+        backoffMs: 100
+      bulkhead:
+        maxConcurrent: 100
+        onFull: safe-default
   gitops:
     # Argo CD + Rollouts (E2.9).
     driver: argocd

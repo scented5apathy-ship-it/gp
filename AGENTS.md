@@ -94,6 +94,8 @@ Every change must respect:
       config-as-code validator — E2.7)
 - [ ] `pnpm check:s3:compat` passes (AWS S3 ↔ MinIO compatibility
       contract test — E2.7)
+- [ ] `pnpm lint:flagsmith` passes (Flagsmith + OpenFeature
+      config-as-code + safe-default rule validator — E2.8)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

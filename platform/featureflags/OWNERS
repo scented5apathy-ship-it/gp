@@ -1,0 +1,42 @@
+# OWNERS — platform/featureflags (E2.8 Flagsmith + OpenFeature)
+#
+# Per `tasks.md` E0.6 + `ownership-catalog.md` §3 + ADR §C #3,
+# this file mirrors `config/teams.yaml` and labels the
+# primary owner, secondary reviewer and on-call lead for the
+# Flagsmith + OpenFeature platform component.
+primary: platform-primary
+secondary: "@genealogy/platform"
+on-call: sre-secondary
+review-cadence: quarterly
+components:
+  - id: featureflags
+    name: Flagsmith + OpenFeature
+    primary: platform-primary
+    secondary: "@genealogy/platform"
+    on-call: sre-secondary
+    syncs:
+      - dependency: web-bff
+        direction: "reads flags via OpenFeature Node SDK"
+        contract: "E2.8 safe-default rule + tenant_pseudo_id context"
+      - dependency: web-public
+        direction: "reads flags via OpenFeature browser SDK"
+        contract: "E2.8 per-evaluation cache 30s"
+      - dependency: services (11)
+        direction: "reads flags via SafeFeatureClient"
+        contract: "E2.8 NoOpProvider safe fallback"
+      - dependency: workers (5)
+        direction: "reads flags via SafeFeatureClient"
+        contract: "E2.8 NoOpProvider safe fallback"
+      - dependency: audit
+        direction: "publishes feature_flag_eval to OTel"
+        contract: "E2.10 audit sink"
+version-policy:
+  - component: flagsmith-server
+    pin: "2.139.4"
+    review: "2026-11-01"
+  - component: openfeature-sdk-java
+    pin: "1.0.0"
+    review: "2026-11-01"
+  - component: openfeature-sdk-node
+    pin: "1.5.0"
+    review: "2026-11-01"

@@ -1,0 +1,89 @@
+{{/*
+Flagsmith bootstrap Helm-hook Job — applies the environments
++ RBAC roles + flag taxonomy.
+
+Runs on every `helm upgrade` (pre-install, pre-upgrade). The
+script is idempotent. The Job is small + fast: it waits
+for the Flagsmith pod + applies the bootstrap + exits.
+*/}}
+{{- $ff := .Values.components.featureFlags }}
+{{- if and $ff.enabled (eq $ff.provider "flagsmith-self-hosted") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: featureflags-bootstrap
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    app.kubernetes.io/job: featureflags-bootstrap
+    gp.genealogy/contract-only: "true"
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: featureflags
+        app.kubernetes.io/job: featureflags-bootstrap
+    spec:
+      serviceAccountName: featureflags-bootstrap
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-flagsmith
+          image: flagsmith/flagsmith:2.139.4
+          command:
+            - /bin/sh
+            - -c
+            - |
+              for i in $(seq 1 30); do
+                if wget -qO- http://flagsmith.gp-platform.svc.cluster.local:8000/health 2>/dev/null; then
+                  echo "flagsmith API is healthy"
+                  exit 0
+                fi
+                echo "waiting for flagsmith API... ${i}/30"
+                sleep 5
+              done
+              exit 1
+      containers:
+        - name: bootstrap
+          image: {{ include "genealogy-platform.image" (dict "image" $ff.image) }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/init.sh"]
+          env:
+            - name: FLAGSMITH_BASE_URL
+              value: "http://flagsmith.gp-platform.svc.cluster.local:8000"
+            - name: FLAGSMITH_ORG_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: flagsmith-api-token-production
+                  key: apiToken
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            {{- toYaml $ff.bootstrapResources | nindent 12 }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: genea-flagsmith-bootstrap
+            items:
+              - key: bootstrap.sh
+                path: bootstrap.sh
+                mode: 0755
+              - key: init.sh
+                path: init.sh
+                mode: 0755
+{{- end }}

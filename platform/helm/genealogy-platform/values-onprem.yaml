@@ -102,8 +102,24 @@ components:
     replicas: 3
     maxmemory: "1Gi"
   featureFlags:
+    # E2.8 — on-prem runs Flagsmith self-hosted on the
+    # customer cluster with 2 replicas. The `onprem`
+    # environment is selected by the OpenFeature SDK.
+    provider: flagsmith-self-hosted
     driver: flagsmith
     replicas: 2
+    corsAllowedOrigins:
+      - https://app.genealogy.local
+      - https://api.genealogy.local
+      - https://public-api.genealogy.local
+      - https://admin.genealogy.local
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1
+        memory: 1Gi
   observability:
     retention:
       prometheus: 30d

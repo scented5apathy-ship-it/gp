@@ -1,0 +1,263 @@
+# Flagsmith flag taxonomy — E2.8 source-of-truth.
+#
+# Per `tasks.md` E2.8 + `design.md` §1 + `privacy-and-legal-gate.md`
+# §12 the platform declares the canonical flag list with owner,
+# default, type, expiry and audit linkage. Flags MUST be
+# declared here BEFORE any consumer reads them; the OpenFeature
+# SDK safe-default rule (`safe-defaults.yaml`) guarantees the
+# service still starts when Flagsmith is unreachable.
+#
+# SDK rules (mirroring `privacy-and-legal-gate.md` §12):
+#   - Every consumer reads the flag from OpenFeature with an
+#     explicit typed default; the default value MUST match the
+#     `safeDefault` column below.
+#   - When Flagsmith is unreachable, the SDK MUST return the
+#     default, NEVER the inverse, NEVER `null`.
+#   - No code path may call `setFlag(...)` from application
+#     code; the flag taxonomy is owned by Flagsmith admin UI /
+#     GitOps and exported as JSON snapshots committed to this
+#     file.
+#   - Flags MUST NOT bypass authorization, consent, or audit.
+#     A flag that toggles "skip OpenFGA check" or "skip consent
+#     ledger entry" is FORBIDDEN by this taxonomy + CI regex.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-flag-taxonomy
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  flags.yaml: |
+    # Flag taxonomy — every flag MUST declare the 11 columns:
+    #   key, type, safeDefault, owner, whenTrue, whenFalse,
+    #   expiresOn, audit, scope (env list), legalGate (bool),
+    #   segmentOverride (bool). The linter rejects a row
+    #   missing any column.
+    flags:
+      # Legal-gate flags — `privacy-and-legal-gate.md` §12.
+      - key: legal.data_residency.allowlist
+        type: json
+        safeDefault: "[]"
+        owner: dpo+platform
+        whenTrue: "Region allowlist is enforced on storage writes + cross-region replication"
+        whenFalse: "Cross-region writes are blocked at the ABAC layer"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: true
+        segmentOverride: false
+        dataClass: OPS.METADATA
+      - key: legal.public_sharing.enabled
+        type: boolean
+        safeDefault: false
+        owner: dpo
+        whenTrue: "Public trees / UNLISTED links render in search projection"
+        whenFalse: "Public projection rebuild rejects unredacted living / minor data"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: true
+        segmentOverride: false
+        dataClass: PII.SENSITIVE
+      - key: legal.dna.enabled
+        type: boolean
+        safeDefault: false
+        owner: dpo+genomics-lead
+        whenTrue: "dna-service accepts real uploads; dna-raw writes enabled"
+        whenFalse: "dna-service rejects uploads with 451 + audit (E10.5)"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: true
+        segmentOverride: false
+        dataClass: GENETIC.RAW
+      - key: legal.media_upload.enabled
+        type: boolean
+        safeDefault: true
+        owner: dpo
+        whenTrue: "media-service accepts uploads"
+        whenFalse: "media-service rejects uploads (CVE in critical parser)"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: true
+        segmentOverride: false
+        dataClass: MEDIA.RAW
+      - key: legal.gedcom_import.enabled
+        type: boolean
+        safeDefault: true
+        owner: dpo
+        whenTrue: "GEDCOM 7 streaming parser accepts imports"
+        whenFalse: "GEDCOM import endpoint returns 451 + audit"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: true
+        segmentOverride: false
+        dataClass: PII.IDENTITY
+      - key: legal.cross_region_transfer.enabled
+        type: boolean
+        safeDefault: false
+        owner: dpo
+        whenTrue: "Cross-region bucket replication + signed URL replay enabled"
+        whenFalse: "Cross-region writes blocked at storage layer"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: true
+        segmentOverride: false
+        dataClass: OPS.METADATA
+      - key: legal.parsers.restricted
+        type: boolean
+        safeDefault: false
+        owner: dpo
+        whenTrue: "Per-tenant parser sandbox enabled (jurisdiction-specific)"
+        whenFalse: "Default parser sandbox"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: true
+        segmentOverride: false
+        dataClass: OPS.METADATA
+      - key: legal.flag_bypass_allowlist
+        type: json
+        safeDefault: "[]"
+        owner: dpo
+        whenTrue: "Named flags may be toggled for non-production troubleshooting"
+        whenFalse: "No flag bypass; default values returned"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: true
+        segmentOverride: false
+        dataClass: OPS.METADATA
+
+      # Rollout flags — controlled by product + engineering.
+      # Each flag MUST declare an expiry date ≤ 12 months from
+      # creation; the linter rejects a flag with `expiresOn` in
+      # the past.
+      - key: rollout.tree.renderer.hybrid
+        type: boolean
+        safeDefault: false
+        owner: product+frontend-lead
+        whenTrue: "Hybrid SVG/canvas renderer enabled (E5.1)"
+        whenFalse: "SVG-only renderer"
+        expiresOn: "2027-06-30"
+        audit: true
+        scope: [production, staging, onprem, development]
+        legalGate: false
+        segmentOverride: false
+        dataClass: OPS.METADATA
+      - key: rollout.search.opensearch
+        type: boolean
+        safeDefault: false
+        owner: search-lead
+        whenTrue: "OpenSearch projection enabled (E8.4 ADR)"
+        whenFalse: "PostgreSQL FTS only"
+        expiresOn: "2027-06-30"
+        audit: true
+        scope: [production, staging]
+        legalGate: false
+        segmentOverride: false
+        dataClass: OPS.METADATA
+      - key: rollout.media.transcoder.ffmpeg
+        type: boolean
+        safeDefault: true
+        owner: media-lead
+        whenTrue: "FFmpeg transcoder enabled for video/audio"
+        whenFalse: "Image-only pipeline"
+        expiresOn: "2027-06-30"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: false
+        segmentOverride: false
+        dataClass: MEDIA.RAW
+      - key: rollout.collaboration.proposalReview
+        type: boolean
+        safeDefault: false
+        owner: collab-lead
+        whenTrue: "Proposal / review workflow (E6.2) enabled"
+        whenFalse: "Direct edit only"
+        expiresOn: "2027-06-30"
+        audit: true
+        scope: [production, staging]
+        legalGate: false
+        segmentOverride: false
+        dataClass: OPS.METADATA
+
+      # Operational / per-tenant flags — `segmentOverride: true`
+      # means the flag value can vary by tenant (via Flagsmith
+      # segments). The two residency flags below are the
+      # canonical per-tenant overrides referenced by
+      # `scale-and-slo.md` §10.
+      - key: residency.eu_only
+        type: boolean
+        safeDefault: false
+        owner: platform-primary
+        whenTrue: "Data plane writes restricted to EU residency cluster"
+        whenFalse: "Default residency"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: false
+        segmentOverride: true
+        dataClass: OPS.METADATA
+      - key: residency.apac_only
+        type: boolean
+        safeDefault: false
+        owner: platform-primary
+        whenTrue: "Data plane writes restricted to APAC residency cluster"
+        whenFalse: "Default residency"
+        expiresOn: "2027-12-31"
+        audit: true
+        scope: [production, staging, onprem]
+        legalGate: false
+        segmentOverride: true
+        dataClass: OPS.METADATA
+
+    # Forbidden flag patterns — CI regex blocks the following
+    # key fragments because they imply a bypass of
+    # authorization, consent, or audit:
+    forbiddenKeyPatterns:
+      - "skip.*auth"
+      - "skip.*openfga"
+      - "skip.*abac"
+      - "skip.*consent"
+      - "skip.*audit"
+      - "bypass.*auth"
+      - "bypass.*consent"
+      - "disable.*audit"
+      - "disable.*encryption"
+      - "no.*redact"
+      - "raw.*dna"
+      - "raw.*pii"
+
+    # Required flag schema — every flag MUST carry these
+    # columns; the linter rejects a row missing any of them.
+    requiredColumns:
+      - key
+      - type
+      - safeDefault
+      - owner
+      - whenTrue
+      - whenFalse
+      - expiresOn
+      - audit
+      - scope
+      - legalGate
+      - segmentOverride
+      - dataClass
+
+    # Allowed flag types — Flagsmith supports `boolean`,
+    # `string`, `integer`, `float`, `json`. Anything else
+    # (`array`, `object` not wrapped as JSON) is rejected.
+    allowedTypes:
+      - boolean
+      - string
+      - integer
+      - float
+      - json

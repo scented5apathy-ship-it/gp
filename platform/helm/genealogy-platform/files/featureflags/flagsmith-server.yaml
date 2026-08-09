@@ -1,0 +1,113 @@
+# Flagsmith server configuration — E2.8 source-of-truth.
+#
+# Per `tasks.md` E2.8 + `design.md` §1 + §13 + `privacy-and-legal-gate.md`
+# §12 the platform declares:
+#   - Self-hosted Flagsmith on on-prem + dev via the
+#     upstream `flagsmith/flagsmith` image.
+#   - Managed Flagsmith SaaS on the SaaS profile (ADR-E0.5-03
+#     candidate) using the same OpenFeature contract so domain
+#     code never branches on provider.
+#   - 5 environments: `development`, `staging`, `production`,
+#     `onprem`, `dev` (the latter maps to local Docker Compose).
+#   - 1 organisation per environment cluster (NOT per tenant);
+#     flag taxonomy is owned by Flagsmith admin UI / GitOps
+#     and exported as JSON snapshots in
+#     `platform/featureflags/environments.yaml`.
+#   - Postgres backing store (genetic data NEVER stored here).
+#   - JWT auth + per-environment API token; anonymous access
+#     is FORBIDDEN by configuration.
+#
+# The deep linter `scripts/lint-flagsmith-config.mjs` enforces:
+#   - Flagsmith image pin (ADR-E0.5-01 baseline `flagsmith/flagsmith:2.139.4`)
+#   - Postgres backing store (in-memory forbidden in production)
+#   - 5 environments declared (no per-tenant env)
+#   - Anonymous access disabled
+#   - CORS allowlist restricted to platform origins (no wildcard)
+#   - Audit log enabled
+#   - Prometheus telemetry on `/api/v1/flagsmith/usage`
+#   - No literal secret / token / password in any values file
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-server-config
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # Flagsmith server configuration (E2.8 source-of-truth).
+    # The chart renders Flagsmith whenever
+    # `components.featureFlags.provider: flagsmith-self-hosted` is
+    # set; SaaS uses `provider: flagsmith-saas` and bypasses the
+    # server workload.
+    flagsmith:
+      # ADR-E0.5-01 baseline — Flagsmith 2.139.4 (latest LTS as of
+      # 2026-Q2). On-prem + dev profiles pin this image; SaaS uses
+      # the managed Flagsmith SaaS + the OpenFeature SDK (no
+      # server workload).
+      serverImage: "flagsmith/flagsmith:2.139.4"
+      # API port — cluster-internal only. Public traffic reaches
+      # flag evaluation through the BFF (E2.2 Kong edge).
+      apiPort: 8000
+      # Front-end admin UI (optional). Disabled on dev to keep the
+      # container slim; on-prem + staging expose it for operator
+      # access via the bastion VPN.
+      adminPort: 8080
+      adminUiEnabled: true
+      # Backing store — Postgres is REQUIRED for production /
+      # staging / on-prem. In-memory backing is FORBIDDEN in any
+      # non-development environment.
+      backingStore: postgresql
+      # Anonymous access — FORBIDDEN. JWT auth + per-environment
+      # API tokens are mandatory. The chart never starts the
+      # server with `ALLOW_ANONYMOUS=true`.
+      allowAnonymous: false
+      # CORS allowlist — restricted to platform origins. The deep
+      # linter rejects an empty or wildcard allowlist.
+      corsAllowedOrigins:
+        - "https://app.genealogy.local"
+        - "https://api.genealogy.local"
+        - "https://public-api.genealogy.local"
+        - "https://admin.genealogy.local"
+      # TLS minimum — TLS 1.2 minimum, TLS 1.3 preferred. The
+      # Kong policy (E2.2) enforces the same posture on the
+      # public edge.
+      tlsMinVersion: "tls12"
+      # Audit log — every flag create / update / delete /
+      # evaluate is logged to the OTel Collector (E2.10).
+      auditLog:
+        enabled: true
+        endpoint: "http://otel-collector.gp-observability.svc.cluster.local:4318/v1/audit"
+      # Prometheus telemetry — `/api/v1/flagsmith/usage` exposes
+      # flag-usage counters per organisation / environment. The
+      # platform Prometheus (E2.10) scrapes it on the same
+      # namespace.
+      prometheus:
+        enabled: true
+        port: 8000
+        path: "/api/v1/flagsmith/usage"
+      # Cache — 5s in-process evaluation cache. The OpenFeature
+      # SDK (E1.4 Spring Boot starter) maintains its own 30s
+      # cache; server-side cache is intentionally small to keep
+      # rollout latency low.
+      cache:
+        ttlSeconds: 5
+        maxEntries: 10000
+      # Rate limit — flag evaluation endpoint is rate-limited at
+      # 100 req/s per identity (Kong edge rate limit applies
+      # globally; this is the per-flag-fetch defense in depth).
+      rateLimit:
+        flagFetchPerSecond: 100
+      # Replica count — per-env values files override.
+      replicas:
+        saas: 3
+        onprem: 2
+        dev: 1
+      # Version pin (mirror of serverImage for cross-reference).
+      version: "2.139.4"
+      # License posture — Flagsmith is BSD-3-Clause; no AGPL
+      # dependency is introduced in this task.
+      license: BSD-3-Clause

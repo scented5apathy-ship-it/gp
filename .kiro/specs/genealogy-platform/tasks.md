@@ -159,7 +159,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - Dùng Valkey cho cache/session/rate state có TTL; không làm source of truth.
   - Chạy compatibility tests giữa cloud S3 và MinIO.
 
-- [ ] E2.8 Cấu hình Flagsmith/OpenFeature
+- [x] E2.8 Cấu hình Flagsmith/OpenFeature
 
   - Tạo environment, flag taxonomy, owner, expiry và audit.
   - SDK phải có safe default khi Flagsmith unavailable.

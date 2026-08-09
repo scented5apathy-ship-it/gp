@@ -1,0 +1,79 @@
+{{/*
+Flagsmith config ConfigMaps — mirror the five source-of-truth
+files into the cluster. The chart never mutates the
+source-of-truth files; the contracts are enforced by the
+deep linter + the byte-identity check on the mirror.
+*/}}
+{{- $ff := .Values.components.featureFlags }}
+{{- $sourceServer := printf "files/%s" ($ff.configPaths.serverConfig | default "featureflags/flagsmith-server.yaml") }}
+{{- $sourceEnvs := printf "files/%s" ($ff.configPaths.environments | default "featureflags/environments.yaml") }}
+{{- $sourceFlags := printf "files/%s" ($ff.configPaths.flagTaxonomy | default "featureflags/flag-taxonomy.yaml") }}
+{{- $sourceDefaults := printf "files/%s" ($ff.configPaths.safeDefaults | default "featureflags/safe-defaults.yaml") }}
+{{- $sourceSdk := printf "files/%s" ($ff.configPaths.sdkConfig | default "featureflags/sdk-config.yaml") }}
+{{- if $ff.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-server-config
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+    {{- (.Files.Get $sourceServer) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-environments
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  environments.yaml: |-
+    {{- (.Files.Get $sourceEnvs) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-flag-taxonomy
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  flags.yaml: |-
+    {{- (.Files.Get $sourceFlags) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-safe-defaults
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  safe-defaults.yaml: |-
+    {{- (.Files.Get $sourceDefaults) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-bootstrap
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  bootstrap.yaml: |-
+    {{- (.Files.Get $sourceSdk) | nindent 4 }}
+{{- end }}

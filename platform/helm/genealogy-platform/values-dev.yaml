@@ -137,8 +137,24 @@ components:
       storageClass: standard
       size: 2Gi
   featureFlags:
+    # E2.8 — dev runs Flagsmith single replica on the local
+    # kind cluster. The `development` environment is selected
+    # by the OpenFeature SDK; `corsAllowedOrigins` uses the
+    # local dev domain.
+    provider: flagsmith-self-hosted
     driver: flagsmith
     replicas: 1
+    corsAllowedOrigins:
+      - http://app.genealogy.localhost
+      - http://api.genealogy.localhost
+      - http://public-api.genealogy.localhost
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
     sdkSafeDefault: true
   observability:
     # Local stack keeps one replica each and a 7-day retention so

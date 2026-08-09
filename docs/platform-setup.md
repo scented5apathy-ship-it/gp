@@ -46,7 +46,7 @@
 > - [x] **E2.5** Istio service mesh
 > - [x] **E2.6** Vault + cloud KMS abstraction
 > - [x] **E2.7** S3/MinIO + Valkey
-> - [ ] **E2.8** Flagsmith / OpenFeature
+> - [x] **E2.8** Flagsmith / OpenFeature
 > - [ ] **E2.9** Argo CD / Rollouts
 > - [ ] **E2.10** Grafana OSS stack (OTel Collector + Prometheus + Loki + Tempo + Grafana)
 
@@ -569,7 +569,7 @@ trong compose**.
 | `temporal`                                                       | `temporalio/auto-setup:1.26.2`                 | Workflow (E2.4)                | docker compose                 |
 | `minio`                                                          | `minio/minio:RELEASE.2024-10-13T13-34-11Z`     | S3-compatible storage (E2.7)   | docker compose                 |
 | `valkey`                                                         | `valkey/valkey:7.2-alpine`                     | Cache (E2.7)                   | docker compose                 |
-| `flagsmith`                                                      | `flagsmith/flagsmith:latest`                   | Feature flag (E2.8)            | docker compose                 |
+| `flagsmith`                                                      | `flagsmith/flagsmith:2.139.4`                  | Feature flag (E2.8)            | docker compose                 |
 | `otel-collector`                                                 | `otel/opentelemetry-collector-contrib:0.110.0` | Telemetry pipeline (E2.10)     | docker compose                 |
 | `kong`                                                           | `kong:3.8.0`                                   | Edge gateway (E2.2)            | docker compose                 |
 | Istio mesh / Vault HA / Argo CD / Rollouts / NetworkPolicy / PDB | (không có ở compose)                           | Platform K8s                   | **kind + Helm umbrella chart** |
@@ -1272,11 +1272,88 @@ PHẢI là `allkeys-lru` (no `noeviction`). Cache data KHÔNG
 
 ### 4.7 E2.8 Flagsmith / OpenFeature
 
-**Trạng thái**: 🚧 planned. Chart đã có block
-`components.featureFlags` (driver: flagsmith, sdkSafeDefault: true).
+**Trạng thái**: ✅ shipped (E2.8). Chart ship block
+`components.featureFlags` (`provider: flagsmith-self-hosted` cho
+on-prem + dev, `flagsmith-saas` cho SaaS theo ADR-E0.5-03) +
+7 Helm template (`Deployment` + `Services` + `ServiceAccounts` +
+`Secrets` + `ConfigMaps` + `bootstrap-configmap` +
+`bootstrap-job` + `network-policies`) + `featureflags-bootstrap`
+Helm-hook Job (`pre-install,pre-upgrade`) chạy idempotent
+script apply 5 environments + 4 RBAC roles + flag taxonomy +
+drift check.
 
-**Sẽ có**: Helm install Flagsmith + OpenFeature SDK config. Hiện
-tại chưa ship — theo dõi `tasks.md` E2.8.
+#### 4.7.1 Source-of-truth
+
+5 file dưới `platform/featureflags/`:
+
+| File | Mô tả |
+| ---- | ----- |
+| `platform/featureflags/flagsmith-server.yaml` | Server image pin (`flagsmith/flagsmith:2.139.4` — ADR-E0.5-01), backing store `postgresql` (in-memory forbidden), CORS allowlist (no wildcard), TLS 1.2 minimum, audit log, Prometheus telemetry, rate limit, cache, replicas |
+| `platform/featureflags/environments.yaml` | 5 environments (`development`/`staging`/`production`/`onprem`/`audit`), 4 RBAC role (`Org Admin`/`Environment Admin`/`Environment User`/`Audit Viewer`); `audit` env là read-only |
+| `platform/featureflags/flag-taxonomy.yaml` | 8 legal-gate flag (theo `privacy-and-legal-gate.md` §12) + 4 rollout flag + 2 segment override; 12 forbidden key pattern (`skip_auth` / `bypass_consent` / `disable_audit` / `raw_dna` / ...) |
+| `platform/featureflags/safe-defaults.yaml` | OpenFeature SDK safe-default rule (typed fallback + evaluation timeout 200ms + audit event contract + per-env posture); evaluation context yêu cầu `tenant_pseudo_id`, cấm `tenant_id` |
+| `platform/featureflags/sdk-config.yaml` | Bootstrap Job + SDK wiring (Spring Boot property + Next.js env) + Kong route + circuit breaker / retry / bulkhead |
+
+Mirror vào `platform/helm/genealogy-platform/files/featureflags/`.
+Deep linter từ chối drift.
+
+#### 4.7.2 Verify
+
+```bash
+pnpm lint:flagsmith           # deep validator cho E2.8 source-of-truth
+pnpm smoke:flagsmith          # smoke probe (structural-only; kind/kubectl/helm không có trên PATH)
+pnpm check:platform:baseline  # E2.8 invariants
+```
+
+#### 4.7.3 Flag taxonomy
+
+Mọi flag phải có 12 cột (`key` / `type` / `safeDefault` / `owner`
+/ `whenTrue` / `whenFalse` / `expiresOn` / `audit` / `scope` /
+`legalGate` / `segmentOverride` / `dataClass`). 8 legal-gate
+flag là OFF-by-default cho đến khi privacy gate đạt:
+
+| Flag | Default | Owner |
+| ---- | ------- | ----- |
+| `legal.data_residency.allowlist` | `[]` | dpo+platform |
+| `legal.public_sharing.enabled` | `false` | dpo |
+| `legal.dna.enabled` | `false` | dpo+genomics-lead |
+| `legal.media_upload.enabled` | `true` | dpo |
+| `legal.gedcom_import.enabled` | `true` | dpo |
+| `legal.cross_region_transfer.enabled` | `false` | dpo |
+| `legal.parsers.restricted` | `false` | dpo |
+| `legal.flag_bypass_allowlist` | `[]` | dpo |
+
+#### 4.7.4 SDK safe-default
+
+Mọi consumer đọc flag qua OpenFeature SDK với typed default. Khi
+Flagsmith unreachable, SDK trả về default — **KHÔNG** inverse,
+**KHÔNG** `null`. Evaluation timeout 200ms; per-evaluation cache
+30s. Evaluation context scope bởi `tenant_pseudo_id` (ABAC layer
+verify); cấm `tenant_id` / `user_id` / `email` / `raw_dna` /
+`flag_value`.
+
+#### 4.7.5 Troubleshooting
+
+| # | Symptom | Action |
+| - | ------- | ------ |
+| 1 | `pnpm lint:flagsmith` fail "serverImage must pin" | `flagsmith-server.yaml` không pin `flagsmith/flagsmith:2.139.4`. Edit + sync mirror. |
+| 2 | `pnpm lint:flagsmith` fail "backingStore must be postgresql" | `flagsmith-server.yaml` đang set backing store khác (in-memory forbidden trên production). |
+| 3 | `pnpm lint:flagsmith` fail "missing required environment 'audit'" | `environments.yaml` thiếu `audit` env. DPO + privacy team cần snapshot. |
+| 4 | `pnpm lint:flagsmith` fail "matches forbidden pattern" | Flag key match `skip_auth` / `bypass_consent` / ... — security/consent bypass bị cấm. |
+| 5 | `pnpm lint:flagsmith` fail "must enable bootstrap.driftCheck" | `sdk-config.yaml` thiếu drift check. Helm upgrade sẽ abort nếu drift. |
+| 6 | `FlagsmithBootstrapJobFailed` alert fire | Drift giữa source-of-truth và live. Xem `runbook/flagsmith.md` §bootstrap-failed. |
+| 7 | `FlagsmithDefaultUsedRateHigh` (> 20% / 10m) | SDK wiring sai: missing flag definition hoặc provider unreachable. |
+
+#### 4.7.6 Liên kết
+
+- **Source-of-truth**: `platform/featureflags/{flagsmith-server,environments,flag-taxonomy,safe-defaults,sdk-config}.yaml` + `OWNERS` + `README.md`
+- **Mirror**: `platform/helm/genealogy-platform/files/featureflags/*.yaml`
+- **Helm templates**: `platform/helm/genealogy-platform/templates/components/featureflags/{statefulset,services,serviceaccounts,secrets,configmap,bootstrap-configmap,bootstrap-job,network-policies}.yaml`
+- **Alert rules**: `platform/observability/alerts/flagsmith-rules.yaml` (8 alerts / 4 rule groups)
+- **Contract stub**: `platform/helm/genealogy-platform/templates/components/contract-stubs.yaml` (`featureFlags` block)
+- **Validation scripts**: `scripts/lint-flagsmith-config.mjs`, `scripts/smoke-flagsmith.mjs`, `scripts/__tests__/lint-flagsmith-config.test.mjs`
+- **Runbook**: `runbook/flagsmith.md`
+- **Evidence**: `.kiro/specs/genealogy-platform/evidence/E2.8.md`
 
 ### 4.8 E2.9 Argo CD / Rollouts
 
@@ -1312,9 +1389,10 @@ pnpm lint:istio
 pnpm lint:vault
 pnpm lint:s3
 pnpm check:s3:compat
+pnpm lint:flagsmith
 pnpm check:platform:baseline
 pnpm test:scripts
-# Kỳ vọng: tất cả clean, 61/61 tests pass
+# Kỳ vọng: tất cả clean, 68/68 tests pass (61 cũ + 7 E2.8)
 
 # 2. Helm render check (xác nhận chart không lỗi)
 docker run --rm -v "${PWD}:/src:ro" -w /src alpine/helm:3.16.3 \
@@ -1328,6 +1406,7 @@ pnpm smoke:temporal      # E2.4
 pnpm smoke:istio         # E2.5
 pnpm smoke:vault         # E2.6
 pnpm smoke:s3            # E2.7
+pnpm smoke:flagsmith     # E2.8
 # Kỳ vọng: tất cả PASS
 
 # 4. Resource counts per environment

@@ -1,0 +1,171 @@
+# OpenFeature SDK safe-default rules — E2.8 source-of-truth.
+#
+# Per `tasks.md` E2.8 + `design.md` §1 + `privacy-and-legal-gate.md`
+# §12 the platform declares the SDK-safe-default rules that
+# guarantee a feature flag evaluation returns the correct value
+# even when Flagsmith is unreachable.
+#
+# Rules:
+#   1. Every consumer MUST read the flag via the OpenFeature
+#      SDK + a typed default value that matches the
+#      `safeDefault` column in `flag-taxonomy.yaml`.
+#   2. The default MUST be returned when:
+#        - Flagsmith API is unreachable (timeout 200ms)
+#        - The flag does not exist in Flagsmith
+#        - The consumer is a non-production environment that
+#          is missing the flag definition
+#        - The OpenFeature provider is misconfigured
+#   3. The default MUST NEVER be `null`. The SDK wraps
+#      `null` defaults with the type-specific fallback
+#      declared in this file.
+#   4. Per-evaluation cache MUST NOT exceed 30s. A stale flag
+#      value is the canonical cause of a rollout regression.
+#   5. The SDK MUST publish an audit event (`feature_flag_eval`)
+#      with `tenant_pseudo_id`, `user_pseudo_id`, `flag_key`,
+#      `variant`, `default_used`, `provider_reachable` to the
+#      OTel Collector (E2.10).
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-safe-defaults
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  safe-defaults.yaml: |
+    # OpenFeature SDK safe-default rules (E2.8 source-of-truth).
+    safeDefaults:
+      # Per-type fallback when the typed default is null.
+      # The OpenFeature SDK in `libs/platform-spring-boot-starter`
+      # implements these rules in `SafeFeatureClient`.
+      typeFallbacks:
+        boolean:
+          fallbackValue: false
+          rationale: "Boolean defaults are the canonical safe state — OFF"
+        string:
+          fallbackValue: ""
+          rationale: "Empty string never matches a non-empty allowlist"
+        integer:
+          fallbackValue: 0
+          rationale: "Zero never overflows a quota / TTL ceiling"
+        float:
+          fallbackValue: 0.0
+          rationale: "Zero never overflows a quota / TTL ceiling"
+        json:
+          fallbackValue: "{}"
+          rationale: "Empty object never matches a non-empty allowlist"
+
+      # Per-environment override posture. Production / staging /
+      # onprem use Flagsmith directly; dev / development use
+      # the static defaults from `flag-taxonomy.yaml`.
+      environment:
+        production:
+          provider: flagsmith
+          evaluationTimeoutMs: 200
+          perEvaluationCacheSeconds: 30
+          auditEventEnabled: true
+        staging:
+          provider: flagsmith
+          evaluationTimeoutMs: 200
+          perEvaluationCacheSeconds: 30
+          auditEventEnabled: true
+        onprem:
+          provider: flagsmith
+          evaluationTimeoutMs: 200
+          perEvaluationCacheSeconds: 30
+          auditEventEnabled: true
+        development:
+          provider: static-defaults
+          evaluationTimeoutMs: 50
+          perEvaluationCacheSeconds: 0
+          auditEventEnabled: false
+        audit:
+          provider: flagsmith
+          evaluationTimeoutMs: 200
+          perEvaluationCacheSeconds: 60
+          auditEventEnabled: true
+          readOnly: true
+
+      # Evaluation context contract — every evaluation MUST be
+      # scoped by `tenant_pseudo_id` so a cross-tenant flag
+      # read cannot leak. The ABAC layer (E3.4) verifies the
+      # pseudo-id against the BFF-issued trusted context.
+      evaluationContext:
+        requiredAttributes:
+          - tenant_pseudo_id
+          - user_pseudo_id
+          - trace_id
+          - environment
+        forbiddenAttributes:
+          - tenant_id
+          - user_id
+          - email
+          - raw_dna
+          - flag_value
+        pseudonymisation:
+          algorithm: sha256
+          pepperEnvRef: FEATURE_FLAGS_PSEUDONYM_PEPPER
+          pepperSecretRef: feature-flag-pseudonym-pepper
+
+      # Forbidden evaluation patterns — CI regex blocks the
+      # following patterns because they imply the consumer is
+      # bypassing the safe-default rule:
+      forbiddenEvaluationPatterns:
+        # Reading the inverse default when Flagsmith is down.
+        - "booleanValue.*!=.*defaultValue"
+        # Reading a flag without a default value.
+        - "getBoolean\\(.*\\)\\s*;\\s*//.*no default"
+        # Calling setFlag / setVariant from application code.
+        - "setFlag\\("
+        - "setVariant\\("
+        # Reading the raw Flagsmith HTTP response (bypasses cache).
+        - "flagsmith.*raw_response"
+
+      # Default evaluation behaviour per consumer SDK.
+      sdks:
+        java:
+          className: com.genealogy.platform.spring.featureflags.SafeFeatureClient
+          # The `OpenFeatureAutoConfiguration` in
+          # `libs/platform-spring-boot-starter` installs the
+          # NoOpProvider as the safe default; the Flagsmith
+          # provider is wired here (E2.8).
+          openFeatureProvider: dev.openfeature.contrib.providers.flagsmith.FlagsmithProvider
+          # The `NoopOpenFeatureProvider` in the starter is the
+          # canonical safe fallback for offline / mis-configured
+          # consumers.
+          safeFallbackProvider: dev.openfeature.sdk.NoOpProvider
+          evaluationTimeoutMs: 200
+          perEvaluationCacheSeconds: 30
+        node:
+          package: "@openfeature/flagsmith-client-provider"
+          safeFallbackPackage: "@openfeature/no-op-provider"
+          evaluationTimeoutMs: 200
+          perEvaluationCacheSeconds: 30
+        web:
+          package: "flagsmith"
+          safeFallbackPackage: "@openfeature/no-op-provider"
+          evaluationTimeoutMs: 200
+          perEvaluationCacheSeconds: 30
+
+      # Audit event contract — every flag evaluation MUST emit
+      # a `feature_flag_eval` event with the columns below.
+      auditEvent:
+        name: feature_flag_eval
+        sink: http://otel-collector.gp-observability.svc.cluster.local:4318/v1/audit
+        requiredLabels:
+          - tenant_pseudo_id
+          - user_pseudo_id
+          - flag_key
+          - variant
+          - default_used
+          - provider_reachable
+        forbiddenLabels:
+          - tenant_id
+          - user_id
+          - email
+          - raw_dna
+          - flag_value
+        retentionDays: 30

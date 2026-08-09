@@ -1,0 +1,200 @@
+# Prometheus alert rules for Flagsmith + OpenFeature.
+#
+# Per `tasks.md` E2.8 + `design.md` §1 + §13 + `privacy-and-legal-gate.md`
+# §12 the platform declares 9 alerts across 4 rule groups.
+#
+# Labels follow the platform convention:
+#   severity: critical | warning
+#   component: featureflags
+#   owner: @genealogy/platform
+#   runbook: runbook/flagsmith.md
+#
+# All metrics are pseudonymous — never raw tenant / user IDs.
+#
+# Per `agent-execution.md` §4.5 these alerts are validated
+# by `scripts/check-platform-baseline.mjs` (E2.8 invariants).
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-flagsmith-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    prometheus: kubernetes
+    role: alert-rules
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # Flagsmith availability
+    # ----------------------------------------------------------------
+    - name: flagsmith.availability
+      interval: 30s
+      rules:
+        - alert: FlagsmithServerDown
+          expr: |
+            up{job="flagsmith"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: featureflags
+            owner: "@genealogy/platform"
+            runbook: runbook/flagsmith.md
+          annotations:
+            summary: "Flagsmith server unreachable for 2m"
+            description: |
+              The Flagsmith Deployment has been unreachable for 2
+              minutes. The OpenFeature SDK MUST fall back to the
+              typed safe default; verify the rollout guard is
+              behaving as expected and the consumer is not
+              observing null. See runbook/flagsmith.md §server-down.
+        - alert: FlagsmithApiLatencyHigh
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(flagsmith_api_request_duration_seconds_bucket[5m]))
+            ) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+            component: featureflags
+            owner: "@genealogy/platform"
+            runbook: runbook/flagsmith.md
+          annotations:
+            summary: "Flagsmith API p95 latency > 500ms"
+            description: |
+              The Flagsmith API p95 latency is above 500ms for 5
+              minutes. SDK evaluation timeout is 200ms; high
+              latency causes SDK to fall back to the safe default.
+        - alert: FlagsmithApiLatencyCritical
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(flagsmith_api_request_duration_seconds_bucket[5m]))
+            ) > 1
+          for: 5m
+          labels:
+            severity: critical
+            component: featureflags
+            owner: "@genealogy/platform"
+            runbook: runbook/flagsmith.md
+          annotations:
+            summary: "Flagsmith API p95 latency > 1s"
+            description: |
+              The Flagsmith API p95 latency is above 1s for 5
+              minutes. SDK evaluation timeout is 200ms; high
+              latency causes SDK to fall back to the safe default
+              and may bypass per-tenant segment overrides.
+
+    # ----------------------------------------------------------------
+    # Flag evaluation
+    # ----------------------------------------------------------------
+    - name: flagsmith.eval
+      interval: 30s
+      rules:
+        - alert: FlagsmithEvalErrorRateHigh
+          expr: |
+            sum by (service) (rate(flagsmith_eval_errors_total[5m]))
+            /
+            sum by (service) (rate(flagsmith_eval_total[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            component: featureflags
+            owner: "@genealogy/platform"
+            runbook: runbook/flagsmith.md
+          annotations:
+            summary: "Flagsmith eval error rate > 5% on {{ $labels.service }}"
+            description: |
+              The Flagsmith evaluation error rate is above 5% for
+              5 minutes on the {{ $labels.service }} service.
+              Possible cause: SDK misconfiguration, missing flag
+              definition, or provider unreachable.
+        - alert: FlagsmithDefaultUsedRateHigh
+          expr: |
+            sum by (service) (rate(flagsmith_default_used_total[5m]))
+            /
+            sum by (service) (rate(flagsmith_eval_total[5m]))
+            > 0.20
+          for: 10m
+          labels:
+            severity: warning
+            component: featureflags
+            owner: "@genealogy/platform"
+            runbook: runbook/flagsmith.md
+          annotations:
+            summary: "Flagsmith default-used rate > 20% on {{ $labels.service }}"
+            description: |
+              The Flag evaluation default-used rate is above 20%
+              for 10 minutes on the {{ $labels.service }} service.
+              This signals broken SDK wiring (missing flag
+              definition, misconfigured provider, or persistent
+              network failure to Flagsmith).
+
+    # ----------------------------------------------------------------
+    # Bootstrap drift
+    # ----------------------------------------------------------------
+    - name: flagsmith.bootstrap
+      interval: 60s
+      rules:
+        - alert: FlagsmithBootstrapJobFailed
+          expr: |
+            kube_job_status_failed{job_name=~"featureflags-bootstrap-.*"} > 0
+          for: 0m
+          labels:
+            severity: critical
+            component: featureflags
+            owner: "@genealogy/platform"
+            runbook: runbook/flagsmith.md
+          annotations:
+            summary: "Flagsmith bootstrap Job failed"
+            description: |
+              The featureflags-bootstrap Helm-hook Job failed on
+              the latest helm upgrade. Likely cause: drift
+              between platforms/featureflags/flag-taxonomy.yaml
+              and the live Flagsmith environment. See
+              runbook/flagsmith.md §bootstrap-failed.
+        - alert: FlagsmithDriftDetected
+          expr: |
+            flagsmith_drift_detected > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: featureflags
+            owner: "@genealogy/platform"
+            runbook: runbook/flagsmith.md
+          annotations:
+            summary: "Flagsmith drift detected"
+            description: |
+              Drift was detected between the source-of-truth flag
+              taxonomy and the live Flagsmith environment. The
+              helm upgrade will abort on the next run; re-run
+              with --force to overwrite or update the
+              source-of-truth file.
+
+    # ----------------------------------------------------------------
+    # Audit + flag change governance
+    # ----------------------------------------------------------------
+    - name: flagsmith.audit
+      interval: 60s
+      rules:
+        - alert: FlagsmithFlagChangeWithoutAudit
+          expr: |
+            increase(flagsmith_flag_change_total[15m])
+            -
+            increase(flagsmith_audit_published_total[15m])
+            > 0
+          for: 15m
+          labels:
+            severity: critical
+            component: featureflags
+            owner: "@genealogy/platform"
+            runbook: runbook/flagsmith.md
+          annotations:
+            summary: "Flagsmith flag change without audit event"
+            description: |
+              A Flagsmith flag change was detected without a
+              matching audit event. The platform privacy gate
+              requires every flag create / update / delete to
+              emit an audit event to the OTel Collector. See
+              runbook/flagsmith.md §audit-gap.

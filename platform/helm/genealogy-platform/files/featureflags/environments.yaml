@@ -1,0 +1,119 @@
+# Flagsmith environments + organisation map — E2.8 source-of-truth.
+#
+# Per `tasks.md` E2.8 + `design.md` §1 + `privacy-and-legal-gate.md`
+# §12 the platform declares FIVE environments on Flagsmith. The
+# flag taxonomy lives in `flag-taxonomy.yaml` (sibling file).
+#
+# Environments (one per deployment cluster, NOT per tenant):
+#   - `development` — local Docker Compose stack
+#   - `staging`     — SaaS pre-production cluster
+#   - `production`  — SaaS production cluster
+#   - `onprem`      — on-premise customer cluster
+#   - `audit`       — read-only snapshot used by the legal /
+#                     privacy team to audit which flags are
+#                     currently active in production
+#
+# `privacy-and-legal-gate.md` §12 explicitly forbids per-tenant
+# environments: a feature must be OFF for every tenant/environment
+# until a condition in §3 / §4 / §5 / §7 / §8 / §9 is satisfied.
+# Per-tenant overrides happen via the
+# `segmentOverride.<tenant_pseudo_id>` mechanism in
+# `flag-taxonomy.yaml`, NEVER via a per-tenant environment.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-flagsmith-environments
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  environments.yaml: |
+    # Flagsmith environments — one per deployment cluster.
+    # The OpenFeature SDK selects the environment via
+    # `platform.openfeature.flagsmith-environment-id` (Spring
+    # Boot) / `NEXT_PUBLIC_FLAGSMITH_ENVIRONMENT` (Next.js PWA).
+    environments:
+      - id: development
+        name: "Local Development"
+        clusterRole: dev
+        # JWT API token for the local Docker Compose stack.
+        apiTokenSecretRef: flagsmith-api-token-development
+        # Audit retention — 7d on dev.
+        auditRetentionDays: 7
+        # Disable segment overrides in dev (only flags + values).
+        segmentsEnabled: false
+        description: |
+          Local Docker Compose stack. Used by `scripts/local-up.sh`
+          and the Next.js PWA / BFF contract tests.
+      - id: staging
+        name: "SaaS Staging"
+        clusterRole: staging
+        apiTokenSecretRef: flagsmith-api-token-staging
+        auditRetentionDays: 30
+        segmentsEnabled: true
+        description: |
+          SaaS pre-production. Mirrors production flag taxonomy;
+          segment overrides may exist for synthetic tenant
+          datasets used by E2.7 / E15 load tests.
+      - id: production
+        name: "SaaS Production"
+        clusterRole: production
+        apiTokenSecretRef: flagsmith-api-token-production
+        auditRetentionDays: 365
+        segmentsEnabled: true
+        description: |
+          SaaS production. Every legal-gate flag from
+          `privacy-and-legal-gate.md` §12 must be declared here
+          with its safe default BEFORE the service code path
+          references it.
+      - id: onprem
+        name: "On-Premise"
+        clusterRole: onprem
+        apiTokenSecretRef: flagsmith-api-token-onprem
+        auditRetentionDays: 365
+        segmentsEnabled: true
+        description: |
+          Customer-managed on-prem cluster. The customer controls
+          flag rollout; the platform's legal-gate flags remain
+          defined here with the safe default until ADR-E0.5-04
+          + ADR-E0.5-05 close.
+      - id: audit
+        name: "Privacy Audit (read-only)"
+        clusterRole: audit
+        apiTokenSecretRef: flagsmith-api-token-audit
+        auditRetentionDays: 365
+        # Read-only — flag create / update / delete are forbidden
+        # in the audit environment. The Flagsmith RBAC role
+        # "Audit Viewer" only grants GET endpoints.
+        segmentsEnabled: true
+        readOnly: true
+        description: |
+          Read-only snapshot used by the DPO + privacy team.
+          Flag create / update / delete operations are blocked
+          via Flagsmith RBAC. The audit environment is
+          provisioned by the bootstrap Job and never receives
+          flag definitions from application code paths.
+
+    # Organisation posture — 1 organisation per deployment
+    # cluster. The org ID is referenced from the
+    # `platform.openfeature.flagsmith-base-url` value.
+    organisation:
+      id: genea-platform
+      # Per-environment RBAC role mapping.
+      rbacRoles:
+        - id: "Org Admin"
+          grants: ["CREATE_PROJECT", "UPDATE_PROJECT", "DELETE_PROJECT", "MANAGE_USER_GROUPS"]
+          owner: "@genealogy/platform"
+        - id: "Environment Admin"
+          grants: ["CREATE_FEATURE", "UPDATE_FEATURE_STATE", "DELETE_FEATURE", "MANAGE_SEGMENTS"]
+          owner: "platform-primary"
+        - id: "Environment User"
+          grants: ["READ", "EVALUATE"]
+          owner: "sre-primary"
+        - id: "Audit Viewer"
+          grants: ["READ"]
+          owner: "dpo"
+          readOnly: true

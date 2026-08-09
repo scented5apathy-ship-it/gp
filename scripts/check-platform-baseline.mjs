@@ -1174,4 +1174,108 @@ if (existsSync(composePath)) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// E2.8 — Flagsmith + OpenFeature runtime invariants (static
+// check; `scripts/lint-flagsmith-config.mjs` runs the deep
+// YAML validation).
+// ---------------------------------------------------------------------------
+const FF_DIR = join(ROOT, "platform", "featureflags");
+const FF_FILES = [
+  join(FF_DIR, "flagsmith-server.yaml"),
+  join(FF_DIR, "environments.yaml"),
+  join(FF_DIR, "flag-taxonomy.yaml"),
+  join(FF_DIR, "safe-defaults.yaml"),
+  join(FF_DIR, "sdk-config.yaml"),
+];
+const ffTemplates = join(HELM_DIR, "templates", "components", "featureflags");
+const REQUIRED_FF_TEMPLATES = [
+  "statefulset.yaml",
+  "services.yaml",
+  "serviceaccounts.yaml",
+  "secrets.yaml",
+  "configmap.yaml",
+  "bootstrap-configmap.yaml",
+  "bootstrap-job.yaml",
+  "network-policies.yaml",
+];
+
+for (const f of FF_FILES) {
+  if (!existsSync(f)) {
+    fail(`E2.8 source-of-truth file missing — ${relative(ROOT, f)}`);
+  }
+}
+
+for (const tpl of REQUIRED_FF_TEMPLATES) {
+  const p = join(ffTemplates, tpl);
+  if (!existsSync(p)) {
+    fail(`E2.8 featureflags helm template missing — ${relative(ROOT, p)}`);
+  }
+}
+
+if (existsSync(valuesPath)) {
+  const v = readFileSync(valuesPath, "utf8");
+  // ADR-E0.5-01 baseline pin (Flagsmith 2.139.4). The image
+  // references are split across `repository:` + `tag:` lines;
+  // the regex tolerates either a single-line reference or a
+  // multi-line block.
+  if (!/flagsmith\/flagsmith[\s\S]*?2\.139\.4/.test(v)) {
+    fail("values.yaml must pin Flagsmith image to 2.139.4 (ADR-E0.5-01)");
+  }
+  // Source-of-truth ConfigMap paths.
+  for (const path of [
+    "serverConfig:",
+    "environments:",
+    "flagTaxonomy:",
+    "safeDefaults:",
+    "sdkConfig:",
+  ]) {
+    if (!new RegExp(`${path}\\s*featureflags/`).test(v)) {
+      fail(`values.yaml must declare components.featureFlags.configPaths.${path} (E2.8 §1)`);
+    }
+  }
+  // CORS allowlist — wildcard is forbidden.
+  if (/\bcorsAllowedOrigins:\s*\[\s*"\s*\*\s*"/.test(v)) {
+    fail("values.yaml must not declare a wildcard corsAllowedOrigins (E2.8 §1)");
+  }
+  // Anonymous access — FORBIDDEN.
+  if (!/allowAnonymous:\s*false/.test(v)) {
+    fail("values.yaml must declare components.featureFlags.allowAnonymous: false (E2.8 §1)");
+  }
+  // Backing store — Postgres is REQUIRED.
+  if (!/backingStore:\s*postgresql/.test(v)) {
+    fail("values.yaml must declare components.featureFlags.backingStore: postgresql (E2.8 §1)");
+  }
+}
+
+// Alert rules must cover the 4 E2.8 signal classes.
+if (!existsSync(ALERTS_DIR) || !existsSync(join(ALERTS_DIR, "flagsmith-rules.yaml"))) {
+  fail("platform/observability/alerts/flagsmith-rules.yaml missing (E2.8 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR, "flagsmith-rules.yaml"), "utf8");
+  for (const alert of [
+    "FlagsmithServerDown",
+    "FlagsmithApiLatencyHigh",
+    "FlagsmithApiLatencyCritical",
+    "FlagsmithEvalErrorRateHigh",
+    "FlagsmithDefaultUsedRateHigh",
+    "FlagsmithBootstrapJobFailed",
+    "FlagsmithDriftDetected",
+    "FlagsmithFlagChangeWithoutAudit",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/flagsmith-rules.yaml missing alert '${alert}' (E2.8)`);
+    }
+  }
+}
+
+// Profile.yaml must pin the ADR-E0.5-01 Flagsmith image.
+if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
+  const p = readFileSync(join(LOCAL_DIR, "profile.yaml"), "utf8");
+  if (!/image:\s*flagsmith\/flagsmith:2\.139\.4/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin Flagsmith image to 2.139.4 (ADR-E0.5-01)",
+    );
+  }
+}
+
 finish();

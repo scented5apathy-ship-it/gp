@@ -87,6 +87,23 @@ components:
     driver: redis-managed
     replicas: 6
     maxmemory: "2Gi"
+  featureFlags:
+    # E2.8 — SaaS uses managed Flagsmith SaaS
+    # (ADR-E0.5-03 candidate). The chart does NOT render
+    # the Flagsmith Deployment; the same source-of-truth
+    # files are shipped to the Flagsmith SaaS workspace
+    # via the IaC pipeline. The deep linter still asserts
+    # the source-of-truth files are present in
+    # `platform/featureflags/`. The `production` environment
+    # is selected by the OpenFeature SDK.
+    provider: flagsmith-saas
+    driver: flagsmith
+    replicas: 3
+    corsAllowedOrigins:
+      - https://app.genealogy.local
+      - https://api.genealogy.local
+      - https://public-api.genealogy.local
+      - https://admin.genealogy.local
   observability:
     retention:
       prometheus: 90d

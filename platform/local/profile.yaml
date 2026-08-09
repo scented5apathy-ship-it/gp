@@ -318,10 +318,49 @@ valkey:
 
 # Flagsmith local container.
 flagsmith:
-  image: flagsmith/flagsmith:latest
+  # ADR-E0.5-01 baseline — Flagsmith 2.139.4 (same pin as
+  # `components.featureFlags.image` in `values.yaml`, E2.8).
+  image: flagsmith/flagsmith:2.139.4
   apiPort: 8000
   uiPort: 8080
+  # Backing store — local stack uses the shared PostgreSQL
+  # service. In-memory is FORBIDDEN in production per
+  # `flagsmith-server.yaml`.
+  backingStore: postgresql
+  database: genea_flagsmith
+  # Anonymous access — FORBIDDEN. JWT auth + per-environment
+  # API tokens are mandatory.
+  allowAnonymous: false
+  # CORS allowlist — restricted to local dev origins. Wildcard
+  # is forbidden per `privacy-and-legal-gate.md` §11.
+  corsAllowedOrigins:
+    - http://app.genealogy.localhost
+    - http://api.genealogy.localhost
+    - http://public-api.genealogy.localhost
+  # TLS minimum — TLS 1.2 minimum.
+  tlsMinVersion: "tls12"
+  # OpenFeature SDK safe default — guaranteed by the
+  # `OpenFeatureAutoConfiguration` in
+  # `libs/platform-spring-boot-starter`. The starter always
+  # installs the `NoOpProvider` as a safe default; the
+  # Flagsmith provider is wired via
+  # `platform.openfeature.provider=flagsmith`.
   sdkSafeDefault: true
+  # Audit log — every flag create / update / delete / evaluate
+  # is logged to the OTel Collector (E2.10).
+  auditLog:
+    enabled: true
+    endpoint: "http://otel-collector:4318/v1/audit"
+  # Bootstrap — the `featureflags-bootstrap` Job applies the
+  # 5 environments + RBAC roles + flag taxonomy from
+  # `platform/featureflags/*.yaml` on first install.
+  bootstrap:
+    enabled: true
+    sourceOfTruth:
+      - platform/featureflags/environments.yaml
+      - platform/featureflags/flag-taxonomy.yaml
+      - platform/featureflags/safe-defaults.yaml
+      - platform/featureflags/sdk-config.yaml
 
 # Observability — OTel Collector + Grafana + Prometheus + Loki + Tempo.
 observability:

@@ -491,4 +491,115 @@ data:
       - email
       - raw_dna
 {{- end }}
+{{- if eq $name "featureFlags" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: featureflags-contract-stub
+  namespace: gp-platform
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: featureflags
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Flagsmith + OpenFeature contract (E2.8).
+    responsibilities:
+      - Feature flag taxonomy owned by Flagsmith admin UI / GitOps
+      - OpenFeature SDK safe default when Flagsmith is unreachable
+      - 5 environments (development / staging / production / onprem / audit)
+      - Per-environment RBAC (Org Admin / Environment Admin / Environment User / Audit Viewer)
+      - Audit log of every flag create / update / delete / evaluate
+      - Evaluation context scoped by tenant_pseudo_id (no raw UUID)
+      - Bootstrap Job on every helm upgrade (idempotent)
+      - Byte-identity mirror of source-of-truth files
+    environments:
+      - development   # local Docker Compose stack
+      - staging       # SaaS pre-production
+      - production    # SaaS production
+      - onprem        # customer-managed cluster
+      - audit         # read-only snapshot for DPO + privacy team
+    legal_gate_flags:  # privacy-and-legal-gate.md §12
+      - legal.data_residency.allowlist
+      - legal.public_sharing.enabled
+      - legal.dna.enabled
+      - legal.media_upload.enabled
+      - legal.gedcom_import.enabled
+      - legal.cross_region_transfer.enabled
+      - legal.parsers.restricted
+      - legal.flag_bypass_allowlist
+    required_flag_columns:
+      - key
+      - type
+      - safeDefault
+      - owner
+      - whenTrue
+      - whenFalse
+      - expiresOn
+      - audit
+      - scope
+      - legalGate
+      - dataClass
+    allowed_flag_types:
+      - boolean
+      - string
+      - integer
+      - float
+      - json
+    forbidden_flag_key_patterns:
+      - skip.*auth
+      - skip.*openfga
+      - skip.*abac
+      - skip.*consent
+      - skip.*audit
+      - bypass.*auth
+      - bypass.*consent
+      - disable.*audit
+      - disable.*encryption
+      - no.*redact
+      - raw.*dna
+      - raw.*pii
+    safe_default_posture:
+      typeFallbacks:
+        boolean: false
+        string: ""
+        integer: 0
+        float: 0.0
+        json: "{}"
+      evaluationTimeoutMs: 200
+      perEvaluationCacheSeconds: 30
+      forbiddenAttributes:
+        - tenant_id
+        - user_id
+        - email
+        - raw_dna
+      requiredAttributes:
+        - tenant_pseudo_id
+        - user_pseudo_id
+    forbidden:
+      - using a flag to skip OpenFGA authorization check
+      - using a flag to skip ABAC redaction
+      - using a flag to skip consent ledger entry
+      - using a flag to skip audit logging
+      - setting a flag from application code (setFlag / setVariant)
+      - reading a raw Flagsmith HTTP response (bypasses cache)
+      - reading a flag without a typed default
+      - per-tenant Flagsmith environment (segment override only)
+      - business authorization (living / DNA / consent) — service-owned
+    notes:
+      - Source-of-truth: platform/featureflags/{flagsmith-server,environments,flag-taxonomy,safe-defaults,sdk-config}.yaml.
+      - Mirror: platform/helm/genealogy-platform/files/featureflags/*.yaml.
+      - Bootstrap Job: templates/components/featureflags/bootstrap-job.yaml.
+        Runs on every helm upgrade (pre-install,pre-upgrade hook).
+      - Domain code binds to com.genealogy.platform.featureflags.FeatureFlagClient (Java)
+        and @openfeature/js-sdk (Node.js / Next.js PWA). The Spring Boot starter
+        `libs/platform-spring-boot-starter` installs NoOpProvider as the safe default;
+        the Flagsmith provider is wired by E2.8 via the
+        `platform.openfeature.provider=flagsmith` property.
+      - Evaluation MUST be scoped by tenant_pseudo_id; the ABAC layer (E3.4)
+        verifies the pseudo-id against the BFF-issued trusted context.
+      - The audit environment is read-only — flag create / update / delete are
+        blocked via Flagsmith RBAC. DPO + privacy team use this snapshot.
+{{- end }}
 {{- end }}
