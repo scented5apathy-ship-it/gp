@@ -249,15 +249,15 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## 10. Troubleshooting
 
-| Vấn đề | Cách sửa |
-| ------ | -------- |
-| `nvm: command not found` sau khi cài | `source ~/.zshrc` hoặc mở terminal mới |
-| `corepack: command not found` | `nvm install 22 && nvm use 22` (corepack đi kèm Node) |
-| `pnpm install` freeze | xoá `node_modules`, `pnpm install` lại |
-| `helm: command not found` | `source ~/.zshrc`; PATH đã thêm `~/.local/bin` |
-| `docker: Cannot connect to Docker daemon` | mở Docker Desktop / OrbStack |
-| `Kong chạy nhưng smoke fail` | xoá `gp-kong-smoke`, restart container; cert path `/tmp/cert.pem` đã tồn tại |
-| `port 8000 already in use` | `docker kill $(docker ps -q --filter "publish=8000")` |
+| Vấn đề                                    | Cách sửa                                                                     |
+| ----------------------------------------- | ---------------------------------------------------------------------------- |
+| `nvm: command not found` sau khi cài      | `source ~/.zshrc` hoặc mở terminal mới                                       |
+| `corepack: command not found`             | `nvm install 22 && nvm use 22` (corepack đi kèm Node)                        |
+| `pnpm install` freeze                     | xoá `node_modules`, `pnpm install` lại                                       |
+| `helm: command not found`                 | `source ~/.zshrc`; PATH đã thêm `~/.local/bin`                               |
+| `docker: Cannot connect to Docker daemon` | mở Docker Desktop / OrbStack                                                 |
+| `Kong chạy nhưng smoke fail`              | xoá `gp-kong-smoke`, restart container; cert path `/tmp/cert.pem` đã tồn tại |
+| `port 8000 already in use`                | `docker kill $(docker ps -q --filter "publish=8000")`                        |
 
 ## 11. Uninstall
 

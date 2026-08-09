@@ -54,17 +54,17 @@
 
 Adopt option 3 with the following matrix. All versions are referenced as `MAJOR.MINOR` ranges in `renovate.json` and pinned to exact patch in the lockfile (Gradle `lockfile`, pnpm `lockfileVersion`, Helm chart `appVersion`):
 
-| Component                           | Pinned baseline       | Version policy                                    | Review date |
-| ----------------------------------- | --------------------- | ------------------------------------------------- | ----------- |
-| Java                                | 21 LTS (latest patch) | Quarterly minor bump, security-critical same-week | 2026-11-01  |
-| Spring Boot                         | 3.3.x (latest patch)  | Quarterly minor, security critical immediate      | 2026-11-01  |
-| Gradle                              | 8.10.x                | Minor bump per Spring Boot train                  | 2026-11-01  |
-| Node.js                             | 22 LTS                | Quarterly bump                                    | 2026-11-01  |
-| Next.js                             | 15.x                  | Quarterly minor bump                              | 2026-11-01  |
-| TypeScript                          | 5.6.x                 | Quarterly bump                                    | 2026-11-01  |
-| PostgreSQL                          | 16.x (latest minor)   | Annual major; security back-port quarterly        | 2027-01-15  |
-| Kafka (Strimzi)                     | 3.8.x                 | Minor per Strimzi release train                   | 2026-12-01  |
-| Strimzi operator                    | 0.45.x (was 0.43.x)   | Minor per Strimzi release train                   | 2026-12-01  |
+| Component        | Pinned baseline       | Version policy                                    | Review date |
+| ---------------- | --------------------- | ------------------------------------------------- | ----------- |
+| Java             | 21 LTS (latest patch) | Quarterly minor bump, security-critical same-week | 2026-11-01  |
+| Spring Boot      | 3.3.x (latest patch)  | Quarterly minor, security critical immediate      | 2026-11-01  |
+| Gradle           | 8.10.x                | Minor bump per Spring Boot train                  | 2026-11-01  |
+| Node.js          | 22 LTS                | Quarterly bump                                    | 2026-11-01  |
+| Next.js          | 15.x                  | Quarterly minor bump                              | 2026-11-01  |
+| TypeScript       | 5.6.x                 | Quarterly bump                                    | 2026-11-01  |
+| PostgreSQL       | 16.x (latest minor)   | Annual major; security back-port quarterly        | 2027-01-15  |
+| Kafka (Strimzi)  | 3.8.x                 | Minor per Strimzi release train                   | 2026-12-01  |
+| Strimzi operator | 0.45.x (was 0.43.x)   | Minor per Strimzi release train                   | 2026-12-01  |
 
 > **ADR-E0.5-01 supersession (2026-08-08):** Strimzi operator bumped
 > 0.43.0 → 0.45.2 due to entity-operator Admin API bug on kind cluster
@@ -75,18 +75,18 @@ Adopt option 3 with the following matrix. All versions are referenced as `MAJOR.
 > only in 0.46.x line). Re-enable in ADR-E0.5-08 supersession when
 > Strimzi 0.46.x is adopted platform-wide. See E2.3 evidence file and
 > `docs/local-k8s-setup.md` Step 12 troubleshooting.
-| Apicurio Registry                   | 2.6.x                 | Minor per Apicurio release train                  | 2026-12-01  |
-| Keycloak                            | 26.x                  | Minor per Keycloak release cadence                | 2026-12-01  |
-| OpenFGA                             | 1.x (latest)          | Minor per OpenFGA release                         | 2026-12-01  |
-| Temporal                            | 1.26.x (latest)       | Minor per Temporal release                        | 2026-12-01  |
-| Istio                               | 1.23.x                | Quarterly minor; security critical immediate      | 2026-11-01  |
-| Kong                                | 3.8.x                 | Quarterly minor; security critical immediate      | 2026-11-01  |
-| Vault                               | 1.17.x                | Quarterly minor                                   | 2026-11-01  |
-| Flagsmith                           | LTS                   | Quarterly minor                                   | 2026-11-01  |
-| Argo CD                             | 2.13.x                | Quarterly minor                                   | 2026-11-01  |
-| Argo Rollouts                       | 1.7.x                 | Quarterly minor                                   | 2026-11-01  |
-| OpenTelemetry SDK / Collector       | latest stable         | Quarterly minor                                   | 2026-11-01  |
-| Prometheus / Grafana / Loki / Tempo | latest stable         | Quarterly minor                                   | 2026-11-01  |
+> | Apicurio Registry | 2.6.x | Minor per Apicurio release train | 2026-12-01 |
+> | Keycloak | 26.x | Minor per Keycloak release cadence | 2026-12-01 |
+> | OpenFGA | 1.x (latest) | Minor per OpenFGA release | 2026-12-01 |
+> | Temporal | 1.26.x (latest) | Minor per Temporal release | 2026-12-01 |
+> | Istio | 1.23.x | Quarterly minor; security critical immediate | 2026-11-01 |
+> | Kong | 3.8.x | Quarterly minor; security critical immediate | 2026-11-01 |
+> | Vault | 1.17.x | Quarterly minor | 2026-11-01 |
+> | Flagsmith | LTS | Quarterly minor | 2026-11-01 |
+> | Argo CD | 2.13.x | Quarterly minor | 2026-11-01 |
+> | Argo Rollouts | 1.7.x | Quarterly minor | 2026-11-01 |
+> | OpenTelemetry SDK / Collector | latest stable | Quarterly minor | 2026-11-01 |
+> | Prometheus / Grafana / Loki / Tempo | latest stable | Quarterly minor | 2026-11-01 |
 
 ### Consequences
 

@@ -10,12 +10,12 @@
 
 ## 1. Tổng quan những gì được cài
 
-| Thành phần | Phiên bản (ADR-E0.5-01) | Vai trò |
-|---|---|---|
-| Strimzi Kafka operator | `0.43.0` (Kafka `3.8.0`) | Vận hành Kafka cluster, topic, user |
-| Apicurio Schema Registry | `2.6.0` | Schema store cho event (Avro) |
-| Postgres (cho Apicurio) | `16-alpine` | SQL storage cho Apicurio |
-| PrometheusRule | n/a | Alert cho under-replication, lag, disk, registry |
+| Thành phần               | Phiên bản (ADR-E0.5-01)  | Vai trò                                          |
+| ------------------------ | ------------------------ | ------------------------------------------------ |
+| Strimzi Kafka operator   | `0.43.0` (Kafka `3.8.0`) | Vận hành Kafka cluster, topic, user              |
+| Apicurio Schema Registry | `2.6.0`                  | Schema store cho event (Avro)                    |
+| Postgres (cho Apicurio)  | `16-alpine`              | SQL storage cho Apicurio                         |
+| PrometheusRule           | n/a                      | Alert cho under-replication, lag, disk, registry |
 
 > **Không cần** cài binary Strimzi hay Apicurio trực tiếp — Helm
 > chart tự kéo Docker image khi `helm install`.
@@ -219,6 +219,7 @@ nào được tạo / context sai / cluster chưa lên).
 Cách xử lý theo thứ tự ưu tiên:
 
 1. **Kiểm tra context cluster hiện tại:**
+
    ```bash
    kubectl config current-context
    # Nếu trống → chưa có cluster nào; tạo kind / k3d trước
@@ -228,11 +229,13 @@ Cách xử lý theo thứ tự ưu tiên:
 
 2. **Bỏ qua OpenAPI validation** (CHỈ khi bạn chắc chắn YAML
    đúng — đã pass `helm lint` + `pnpm lint:kafka`):
+
    ```bash
    awk '...' /tmp/gp-rendered.yaml | kubectl apply --validate=false -f -
    ```
 
 3. **Dry-run để xác nhận YAML parse được** trước khi apply:
+
    ```bash
    awk '...' /tmp/gp-rendered.yaml | kubectl apply --dry-run=client -f -
    # Nếu OK → YAML hợp lệ, vấn đề chỉ là cluster chưa lên
@@ -482,7 +485,7 @@ Trong `values-<env>.yaml`:
 components:
   kafka:
     quota:
-      produceBytesPerSec: 52428800   # 50 MB/s per client
+      produceBytesPerSec: 52428800 # 50 MB/s per client
       consumeBytesPerSec: 52428800
       requestsPerSec: 200000
 ```

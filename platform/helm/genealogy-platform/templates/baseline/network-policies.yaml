@@ -17,7 +17,8 @@ metadata:
   namespace: {{ $ns.name }}
   labels:
     app.kubernetes.io/part-of: genealogy-platform
-    gp.genealogy/purpose: {{ $ns.purpose }}
+  annotations:
+    gp.genealogy/purpose: {{ $ns.purpose | quote }}
 spec:
   podSelector: {}
   policyTypes:
