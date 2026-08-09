@@ -29,8 +29,37 @@ components:
     replicas: 1
     edition: oss
   keycloak:
+    # Dev runs the upstream `quay.io/keycloak/keycloak:26.x`
+    # image as a single replica in standalone mode. The
+    # source-of-truth ConfigMaps are mirrored from
+    # `platform/keycloak/` and applied by the
+    # `keycloak-bootstrap` Job on every `helm upgrade`.
     topology: standalone
     replicas: 1
+    realmStrategy: realm-per-tenant-group
+    saasSharedRealm: genealogy-shared
+    secretRefs:
+      clusterSecretStore: vault-backend
+      adminVaultPath: secret/dev/data/keycloak/admin
+      webBffClientVaultPath: secret/dev/data/keycloak/web-bff-client
+      publicApiClientVaultPath: secret/dev/data/keycloak/public-api-client
+      kongBrokerClientVaultPath: secret/dev/data/keycloak/kong-broker-client
+      grafanaClientVaultPath: secret/dev/data/keycloak/grafana-client
+      smtpVaultPath: secret/dev/data/keycloak/smtp
+      dbPasswordVaultPath: secret/dev/data/keycloak/db-password
+      signingKeysVaultPath: secret/dev/data/keycloak/signing-keys
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    persistence:
+      storageClass: standard
+      size: 2Gi
+    mtls:
+      enabled: false
   kafka:
     # ZK cần >= 3 replicas cho quorum (2 ZK + 1 observer). Override
     # `replicas` riêng cho ZK — chart hiện dùng cùng $kafka.replicas.

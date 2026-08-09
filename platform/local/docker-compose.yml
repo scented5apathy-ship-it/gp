@@ -46,15 +46,38 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: gp-keycloak
-    command: ["start-dev", "--import-realm"]
+    # E3.1 — local dev runs the upstream Keycloak 26.x in
+    # `start-dev` mode with realm import. The five
+    # source-of-truth ConfigMaps (`platform/keycloak/*.yaml`)
+    # are mounted into `/opt/keycloak/import/` so the
+    # `keycloak-bootstrap` Job (the local equivalent of the
+    # Helm hook Job) reads the same files the production
+    # chart applies.
+    command:
+      - "start-dev"
+      - "--import-realm"
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      # Disable DB persistence on dev — in-memory store is OK.
+      KC_DB: dev-mem
+      # Realm import — points at the canonical SaaS shared
+      # realm JSON file mounted from
+      # `platform/keycloak/realm-export.yaml`. The local
+      # stack swaps the SMTP host + dev secret store path so
+      # the realm export works without Vault.
+      KC_SPI_REALM_PROVIDER_FILE: /opt/keycloak/import/realm-export.yaml
     ports:
       - "8080:8080"
     volumes:
-      - ./keycloak:/opt/keycloak/data/import:ro
+      - ../keycloak/realm-strategy.yaml:/opt/keycloak/import/realm-strategy.yaml:ro
+      - ../keycloak/realm-export.yaml:/opt/keycloak/import/realm-export.yaml:ro
+      - ../keycloak/client-configs.yaml:/opt/keycloak/import/client-configs.yaml:ro
+      - ../keycloak/federation.yaml:/opt/keycloak/import/federation.yaml:ro
+      - ../keycloak/key-rotation.yaml:/opt/keycloak/import/key-rotation.yaml:ro
+      - ./observability/keycloak-bootstrap.sh:/scripts/bootstrap.sh:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -466,6 +489,26 @@ services:
       - ./observability/grafana-bootstrap.sh:/scripts/bootstrap.sh:ro
       - ../grafana:/source:ro
       - ../../platform/helm/genealogy-platform/files/grafana:/mirror:ro
+
+  keycloak-bootstrap:
+    # E3.1 — one-shot bootstrap that verifies all 5
+    # source-of-truth files are byte-identical between
+    # `platform/keycloak/` and
+    # `platform/helm/.../files/keycloak/` and that the
+    # realm export declares the canonical SaaS shared realm.
+    image: alpine:3.20
+    container_name: gp-keycloak-bootstrap
+    restart: "no"
+    entrypoint: ["/bin/sh", "/scripts/bootstrap.sh"]
+    environment:
+      SOURCE_DIR: /source
+      MIRROR_DIR: /mirror
+    volumes:
+      - ./observability/keycloak-bootstrap.sh:/scripts/bootstrap.sh:ro
+      - ../keycloak:/source:ro
+      - ../../platform/helm/genealogy-platform/files/keycloak:/mirror:ro
+    depends_on:
+      - keycloak
 
   kong:
     image: kong:3.8.0

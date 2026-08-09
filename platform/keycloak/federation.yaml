@@ -1,0 +1,383 @@
+# Source-of-truth Keycloak federation + identity brokering — E3.1.
+#
+# Per `tasks.md` E3.1 + ADR-E0.5-05 §License/TCO the platform supports
+# external identity providers via OIDC only. SAML is the deprecated
+# path and requires a contractual justification block in the per-env
+# values file (`components.keycloak.federation.saml.justification`).
+#
+# Identity brokering is the only supported path for enterprise
+# federation. The source-of-truth declares:
+#
+#   - 5 OIDC providers (Google Workspace, Microsoft Entra ID /
+#     Azure AD, Okta, Auth0, PingFederate);
+#   - 2 SAML providers (Okta, PingFederate) marked
+#     `deprecatedPath: true`;
+#   - attribute mappers expose `email`, `email_verified`,
+#     `groups` (mapped to `tenant_groups` claim) and the
+#     standard `username` field;
+#   - mappers are validated to NEVER expose `raw_dna`,
+#     `raw_pii`, `tenant_id` or `user_id` (privacy posture);
+#   - `postBrokerLoginFlow` is the platform `browser` flow;
+#   - `trustEmail` is enabled only when the IdP is in the
+#     enterprise allowlist (declared per provider).
+#
+# The deep linter enforces:
+#   - the 5 OIDC providers + 2 SAML providers are declared;
+#   - each provider declares a `clientId` / `clientSecret` Vault
+#     reference (no literal secret in YAML);
+#   - `authorizationUrl` / `tokenUrl` / `jwksUrl` use HTTPS only;
+#   - `postBrokerLoginFlow = browser`;
+#   - mappers expose ONLY safe attributes (`email`,
+#     `email_verified`, `given_name`, `family_name`, `groups`,
+#     `preferred_username`);
+#   - SAML providers declare `deprecatedPath: true`;
+#   - clock skew tolerance ≤ 30 seconds (ADR-E0.5-05 §Security).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-federation
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: "26.0"
+    gp.genealogy/contract-only: "true"
+data:
+  federation.yaml: |
+    # ----------------------------------------------------------------
+    # Federation posture — ADR-E0.5-05 §Decision.
+    # OIDC is the canonical path. SAML is deprecated and requires
+    # a contractual justification (per-env `values-*.yaml`).
+    # ----------------------------------------------------------------
+    preferredProtocol: oidc
+    deprecatedProtocols:
+      - saml
+    # Clock skew — ADR-E0.5-05 §Security (clock skew < 30 s).
+    # Per-IdP overrides live in the per-env values file.
+    clockSkewToleranceSeconds: 30
+    # Default post-broker login flow. The Keycloak broker
+    # transitions the federated identity through the
+    # `browser` flow (Authorization Code + PKCE) so every
+    # user gets the same MFA / consent posture.
+    postBrokerLoginFlow: browser
+    # Trust email — enabled for OIDC providers that sign the
+    # `email_verified` claim; required by R2 §R2.5.
+    trustEmailFromVerifiedProvider: true
+    # Store federated identity attributes under
+    # `federation.<provider-alias>.<claim>` so a domain
+    # service can audit the IdP origin.
+    storeFederatedIdentity: true
+    # Federation is opt-in per tenant — the realm strategy
+    # declares `dedicatedRealmEligibility = opt-in`. An
+    # enterprise tenant enables federation via the
+    # `tenant-service` admin API after DPO approval.
+    optInPerTenant: true
+    # ----------------------------------------------------------------
+    # Identity providers — order is informational. The runtime
+    # applies them via the bootstrap Job.
+    # ----------------------------------------------------------------
+    identityProviders:
+      - alias: google-workspace
+        displayName: Google Workspace
+        providerId: google
+        # Trust — OIDC discovery.
+        config:
+          clientId: REPLACE_VIA_VAULT
+          clientSecret: REPLACE_VIA_VAULT
+          # Vault path — populated by ESO (`secret/<env>/data/keycloak/idp/google`).
+          secretVaultPath: "secret/<env>/data/keycloak/idp/google"
+          discoveryEndpoint: "https://accounts.google.com/.well-known/openid-configuration"
+          # Authorization URL is discovered; do NOT inline.
+          authorizationUrl: ""
+          tokenUrl: ""
+          jwksUrl: "https://www.googleapis.com/oauth2/v3/certs"
+          scopes: "openid email profile"
+          hostedDomain: "*"
+          trustEmail: true
+          postBrokerLoginFlow: browser
+          storeToken: false
+          # Only verified emails are accepted.
+          acceptAnyEmail: false
+          # First login flow — link to existing local identity
+          # when the email matches; otherwise create a new user.
+          firstBrokerLoginFlow: browser
+          syncMode: "force"
+        attributeMappers:
+          - name: email
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email
+              user.attribute: email
+              syncMode: "force"
+              friendly.name: Email
+          - name: email-verified
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email_verified
+              user.attribute: emailVerified
+              syncMode: "force"
+              friendly.name: Email verified
+          - name: given-name
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: given_name
+              user.attribute: firstName
+              syncMode: "force"
+              friendly.name: Given name
+          - name: family-name
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: family_name
+              user.attribute: lastName
+              syncMode: "force"
+              friendly.name: Family name
+          - name: groups
+            mapper: oidc-group-membership-idp-mapper
+            config:
+              claim: groups
+              user.attribute: tenant_groups
+              syncMode: "force"
+              friendly.name: Tenant groups
+      - alias: microsoft-entra
+        displayName: Microsoft Entra ID
+        providerId: oidc
+        config:
+          clientId: REPLACE_VIA_VAULT
+          clientSecret: REPLACE_VIA_VAULT
+          secretVaultPath: "secret/<env>/data/keycloak/idp/entra"
+          discoveryEndpoint: "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"
+          authorizationUrl: ""
+          tokenUrl: ""
+          jwksUrl: ""
+          scopes: "openid email profile"
+          trustEmail: true
+          postBrokerLoginFlow: browser
+          storeToken: false
+          acceptAnyEmail: false
+          firstBrokerLoginFlow: browser
+          syncMode: "force"
+        attributeMappers:
+          - name: email
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email
+              user.attribute: email
+              syncMode: "force"
+              friendly.name: Email
+          - name: email-verified
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email_verified
+              user.attribute: emailVerified
+              syncMode: "force"
+              friendly.name: Email verified
+          - name: preferred-username
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: preferred_username
+              user.attribute: username
+              syncMode: "force"
+              friendly.name: Username
+          - name: groups
+            mapper: oidc-group-membership-idp-mapper
+            config:
+              claim: groups
+              user.attribute: tenant_groups
+              syncMode: "force"
+              friendly.name: Tenant groups
+      - alias: okta
+        displayName: Okta
+        providerId: oidc
+        config:
+          clientId: REPLACE_VIA_VAULT
+          clientSecret: REPLACE_VIA_VAULT
+          secretVaultPath: "secret/<env>/data/keycloak/idp/okta"
+          # Per-tenant Okta org URL is injected from the per-env
+          # values file via `components.keycloak.federation.okta.url`.
+          discoveryEndpoint: "REPLACE_VIA_VALUES"
+          authorizationUrl: ""
+          tokenUrl: ""
+          jwksUrl: ""
+          scopes: "openid email profile groups"
+          trustEmail: true
+          postBrokerLoginFlow: browser
+          storeToken: false
+          firstBrokerLoginFlow: browser
+          syncMode: "force"
+        attributeMappers:
+          - name: email
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email
+              user.attribute: email
+              syncMode: "force"
+              friendly.name: Email
+          - name: email-verified
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email_verified
+              user.attribute: emailVerified
+              syncMode: "force"
+              friendly.name: Email verified
+          - name: groups
+            mapper: oidc-group-membership-idp-mapper
+            config:
+              claim: groups
+              user.attribute: tenant_groups
+              syncMode: "force"
+              friendly.name: Tenant groups
+      - alias: auth0
+        displayName: Auth0
+        providerId: oidc
+        config:
+          clientId: REPLACE_VIA_VAULT
+          clientSecret: REPLACE_VIA_VAULT
+          secretVaultPath: "secret/<env>/data/keycloak/idp/auth0"
+          discoveryEndpoint: "REPLACE_VIA_VALUES"
+          authorizationUrl: ""
+          tokenUrl: ""
+          jwksUrl: ""
+          scopes: "openid email profile"
+          trustEmail: true
+          postBrokerLoginFlow: browser
+          storeToken: false
+          firstBrokerLoginFlow: browser
+          syncMode: "force"
+        attributeMappers:
+          - name: email
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email
+              user.attribute: email
+              syncMode: "force"
+              friendly.name: Email
+          - name: email-verified
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email_verified
+              user.attribute: emailVerified
+              syncMode: "force"
+              friendly.name: Email verified
+          - name: groups
+            mapper: oidc-group-membership-idp-mapper
+            config:
+              claim: https://app.genealogy/groups
+              user.attribute: tenant_groups
+              syncMode: "force"
+              friendly.name: Tenant groups
+      - alias: pingfederate
+        displayName: PingFederate
+        providerId: oidc
+        config:
+          clientId: REPLACE_VIA_VAULT
+          clientSecret: REPLACE_VIA_VAULT
+          secretVaultPath: "secret/<env>/data/keycloak/idp/ping"
+          discoveryEndpoint: "REPLACE_VIA_VALUES"
+          authorizationUrl: ""
+          tokenUrl: ""
+          jwksUrl: ""
+          scopes: "openid email profile"
+          trustEmail: true
+          postBrokerLoginFlow: browser
+          storeToken: false
+          firstBrokerLoginFlow: browser
+          syncMode: "force"
+        attributeMappers:
+          - name: email
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email
+              user.attribute: email
+              syncMode: "force"
+              friendly.name: Email
+          - name: email-verified
+            mapper: oidc-user-attribute-idp-mapper
+            config:
+              claim: email_verified
+              user.attribute: emailVerified
+              syncMode: "force"
+              friendly.name: Email verified
+          - name: groups
+            mapper: oidc-group-membership-idp-mapper
+            config:
+              claim: groups
+              user.attribute: tenant_groups
+              syncMode: "force"
+              friendly.name: Tenant groups
+      # ----------------------------------------------------------------
+      # SAML providers — DEPRECATED. Each requires a contractual
+      # justification in the per-env values file (ADR-E0.5-05
+      # §License/TCO).
+      # ----------------------------------------------------------------
+      - alias: okta-saml
+        displayName: Okta SAML (deprecated)
+        providerId: saml
+        deprecatedPath: true
+        config:
+          # SAML metadata XML — Vault-managed (no literal in YAML).
+          metadataVaultPath: "secret/<env>/data/keycloak/idp/okta-saml/metadata"
+          entityId: "urn:genealogy:platform:keycloak:saml:okta"
+          singleSignOnServiceUrl: ""
+          singleLogoutServiceUrl: ""
+          nameIDPolicyFormat: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+          postBrokerLoginFlow: browser
+          storeToken: false
+          trustEmail: true
+          syncMode: "force"
+          # Allowed clock skew — 30 seconds max.
+          allowedClockSkewSeconds: 30
+        attributeMappers:
+          - name: email
+            mapper: saml-user-attribute-idp-mapper
+            config:
+              attribute.name: email
+              attribute.name.format: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic"
+              user.attribute: email
+              syncMode: "force"
+              friendly.name: Email
+      - alias: pingfederate-saml
+        displayName: PingFederate SAML (deprecated)
+        providerId: saml
+        deprecatedPath: true
+        config:
+          metadataVaultPath: "secret/<env>/data/keycloak/idp/ping-saml/metadata"
+          entityId: "urn:genealogy:platform:keycloak:saml:ping"
+          singleSignOnServiceUrl: ""
+          singleLogoutServiceUrl: ""
+          nameIDPolicyFormat: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+          postBrokerLoginFlow: browser
+          storeToken: false
+          trustEmail: true
+          syncMode: "force"
+          allowedClockSkewSeconds: 30
+        attributeMappers:
+          - name: email
+            mapper: saml-user-attribute-idp-mapper
+            config:
+              attribute.name: email
+              attribute.name.format: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic"
+              user.attribute: email
+              syncMode: "force"
+              friendly.name: Email
+    # ----------------------------------------------------------------
+    # Allowlist of attributes that may flow from a federated
+    # IdP into Keycloak user profile / OIDC claims. The linter
+    # rejects a mapper that exposes anything outside this list
+    # (privacy posture per `privacy-and-legal-gate.md` §4).
+    # ----------------------------------------------------------------
+    allowedFederatedAttributes:
+      - email
+      - email_verified
+      - given_name
+      - family_name
+      - preferred_username
+      - groups
+      - tenant_groups
+    # Explicitly forbidden at the IdP boundary.
+    forbiddenFederatedAttributes:
+      - tenant_id
+      - user_id
+      - raw_dna
+      - raw_pii
+      - phone_number
+      - address

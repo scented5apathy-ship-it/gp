@@ -765,6 +765,195 @@ data:
         `actor_pseudo_id` + `window_id` + `reason` + `ticket` fields.
       - `dna-blackout` window enforces E10.2 isolation: a release-approver
         + MFA human action is required to roll any DNA workload.
+{{- if eq $name "keycloak" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-contract-stub
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Keycloak identity provider contract (E3.1).
+    responsibilities:
+      - credential storage + login + MFA + recovery + federation
+      - OIDC Authorization Code + PKCE (R2 §R2.1)
+      - realm / client / flow / identity-provider config-as-code
+      - per-realm signing key + client-secret rotation (E3.1 §5)
+      - OIDC issuer / JWKS endpoint for Kong + BFF + Grafana SSO
+      - audit event sink to platform OTel Collector (actor_pseudo_id)
+      - mapping Keycloak subject -> tenant membership via `tenant-service`
+        (E3.2 — SubjectProvisioned event)
+    realm_topology:
+      default: realm-per-tenant-group
+      opt-in: realm-per-tenant
+      saas_shared_realm: genealogy-shared
+      dedicated_realm_requires:
+        - justification
+        - owner
+        - isolationPolicy
+    authentication:
+      grant_types_allowed:
+        - authorization_code
+        - client_credentials   # BFF + public-api + kong-broker only
+        - refresh_token
+      grant_types_forbidden:
+        - password              # Resource Owner Password FORBIDDEN (R2 §R2.1)
+        - implicit              # OIDC 1.0 §3.1.2 — FORBIDDEN
+        - urn:ietf:params:oauth:grant-type:token-exchange   # reserved E10.3
+      pkce:
+        code_challenge_method: S256
+        required_for_public_clients: true
+      mfa:
+        conditional_flow: mfa
+        authenticators:
+          - webauthn
+          - otp
+        step_up_max_age_seconds: 300
+      token_lifetimes:
+        access_token_seconds: 1800
+        sso_session_idle_seconds: 28800
+        sso_session_max_seconds: 43200
+        offline_session_idle_seconds: 2592000
+      brute_force:
+        strategy: MULTIPLE
+        failure_factor: 5
+        max_wait_seconds: 900
+      password_policy:
+        - length(12)
+        - upperCredential(1)
+        - lowerCredential(1)
+        - digit(1)
+        - specialCharacter(1)
+        - notUsername
+        - notEmail
+        - passwordHistory(12)
+        - hashIterations(10000)
+        - hashAlgorithm(pbkdf2-sha512)
+    mandatory_clients:
+      - web-app            # public — Authorization Code + PKCE
+      - web-bff            # confidential — Authorization Code + PKCE
+      - public-api         # confidential — client_credentials + scopes
+      - kong-oidc-broker   # confidential — client_credentials + JWT validator
+      - grafana-sso        # confidential — Authorization Code + PKCE
+    federation:
+      preferred_protocol: oidc
+      deprecated_protocols:
+        - saml
+      oidc_providers:
+        - google-workspace
+        - microsoft-entra
+        - okta
+        - auth0
+        - pingfederate
+      saml_providers:
+        - okta-saml
+        - pingfederate-saml
+      clock_skew_tolerance_seconds: 30
+    allowed_federated_attributes:
+      - email
+      - email_verified
+      - given_name
+      - family_name
+      - preferred_username
+      - groups
+      - tenant_groups
+    forbidden_federated_attributes:
+      - tenant_id
+      - user_id
+      - raw_dna
+      - raw_pii
+      - phone_number
+      - address
+    key_rotation:
+      realm_signing_key:
+        algorithm: RS256
+        key_size: 4096
+        rotation_days: 90
+        key_overlap_hours: 48
+      provider_keys_jwks_refresh_minutes: 60
+      provider_keys_jwks_cache_ttl_minutes: 360
+      client_secret_rotation_days: 30
+      client_secret_overlap_hours: 24
+      client_secret_rotation_excludes:
+        - kong-oidc-broker
+        - grafana-sso
+      database_password_rotation_days: 30
+      kms_backend:
+        saas: awskms
+        onprem: vault-transit
+        dev: vault-transit
+    jwks:
+      path: /realms/genealogy-shared/protocol/openid-connect/certs
+      algorithms_allowed:
+        - RS256
+        - PS256
+        - ES256
+      algorithms_forbidden:
+        - none
+        - HS256
+        - HS512
+    event_listener:
+      sink: otel-collector:4318/v1/audit
+      persist_to_db: false
+      events:
+        - LOGIN
+        - LOGIN_ERROR
+        - LOGOUT
+        - REGISTER
+        - REGISTER_ERROR
+        - UPDATE_EMAIL
+        - UPDATE_PASSWORD
+        - SEND_RESET_PASSWORD
+        - RESET_PASSWORD
+        - VERIFY_EMAIL
+        - UPDATE_PROFILE
+        - GRANT_ROLE
+        - REVOKE_ROLE
+        - IMPERSONATE
+        - IMPERSONATE_ERROR
+        - CLIENT_LOGIN
+        - CLIENT_REGISTER
+        - FEDERATED_IDENTITY_LINK
+        - REMOVE_FEDERATED_IDENTITY
+        - DELETE_ACCOUNT
+    forbidden:
+      - storing password / refresh token / authorization code outside Keycloak
+      - inlining client_secret / private key / JWKS value in any YAML
+      - custom SPI providers (ADR-E0.5-05 §Decision)
+      - SAML federation without contractual justification
+      - dedicated realm block without `justification` + `owner`
+      - bearer-only client (R2 §R2.1)
+      - Implicit grant / Resource Owner Password grant
+      - HS256 / HS512 signing by Keycloak server
+      - exposing `tenant_id` / `user_id` / `raw_dna` / `raw_pii` in OIDC claims
+      - audit event sink other than the platform OTel Collector
+      - business authorization (living / DNA / consent) — service-owned
+    notes:
+      - Source-of-truth: platform/keycloak/{realm-strategy,realm-export,
+        client-configs,federation,key-rotation}.yaml.
+      - Mirror: platform/helm/genealogy-platform/files/keycloak/*.yaml.
+      - Bootstrap Job: templates/components/keycloak/bootstrap-job.yaml.
+        Runs on every `helm upgrade` (pre-install,pre-upgrade hook).
+        Idempotent — every PUT/POST is conditional on the resource not existing.
+      - Domain authorization is at the service via OpenFGA + ABAC;
+        Keycloak only decides identity, group membership + MFA posture.
+      - Per `design.md` §4.2 / §13 the BFF trusts the Keycloak
+        signed JWT; tenant_id is pseudonymised into
+        `tenant_pseudo_id` at the OIDC protocol mapper
+        (`client-configs.yaml`).
+      - The `kong-oidc-broker` client is reserved for Kong
+        JWT validation (E2.2). Domain authorization stays in
+        the destination service per `design.md` §4.1.
+      - Step-up flow is bound to admin actions (E16) + DNA
+        consent (E10.3). The flow TTL is 5 minutes max.
+      - Realm signing keys are stored in the platform KMS
+        (SaaS = AWS KMS, on-prem = Vault transit).
+{{- end }}
 {{- if eq $name "grafana" }}
 ---
 apiVersion: v1

@@ -277,10 +277,114 @@ components:
       - prometheus
   keycloak:
     enabled: true
+    # Per `tasks.md` E3.1 + ADR-E0.5-05 + ADR-E0.5-01 the
+    # platform runs the upstream `quay.io/keycloak/keycloak:26.x`
+    # image with the five source-of-truth ConfigMaps (realm
+    # strategy + realm export + client configs + federation +
+    # key rotation). The deep linter
+    # (`scripts/lint-keycloak-config.mjs`) enforces:
+    #   - realmTopology is one of `realm-per-tenant-group` /
+    #     `realm-per-tenant`;
+    #   - SaaS shared realm name = `genealogy-shared`;
+    #   - enterprise realm declarations carry a
+    #     `justification` + `owner` block (linter refuses a
+    #     dedicated realm without both);
+    #   - the five mandatory OIDC clients (`web-app`,
+    #     `web-bff`, `public-api`, `kong-oidc-broker`,
+    #     `grafana-sso`) are declared with PKCE S256 +
+    #     Vault-managed client secrets;
+    #   - 5 OIDC + 2 SAML identity providers are declared
+    #     (SAML marked `deprecatedPath: true`);
+    #   - realm signing key rotated every 90 days + client
+    #     secrets every 30 days + JWKS cache TTL ≤ 360 min;
+    #   - no literal client_secret / private key / JWKS value
+    #     in any YAML file.
     topology: standalone
-    # Realm strategy + operator lifecycle owned by E3.1.
-    realmStrategy: per-environment
+    realmStrategy: realm-per-tenant-group
     replicas: 2
+    # Image pin — ADR-E0.5-01 baseline (Keycloak 26.x).
+    image:
+      repository: keycloak/keycloak
+      tag: "26.0"
+      registry: quay.io
+    # Database — shared Postgres cluster in `gp-data`.
+    # The Keycloak JPA DB is `genea_keycloak`. The DB
+    # password is rotated every 30 days via the
+    # `keycloak-db-password-rotation` CronJob (E14.1).
+    database:
+      host: postgres.gp-data.svc.cluster.local
+      port: "5432"
+      name: genea_keycloak
+      username: keycloak
+      # The password is injected from the ESO-managed
+      # `keycloak-db-password` Secret at runtime — the
+      # chart never inlines a literal.
+      passwordSecretName: keycloak-db-password
+      passwordSecretKey: password
+    # Resource requests/limits — Keycloak 26.x baseline.
+    # The StatefulSet template renders these into the
+    # Pod's `resources` block.
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    # Persistence — 20Gi default. On dev the storageClass
+    # falls through to `standard` (local-path).
+    persistence:
+      storageClass: gp-data-ssd
+      size: 20Gi
+    # Source-of-truth list of ConfigMaps mirrored from
+    # `platform/keycloak/`. The chart mounts them into
+    # the StatefulSet + the bootstrap Job.
+    configPaths:
+      realmStrategy: keycloak/realm-strategy.yaml
+      realmExport: keycloak/realm-export.yaml
+      clientConfigs: keycloak/client-configs.yaml
+      federation: keycloak/federation.yaml
+      keyRotation: keycloak/key-rotation.yaml
+    # External Secrets references — NEVER literal credentials.
+    # Every secret comes from Vault via External Secrets
+    # Operator (E2.6). The per-env values files override
+    # the `clusterSecretStore` + `*VaultPath` for on-prem
+    # (`vault-customer`) and SaaS (`vault-backend`).
+    secretRefs:
+      clusterSecretStore: vault-backend
+      adminVaultPath: secret/dev/data/keycloak/admin
+      webBffClientVaultPath: secret/dev/data/keycloak/web-bff-client
+      publicApiClientVaultPath: secret/dev/data/keycloak/public-api-client
+      kongBrokerClientVaultPath: secret/dev/data/keycloak/kong-broker-client
+      grafanaClientVaultPath: secret/dev/data/keycloak/grafana-client
+      smtpVaultPath: secret/dev/data/keycloak/smtp
+      dbPasswordVaultPath: secret/dev/data/keycloak/db-password
+      signingKeysVaultPath: secret/dev/data/keycloak/signing-keys
+    # mTLS — opt-in. When enabled, the `web-bff` and
+    # `kong-oidc-broker` clients switch to
+    # `ssl.client-auth = external-request`. Per-env values
+    # override this default.
+    mtls:
+      enabled: false
+    # Federation overrides — the per-env values files
+    # inject IdP discovery endpoints + Vault paths. The
+    # chart default leaves the per-IdP `discoveryEndpoint`
+    # as `REPLACE_VIA_VALUES`; the bootstrap Job fails if
+    # a SaaS / on-prem deployment reaches the Job without
+    # a populated endpoint.
+    federation:
+      okta:
+        url: REPLACE_VIA_VALUES
+      auth0:
+        url: REPLACE_VIA_VALUES
+      ping:
+        url: REPLACE_VIA_VALUES
+      # SAML providers — DEPRECATED. Each requires a
+      # contractual justification in the per-env values
+      # file (ADR-E0.5-05 §License/TCO).
+      saml:
+        oktaJustification: ""
+        pingJustification: ""
   openfga:
     enabled: true
     replicas: 2

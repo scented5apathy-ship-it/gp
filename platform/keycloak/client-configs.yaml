@@ -1,0 +1,458 @@
+# Source-of-truth Keycloak client configs — E3.1.
+#
+# Per `tasks.md` E3.1 + `design.md` §4.1 / §4.2 + R2 the platform
+# declares five mandatory OIDC clients with explicit posture:
+#
+# | clientId          | use                                              |
+# | ----------------- | ------------------------------------------------ |
+# | `web-app`         | Next.js PWA — Authorization Code + PKCE         |
+# | `web-bff`         | Spring Boot BFF — confidential client + PKCE     |
+# | `public-api`      | Partner REST API — confidential client + scopes  |
+# | `kong-oidc-broker`| Kong Gateway — JWT validation (reserved E2.2)   |
+# | `grafana-sso`     | Grafana — SSO (reserved E2.10)                   |
+#
+# Per ADR-E0.5-05 + R2 §R2.1:
+#   - every client sets `pkce.code.challenge.method = S256`;
+#   - `bearerOnly` is FORBIDDEN (no opaque token to the BFF);
+#   - `publicClient` = true only for `web-app`;
+#   - confidential clients (`web-bff`, `public-api`,
+#     `kong-oidc-broker`, `grafana-sso`) carry a Vault-managed
+#     `client.secret` via ESO — the linter refuses a literal
+#     secret in any `*.yaml` file;
+#   - `client.session.idle.timeout` ≤ 30 minutes + max lifetime
+#     ≤ 12 hours (R2 §R2.3);
+#   - redirect URIs use HTTPS only (R2 §R2.1 + NFR1 OWASP ASVS);
+#   - web origins match the redirect URIs (CORS allowlist);
+#   - `consentRequired` = false (authorization prompt delegated
+#     to the BFF, not the OIDC provider);
+#   - `directAccessGrantsEnabled` = false + `serviceAccountsEnabled`
+#     defaults are explicit per client (resource owner password
+#     grant is FORBIDDEN across the realm — R2 §R2.1);
+#   - mTLS is opt-in (`ssl.client-auth` = `none` by default); the
+#     `web-bff` and `kong-oidc-broker` clients may switch to
+#     `external-request` when the per-env values file declares
+#     `components.keycloak.mtls.enabled: true`;
+#   - the protocol mappers expose `tenant_id` (pseudonymised),
+#     `tenant_groups`, `email_verified`, `mfa_completed` + the
+#     custom `actor_pseudo_id` claim.
+#
+# The deep linter (`scripts/lint-keycloak-config.mjs`) enforces:
+#   - the five required clients are declared;
+#   - `web-app` declares `redirectUris` with HTTPS only;
+#   - `web-bff` carries `clientAuthenticator = client-secret`
+#     and a Vault secret ref (no literal);
+#   - `pkce.code.challenge.method = S256` on every public /
+#     confidential client (R2 §R2.1);
+#   - `standardFlowEnabled` = true on every client;
+#   - `directAccessGrantsEnabled` = false on every client;
+#   - protocol mappers expose `tenant_pseudo_id` and
+#     `actor_pseudo_id` (never raw `tenant_id` / `user_id` /
+#     `email`);
+#   - `client.secret` / `client.jwt.credential` are NEVER
+#     inlined in YAML.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-client-configs
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: "26.0"
+    gp.genealogy/contract-only: "true"
+data:
+  client-configs.yaml: |
+    # ----------------------------------------------------------------
+    # Shared client posture. The runtime merges these defaults
+    # into every declared client below.
+    # ----------------------------------------------------------------
+    sharedClientPosture:
+      standardFlowEnabled: true
+      directAccessGrantsEnabled: false
+      implicitFlowEnabled: false
+      serviceAccountsEnabled: false
+      authorizationServicesEnabled: false
+      consentRequired: false
+      frontchannelLogout: true
+      # Token / session — R2 §R2.3.
+      attributes:
+        # PKCE — Authorization Code + PKCE (RFC 7636).
+        pkce.code.challenge.method: S256
+        # Refresh token rotation — R2 §R2.3.
+        refresh.token.rotated: "true"
+        # Client session idle timeout — 30 minutes max.
+        client.session.idle.timeout: 1800
+        # Client session max lifetime — 12 hours max.
+        client.session.max.lifespan: 43200
+      # Login theme — `genealogy` (deployed by the bootstrap
+      # Job from the `keycloak-themes` ConfigMap).
+      loginTheme: genealogy
+      accountTheme: genealogy
+      adminTheme: genealogy
+      emailTheme: genealogy
+    # ----------------------------------------------------------------
+    # Five mandatory clients — order is informational.
+    # ----------------------------------------------------------------
+    clients:
+      # 1. web-app — Next.js PWA public client (Authorization Code + PKCE).
+      - clientId: web-app
+        name: Genealogy Web App
+        description: "Next.js PWA. Public client (PKCE). Authorization Code grant only."
+        publicClient: true
+        bearerOnly: false
+        surrogateAuthRequired: false
+        alwaysDisplayInConsole: false
+        rootUrl: "https://app.genealogy.localhost"
+        baseUrl: "/"
+        redirectUris:
+          - "https://app.genealogy.localhost/*"
+          - "http://app.genealogy.localhost/*"   # dev only
+        webOrigins:
+          - "https://app.genealogy.localhost"
+          - "http://app.genealogy.localhost"     # dev only
+        adminUrl: ""
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        consentRequired: false
+        frontchannelLogout: true
+        attributes:
+          pkce.code.challenge.method: S256
+          refresh.token.rotated: "true"
+          client.session.idle.timeout: 1800
+          client.session.max.lifespan: 43200
+        loginTheme: genealogy
+        accountTheme: genealogy
+        adminTheme: genealogy
+        emailTheme: genealogy
+        # Protocol mappers — expose `tenant_pseudo_id`,
+        # `actor_pseudo_id`, `tenant_groups` to the SPA.
+        protocolMappers:
+          - name: tenant-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            consentText: "${tenantPseudoId}"
+            config:
+              userinfo.token.claim: "true"
+              id.token.claim: "true"
+              access.token.claim: "true"
+              claim.name: "tenant_pseudo_id"
+              user.attribute: "tenant_pseudo_id"
+              jsonType.label: String
+          - name: actor-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              userinfo.token.claim: "true"
+              id.token.claim: "true"
+              access.token.claim: "true"
+              claim.name: "actor_pseudo_id"
+              user.attribute: "actor_pseudo_id"
+              jsonType.label: String
+          - name: tenant-groups
+            protocol: openid-connect
+            protocolMapper: oidc-group-membership-mapper
+            consentRequired: false
+            config:
+              userinfo.token.claim: "true"
+              id.token.claim: "true"
+              access.token.claim: "true"
+              claim.name: "tenant_groups"
+              full.path: "true"
+      # 2. web-bff — Spring Boot BFF confidential client.
+      - clientId: web-bff
+        name: Genealogy Web BFF
+        description: "Spring Boot BFF. Confidential client (client-secret + PKCE)."
+        publicClient: false
+        bearerOnly: false
+        surrogateAuthRequired: false
+        alwaysDisplayInConsole: false
+        rootUrl: "https://api.genealogy.localhost"
+        baseUrl: "/"
+        redirectUris:
+          - "https://api.genealogy.localhost/*"
+          - "http://api.genealogy.localhost/*"   # dev only
+        webOrigins:
+          - "https://api.genealogy.localhost"
+          - "http://api.genealogy.localhost"     # dev only
+        # Client authenticator — client-secret (Vault-managed).
+        clientAuthenticator: client-secret
+        # Secret reference — ESO-managed via `keycloak-bff-client-secret`
+        # (see `secrets.yaml`). The chart never inlines a literal.
+        secretVaultPath: "secret/<env>/data/keycloak/web-bff-client"
+        # Service account enabled so the BFF can introspect
+        # tokens at the userinfo endpoint.
+        serviceAccountsEnabled: true
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        consentRequired: false
+        frontchannelLogout: true
+        attributes:
+          pkce.code.challenge.method: S256
+          refresh.token.rotated: "true"
+          client.session.idle.timeout: 1800
+          client.session.max.lifespan: 43200
+        loginTheme: genealogy
+        accountTheme: genealogy
+        adminTheme: genealogy
+        emailTheme: genealogy
+        protocolMappers:
+          - name: tenant-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              userinfo.token.claim: "true"
+              access.token.claim: "true"
+              claim.name: "tenant_pseudo_id"
+              user.attribute: "tenant_pseudo_id"
+              jsonType.label: String
+          - name: actor-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              userinfo.token.claim: "true"
+              access.token.claim: "true"
+              claim.name: "actor_pseudo_id"
+              user.attribute: "actor_pseudo_id"
+              jsonType.label: String
+          - name: realm-roles
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-realm-role-mapper
+            consentRequired: false
+            config:
+              userinfo.token.claim: "true"
+              access.token.claim: "true"
+              claim.name: "realm_access.roles"
+              multivalued: "true"
+      # 3. public-api — Partner REST API confidential client.
+      - clientId: public-api
+        name: Genealogy Public API
+        description: "Partner / external REST API. Confidential client (client-secret + PKCE + scopes)."
+        publicClient: false
+        bearerOnly: false
+        surrogateAuthRequired: false
+        alwaysDisplayInConsole: false
+        rootUrl: "https://public-api.genealogy.localhost"
+        baseUrl: "/v1"
+        redirectUris:
+          - "https://public-api.genealogy.localhost/v1/*"
+        webOrigins:
+          - "https://public-api.genealogy.localhost"
+        clientAuthenticator: client-secret
+        secretVaultPath: "secret/<env>/data/keycloak/public-api-client"
+        serviceAccountsEnabled: true
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        consentRequired: false
+        frontchannelLogout: true
+        attributes:
+          pkce.code.challenge.method: S256
+          refresh.token.rotated: "true"
+          client.session.idle.timeout: 1800
+          client.session.max.lifespan: 43200
+        loginTheme: genealogy
+        accountTheme: genealogy
+        adminTheme: genealogy
+        emailTheme: genealogy
+        # OAuth scopes — mapped from public-api OpenAPI spec
+        # (see `contracts/openapi/public-api/openapi.yaml`).
+        defaultClientScopes:
+          - web-origins
+          - profile
+          - email
+          - roles
+          - tenant-context
+        optionalClientScopes:
+          - genealogy:read
+          - genealogy:write
+          - dna:read
+          - dna:write
+          - webhook:manage
+        protocolMappers:
+          - name: tenant-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "tenant_pseudo_id"
+              user.attribute: "tenant_pseudo_id"
+              jsonType.label: String
+          - name: actor-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "actor_pseudo_id"
+              user.attribute: "actor_pseudo_id"
+              jsonType.label: String
+          - name: scopes
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-realm-role-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "scope"
+              multivalued: "true"
+      # 4. kong-oidc-broker — Kong Gateway OIDC introspection.
+      - clientId: kong-oidc-broker
+        name: Kong OIDC Broker
+        description: "Kong Gateway — JWT validation slot from E2.2. Confidential client with rotation."
+        publicClient: false
+        bearerOnly: false
+        alwaysDisplayInConsole: false
+        rootUrl: "https://kong.genealogy.localhost"
+        redirectUris: []
+        webOrigins: []
+        clientAuthenticator: client-secret
+        secretVaultPath: "secret/<env>/data/keycloak/kong-broker-client"
+        serviceAccountsEnabled: true
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        consentRequired: false
+        frontchannelLogout: true
+        # PKCE — RFC 7636 (R2 §R2.1).
+        attributes:
+          pkce.code.challenge.method: S256
+          refresh.token.rotated: "true"
+          client.session.idle.timeout: 1800
+          client.session.max.lifespan: 43200
+          kong.gateway.use: "jwt-validator"
+          jwt.validation.allow.jwt.x5t: "false"
+        loginTheme: genealogy
+        accountTheme: genealogy
+        adminTheme: genealogy
+        emailTheme: genealogy
+        # Kong only validates the JWT signature + audience +
+        # issuer; domain authorization stays in the destination
+        # service per `design.md` §4.1.
+        protocolMappers:
+          - name: tenant-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "tenant_pseudo_id"
+              user.attribute: "tenant_pseudo_id"
+              jsonType.label: String
+          - name: actor-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "actor_pseudo_id"
+              user.attribute: "actor_pseudo_id"
+              jsonType.label: String
+      # 5. grafana-sso — Grafana OIDC SSO.
+      - clientId: grafana-sso
+        name: Grafana SSO
+        description: "Grafana — Keycloak OIDC SSO (E2.10). Confidential client."
+        publicClient: false
+        bearerOnly: false
+        alwaysDisplayInConsole: false
+        rootUrl: "https://grafana.genealogy.localhost"
+        redirectUris:
+          - "https://grafana.genealogy.localhost/login/generic_oauth"
+          - "http://grafana.genealogy.localhost/login/generic_oauth"
+        webOrigins:
+          - "https://grafana.genealogy.localhost"
+          - "http://grafana.genealogy.localhost"
+        clientAuthenticator: client-secret
+        secretVaultPath: "secret/<env>/data/keycloak/grafana-client"
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        consentRequired: false
+        frontchannelLogout: true
+        attributes:
+          pkce.code.challenge.method: S256
+          refresh.token.rotated: "true"
+          client.session.idle.timeout: 1800
+          client.session.max.lifespan: 43200
+          grafana.sso.use: "true"
+        loginTheme: genealogy
+        accountTheme: genealogy
+        adminTheme: genealogy
+        emailTheme: genealogy
+        protocolMappers:
+          - name: tenant-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "tenant_pseudo_id"
+              user.attribute: "tenant_pseudo_id"
+              jsonType.label: String
+          - name: actor-pseudo-id
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "actor_pseudo_id"
+              user.attribute: "actor_pseudo_id"
+              jsonType.label: String
+    # ----------------------------------------------------------------
+    # OAuth client scopes — reused by every client that opts in.
+    # ----------------------------------------------------------------
+    clientScopes:
+      - name: tenant-context
+        description: "Tenant + actor pseudonymised claims."
+        protocol: openid-connect
+        attributes:
+          include.in.token.scope: "true"
+          display.on.consent.screen: "true"
+          consent.screen.text: "${tenantContextScopeConsentText}"
+        protocolMappers:
+          - name: tenant-pseudo-id
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "tenant_pseudo_id"
+              user.attribute: "tenant_pseudo_id"
+              jsonType.label: String
+          - name: actor-pseudo-id
+            protocolMapper: oidc-usermodel-attribute-mapper
+            consentRequired: false
+            config:
+              access.token.claim: "true"
+              claim.name: "actor_pseudo_id"
+              user.attribute: "actor_pseudo_id"
+              jsonType.label: String
+      - name: genealogy:read
+        description: "Read-only access to public genealogy data."
+        protocol: openid-connect
+        attributes:
+          include.in.token.scope: "true"
+      - name: genealogy:write
+        description: "Write access to genealogy data (tree + person + relationship)."
+        protocol: openid-connect
+        attributes:
+          include.in.token.scope: "true"
+      - name: dna:read
+        description: "DNA metadata + consent ledger read."
+        protocol: openid-connect
+        attributes:
+          include.in.token.scope: "true"
+      - name: dna:write
+        description: "DNA consent grant + revoke + export."
+        protocol: openid-connect
+        attributes:
+          include.in.token.scope: "true"
+      - name: webhook:manage
+        description: "Webhook subscription + rotation + replay."
+        protocol: openid-connect
+        attributes:
+          include.in.token.scope: "true"

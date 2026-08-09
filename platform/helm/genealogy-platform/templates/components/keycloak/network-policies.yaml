@@ -1,0 +1,152 @@
+{{/*
+Keycloak NetworkPolicies — default-deny + allow from
+`gp-edge` (Kong), `gp-bff` (web-bff), `gp-services` (tenant-service,
+audit-service), `gp-workers` (media-worker / dna-worker / search-
+worker for OIDC client_credentials) and `gp-observability` (Grafana
+SSO) + `gp-platform` (Argo CD SSO).
+
+Per `design.md` §4.1 / `tasks.md` E3.1 Keycloak is reachable
+from inside the mesh only — direct public access is blocked by
+Kong + the WAF + the NetworkPolicy below.
+*/}}
+{{- $keycloak := .Values.components.keycloak }}
+{{- if $keycloak.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-default-deny
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: keycloak
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-allow-mesh
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: keycloak
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-edge
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-bff
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-platform
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-allow-egress
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: keycloak
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster members — JGroups replication.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: keycloak
+      ports:
+        - protocol: TCP
+          port: 9000
+    # PostgreSQL — Keycloak JPA DB.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+{{- end }}

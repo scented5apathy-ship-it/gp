@@ -1,0 +1,97 @@
+{{/*
+Keycloak ConfigMaps — declarative realm / client / federation /
+key-rotation config-as-code.
+
+Per `tasks.md` E3.1 + ADR-E0.5-05 the Keycloak runtime mounts the
+five source-of-truth files from `platform/keycloak/`. The same files
+are mirrored byte-identical into
+`platform/helm/genealogy-platform/files/keycloak/` and shipped via
+this ConfigMap. The deep linter
+(`scripts/lint-keycloak-config.mjs`) enforces the mirror contract.
+
+The bootstrap Job (`bootstrap-job.yaml`) reads these ConfigMaps
+and applies the realm + clients + flows + mappers + identity
+providers via the Keycloak Admin REST API on every `helm upgrade`.
+*/}}
+{{- $keycloak := .Values.components.keycloak }}
+{{- if $keycloak.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-realm-strategy
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: {{ $keycloak.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  realm-strategy.yaml: |-
+{{- range $line := splitList "\n" (.Files.Get "files/keycloak/realm-strategy.yaml") }}
+    {{ $line }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-realm-export
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: {{ $keycloak.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  realm-export.yaml: |-
+{{- range $line := splitList "\n" (.Files.Get "files/keycloak/realm-export.yaml") }}
+    {{ $line }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-client-configs
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: {{ $keycloak.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  client-configs.yaml: |-
+{{- range $line := splitList "\n" (.Files.Get "files/keycloak/client-configs.yaml") }}
+    {{ $line }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-federation
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: {{ $keycloak.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  federation.yaml: |-
+{{- range $line := splitList "\n" (.Files.Get "files/keycloak/federation.yaml") }}
+    {{ $line }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-key-rotation
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: {{ $keycloak.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+data:
+  key-rotation.yaml: |-
+{{- range $line := splitList "\n" (.Files.Get "files/keycloak/key-rotation.yaml") }}
+    {{ $line }}
+{{- end }}
+{{- end }}

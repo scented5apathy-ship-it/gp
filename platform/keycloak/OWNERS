@@ -1,0 +1,20 @@
+# Per-directory OWNERS — platform/keycloak (Keycloak OIDC + identity
+# brokering + flow / client config-as-code). Source of truth:
+# config/teams.yaml. Sync via tools/scripts/sync-team-map.ts.
+keycloak:
+  primary: identity-primary
+  secondary: "@genealogy/platform"
+  oncall: identity-primary
+  # E3.1 ships the Keycloak runtime config (realm strategy +
+  # realm export + client configs + federation / IdP brokering +
+  # key rotation). Domain authorization stays in the destination
+  # service per design.md §4.1; the contract stub lives in
+  # platform/helm/genealogy-platform/templates/components/contract-stubs.yaml.
+  # Identity brokering is OIDC-only (ADR-E0.5-05 §Decision). SAML
+  # is the deprecated path and requires contractual justification.
+  # Realm signing keys are rotated every 90 days via the
+  # `keycloak-key-rotation` CronJob; client secrets every 30 days.
+  components:
+    - keycloak
+    - kong-oidc-broker   # E2.2 reserved JWT slot
+    - grafana-sso        # E2.10 OIDC SSO

@@ -1,0 +1,128 @@
+{{/*
+Keycloak bootstrap Job — Helm hook (`pre-install,pre-upgrade`)
+that applies the realm + clients + flows + identity providers
+via the Keycloak Admin REST API. Runs once per `helm upgrade`;
+the Job deletes itself on success (`hook-succeeded`).
+
+The Job reads the 5 source-of-truth ConfigMaps mounted at
+`/opt/keycloak/import/` and applies them against the running
+Keycloak server via the Admin API. Idempotent — every
+`PUT/POST` is conditional on the resource not existing.
+
+Per `tasks.md` E3.1 the Job forbids custom SPI providers;
+only OIDC + SAML protocol mappers are applied.
+*/}}
+{{- $keycloak := .Values.components.keycloak }}
+{{- if $keycloak.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-bootstrap
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak-bootstrap
+    app.kubernetes.io/version: {{ $keycloak.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: keycloak-bootstrap
+    spec:
+      serviceAccountName: keycloak-bootstrap
+      restartPolicy: OnFailure
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: {{ include "genealogy-platform.image" (dict "image" $keycloak.image) }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/scripts/keycloak-bootstrap.sh"]
+          env:
+            - name: KEYCLOAK_URL
+              value: "http://keycloak.gp-edge.svc.cluster.local:8080"
+            - name: KEYCLOAK_REALM
+              value: genealogy-shared
+            - name: ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin-credentials
+                  key: admin-username
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin-credentials
+                  key: admin-password
+            - name: REALM_STRATEGY_PATH
+              value: /opt/keycloak/import/realm-strategy.yaml
+            - name: REALM_EXPORT_PATH
+              value: /opt/keycloak/import/realm-export.yaml
+            - name: CLIENT_CONFIGS_PATH
+              value: /opt/keycloak/import/client-configs.yaml
+            - name: FEDERATION_PATH
+              value: /opt/keycloak/import/federation.yaml
+            - name: KEY_ROTATION_PATH
+              value: /opt/keycloak/import/key-rotation.yaml
+          volumeMounts:
+            - name: realm-strategy
+              mountPath: /opt/keycloak/import/realm-strategy.yaml
+              subPath: realm-strategy.yaml
+              readOnly: true
+            - name: realm-export
+              mountPath: /opt/keycloak/import/realm-export.yaml
+              subPath: realm-export.yaml
+              readOnly: true
+            - name: client-configs
+              mountPath: /opt/keycloak/import/client-configs.yaml
+              subPath: client-configs.yaml
+              readOnly: true
+            - name: federation
+              mountPath: /opt/keycloak/import/federation.yaml
+              subPath: federation.yaml
+              readOnly: true
+            - name: key-rotation
+              mountPath: /opt/keycloak/import/key-rotation.yaml
+              subPath: key-rotation.yaml
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: realm-strategy
+          configMap:
+            name: genea-keycloak-realm-strategy
+        - name: realm-export
+          configMap:
+            name: genea-keycloak-realm-export
+        - name: client-configs
+          configMap:
+            name: genea-keycloak-client-configs
+        - name: federation
+          configMap:
+            name: genea-keycloak-federation
+        - name: key-rotation
+          configMap:
+            name: genea-keycloak-key-rotation
+{{- end }}

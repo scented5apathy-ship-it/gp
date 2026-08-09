@@ -1536,4 +1536,63 @@ if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
   }
 }
 
+const KEYCLOAK_DIR = join(ROOT, "platform", "keycloak");
+const KEYCLOAK_FILES = [
+  "realm-strategy.yaml",
+  "realm-export.yaml",
+  "client-configs.yaml",
+  "federation.yaml",
+  "key-rotation.yaml",
+];
+for (const file of KEYCLOAK_FILES) {
+  const source = join(KEYCLOAK_DIR, file);
+  const mirror = join(HELM_DIR, "files", "keycloak", file);
+  if (!existsSync(source)) {
+    fail(`E3.1 source-of-truth file missing — ${relative(ROOT, source)}`);
+  }
+  if (!existsSync(mirror)) {
+    fail(`E3.1 chart mirror missing — ${relative(ROOT, mirror)}`);
+  } else if (existsSync(source) && readFileSync(source, "utf8") !== readFileSync(mirror, "utf8")) {
+    fail(`E3.1 chart mirror drift — ${file}`);
+  }
+}
+
+const keycloakTemplates = join(HELM_DIR, "templates", "components", "keycloak");
+for (const template of [
+  "configmap.yaml",
+  "secrets.yaml",
+  "serviceaccounts.yaml",
+  "services.yaml",
+  "statefulset.yaml",
+  "network-policies.yaml",
+  "bootstrap-job.yaml",
+]) {
+  const path = join(keycloakTemplates, template);
+  if (!existsSync(path)) {
+    fail(`E3.1 keycloak helm template missing — ${relative(ROOT, path)}`);
+  }
+}
+
+const keycloakValuesPath = join(HELM_DIR, "values.yaml");
+if (existsSync(keycloakValuesPath)) {
+  const values = readFileSync(keycloakValuesPath, "utf8");
+  if (!/^  keycloak:/m.test(values)) {
+    fail("values.yaml must declare components.keycloak (E3.1)");
+  }
+  if (!/quay\.io\/keycloak\/keycloak[\s\S]*?tag:\s*"26\.\d+"/.test(values)) {
+    fail("values.yaml must pin Keycloak image to 26.x (ADR-E0.5-01)");
+  }
+  for (const configPath of [
+    "realmStrategy",
+    "realmExport",
+    "clientConfigs",
+    "federation",
+    "keyRotation",
+  ]) {
+    if (!new RegExp(`${configPath}:\\s*keycloak/`).test(values)) {
+      fail(`values.yaml must declare components.keycloak.configPaths.${configPath} (E3.1)`);
+    }
+  }
+}
+
 finish();

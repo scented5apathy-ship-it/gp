@@ -102,6 +102,8 @@ Every change must respect:
 - [ ] `pnpm lint:grafana` passes (Grafana OSS stack
       config-as-code + OTel redaction + tenant pseudonym +
       dashboard catalogue + retention validator — E2.10)
+- [ ] `pnpm lint:keycloak` passes (Keycloak OIDC realm / client /
+      flow / federation / key rotation config-as-code validator — E3.1)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`

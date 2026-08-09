@@ -69,6 +69,7 @@ function makeFixture() {
   mkdirSync(join(dir, "platform", "featureflags"), { recursive: true });
   mkdirSync(join(dir, "platform", "argo"), { recursive: true });
   mkdirSync(join(dir, "platform", "grafana"), { recursive: true });
+  mkdirSync(join(dir, "platform", "keycloak"), { recursive: true });
   mkdirSync(join(dir, "platform", "observability", "alerts"), { recursive: true });
   copyTree(
     join(ROOT, "platform", "helm", "genealogy-platform"),
@@ -85,6 +86,7 @@ function makeFixture() {
   copyTree(join(ROOT, "platform", "featureflags"), join(dir, "platform", "featureflags"));
   copyTree(join(ROOT, "platform", "argo"), join(dir, "platform", "argo"));
   copyTree(join(ROOT, "platform", "grafana"), join(dir, "platform", "grafana"));
+  copyTree(join(ROOT, "platform", "keycloak"), join(dir, "platform", "keycloak"));
   copyTree(
     join(ROOT, "platform", "observability", "alerts"),
     join(dir, "platform", "observability", "alerts"),

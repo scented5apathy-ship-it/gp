@@ -1,0 +1,228 @@
+{{/*
+Keycloak StatefulSet — upstream `quay.io/keycloak/keycloak:26.x`
+(ADR-E0.5-01 baseline). Production uses clustered mode
+(KC_CACHE=ispn, KC_DB=mysql/postgres) for HA. Dev uses
+standalone mode (single replica, in-memory cache disabled).
+
+The Pod mounts the 5 source-of-truth ConfigMaps + 5
+ESO-managed Secrets. The startup probe waits for the
+Keycloak readiness endpoint before signaling healthy.
+*/}}
+{{- $keycloak := .Values.components.keycloak }}
+{{- if $keycloak.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keycloak
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: {{ $keycloak.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  serviceName: keycloak-internal
+  replicas: {{ $keycloak.replicas }}
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: keycloak
+        app.kubernetes.io/version: {{ $keycloak.image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: keycloak
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: keycloak
+          image: {{ include "genealogy-platform.image" (dict "image" $keycloak.image) }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              exec /opt/keycloak/bin/kc.sh start \
+                --http-enabled=true \
+                --https-port=8443 \
+                --http-port=8080 \
+                --hostname-strict=false \
+                --hostname-admin-strict=false \
+                --cache=ispn \
+                --db=postgres \
+                --db-url-host={{ $keycloak.database.host }} \
+                --db-url-port={{ $keycloak.database.port }} \
+                --db-url-database={{ $keycloak.database.name }} \
+                --db-username={{ $keycloak.database.username }} \
+                --db-password=$(cat /mnt/secrets/keycloak-db-password/password)
+          env:
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
+            - name: KC_PROXY
+              value: "edge"
+            - name: KC_PROXY_ADDRESS_FORWARDING
+              value: "true"
+            - name: KC_LOG_LEVEL
+              value: info
+            - name: KC_LOG
+              value: console,file
+            # Cluster topology — SaaS + on-prem cluster
+            # via the `keycloak-internal` headless Service.
+            # Dev uses standalone (1 replica, no cluster).
+            - name: KC_CACHE_CONFIG_LOCATION
+              value: "classpath:conf/ispn-cache-keycloak.xml"
+            - name: JAVA_OPTS
+              value: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+            - name: management
+              containerPort: 9000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+              scheme: HTTP
+            failureThreshold: {{ .Values.baseline.probes.readiness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.readiness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.readiness.initialDelaySeconds }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: management
+              scheme: HTTP
+            failureThreshold: {{ .Values.baseline.probes.liveness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.liveness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.liveness.initialDelaySeconds }}
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+              scheme: HTTP
+            failureThreshold: {{ .Values.baseline.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.startup.timeoutSeconds }}
+          resources:
+            requests:
+              cpu: {{ $keycloak.resources.requests.cpu | quote }}
+              memory: {{ $keycloak.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ $keycloak.resources.limits.cpu | quote }}
+              memory: {{ $keycloak.resources.limits.memory | quote }}
+          volumeMounts:
+            - name: realm-strategy
+              mountPath: /opt/keycloak/import/realm-strategy.yaml
+              subPath: realm-strategy.yaml
+              readOnly: true
+            - name: realm-export
+              mountPath: /opt/keycloak/import/realm-export.yaml
+              subPath: realm-export.yaml
+              readOnly: true
+            - name: client-configs
+              mountPath: /opt/keycloak/import/client-configs.yaml
+              subPath: client-configs.yaml
+              readOnly: true
+            - name: federation
+              mountPath: /opt/keycloak/import/federation.yaml
+              subPath: federation.yaml
+              readOnly: true
+            - name: key-rotation
+              mountPath: /opt/keycloak/import/key-rotation.yaml
+              subPath: key-rotation.yaml
+              readOnly: true
+            - name: admin-credentials
+              mountPath: /mnt/secrets/keycloak-admin
+              readOnly: true
+            - name: web-bff-client-secret
+              mountPath: /mnt/secrets/keycloak-web-bff-client
+              readOnly: true
+            - name: public-api-client-secret
+              mountPath: /mnt/secrets/keycloak-public-api-client
+              readOnly: true
+            - name: kong-broker-client-secret
+              mountPath: /mnt/secrets/keycloak-kong-broker-client
+              readOnly: true
+            - name: grafana-client-secret
+              mountPath: /mnt/secrets/keycloak-grafana-client
+              readOnly: true
+            - name: smtp-credentials
+              mountPath: /mnt/secrets/keycloak-smtp
+              readOnly: true
+            - name: db-password
+              mountPath: /mnt/secrets/keycloak-db-password
+              readOnly: true
+      volumes:
+        - name: realm-strategy
+          configMap:
+            name: genea-keycloak-realm-strategy
+        - name: realm-export
+          configMap:
+            name: genea-keycloak-realm-export
+        - name: client-configs
+          configMap:
+            name: genea-keycloak-client-configs
+        - name: federation
+          configMap:
+            name: genea-keycloak-federation
+        - name: key-rotation
+          configMap:
+            name: genea-keycloak-key-rotation
+        - name: admin-credentials
+          secret:
+            secretName: keycloak-admin-credentials
+        - name: web-bff-client-secret
+          secret:
+            secretName: keycloak-web-bff-client-secret
+        - name: public-api-client-secret
+          secret:
+            secretName: keycloak-public-api-client-secret
+        - name: kong-broker-client-secret
+          secret:
+            secretName: keycloak-kong-broker-client-secret
+        - name: grafana-client-secret
+          secret:
+            secretName: keycloak-grafana-client-secret
+        - name: smtp-credentials
+          secret:
+            secretName: keycloak-smtp-credentials
+        - name: db-password
+          secret:
+            secretName: keycloak-db-password
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: genealogy-platform
+          app.kubernetes.io/component: keycloak
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ $keycloak.persistence.storageClass }}
+        resources:
+          requests:
+            storage: {{ $keycloak.persistence.size | default "20Gi" }}
+{{- end }}

@@ -1,0 +1,178 @@
+# Source-of-truth Keycloak key rotation + JWKS — E3.1.
+#
+# Per `tasks.md` E3.1 + `design.md` §13 + `privacy-and-legal-gate.md`
+# §5 the platform rotates Keycloak signing + provider keys on a
+# fixed schedule and exposes a JWKS endpoint for the Kong
+# `kong-oidc-broker` + the BFF (E3.5 trusted tenant context).
+#
+# Key rotation policy:
+#
+#   - Realm signing key (RS256, 4096-bit) rotated every 90 days.
+#     The previous key is kept for `keyOverlapHours` so an in-flight
+#     token can still be verified.
+#   - Provider keys (IdP signing keys via JWKS) are refreshed
+#     every `providerKeyRefreshMinutes` minutes from the IdP's
+#     discovery endpoint.
+#   - HS256 / RS256 / PS256 are the only allowed JWS algorithms.
+#     `none` is FORBIDDEN (`privacy-and-legal-gate.md` §10).
+#   - Client secrets are rotated every 30 days (R2 §R2.5 +
+#     OWASP ASVS Level 2 §2.10).
+#   - JWKS endpoint serves both active + grace keys.
+#   - The Keycloak DB password is rotated every 30 days by
+#     `scripts/rotate-keycloak-db-password.sh`.
+#   - The realm signing key store is backed by the platform KMS
+#     (SaaS = AWS KMS; on-prem = Vault transit per ADR-E0.5-06).
+#
+# The deep linter (`scripts/lint-keycloak-config.mjs`) enforces:
+#   - `realmSigningKeyRotationDays` is between 30 and 365;
+#   - `keyOverlapHours` ≥ 24 (so an offline client has time
+#     to refresh);
+#   - `clientSecretRotationDays` is between 7 and 90;
+#   - `providerKeyRefreshMinutes` is between 5 and 1440;
+#   - `jwksAlgorithmsAllowed` excludes `none`;
+#   - `kmsBackend` is one of `awskms`, `vault-transit`,
+#     `vault-kv`;
+#   - no literal private key / PEM / JWKS value in YAML;
+#   - the bootstrap Job signature references `secret/<env>/data/keycloak/signing-keys`
+#     in Vault (no literal).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-key-rotation
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: "26.0"
+    gp.genealogy/contract-only: "true"
+data:
+  key-rotation.yaml: |
+    # ----------------------------------------------------------------
+    # Realm signing key (JWS).
+    # Algorithm — RS256 (RSA + SHA-256). PS256 is allowed but
+    # only when explicitly enabled by the per-env values file
+    # (`components.keycloak.signingAlgorithm`).
+    # ----------------------------------------------------------------
+    realmSigningKey:
+      algorithm: RS256
+      keySize: 4096
+      # Active key auto-rotation window — every 90 days the
+      # bootstrap Job generates a new key and stores it in
+      # Vault / KMS. The grace key remains valid for
+      # `keyOverlapHours` so any in-flight token is still
+      # verifiable.
+      rotationDays: 90
+      keyOverlapHours: 48
+      # Rotation job — `keycloak-key-rotation` CronJob in
+      # `gp-edge` namespace. The Job calls Keycloak's
+      # `/admin/realms/{realm}/keys` endpoint to generate a
+      # new key pair, then archives the previous active key
+      # to the JWKS for the grace window.
+      rotationJob: keycloak-key-rotation
+      rotationSchedule: "0 3 * * 0"   # Sunday 03:00 UTC
+      # KMS backend — stores the new key pair.
+      # SaaS uses `awskms`; on-prem + dev use `vault-transit`.
+      kmsBackend: awskms
+      kmsKeyVaultPath: "secret/<env>/data/keycloak/signing-keys"
+      # Grace key removal — after `keyOverlapHours` the grace
+      # key is dropped from the JWKS. The linter asserts the
+      # cron schedule exists.
+      graceRemovalSchedule: "0 4 * * 0"
+    # ----------------------------------------------------------------
+    # Provider keys — external IdP signing keys (JWKS refresh).
+    # The bootstrap Job polls each IdP's discovery endpoint
+    # every `providerKeyRefreshMinutes` and refreshes the
+    # JWKS cache. Kong + the BFF use the cached JWKS to
+    # validate tokens without calling Keycloak on every
+    # request.
+    # ----------------------------------------------------------------
+    providerKeys:
+      refreshMinutes: 60
+      cacheTtlMinutes: 360
+      # JWKS cache invalidation on signing key change — the
+      # OIDC broker re-fetches JWKS within
+      # `cacheTtlMinutes` of any rotation event.
+      invalidation:
+        enabled: true
+        onKeyRotationEvent: true
+    # ----------------------------------------------------------------
+    # Client secrets — confidential clients only. The bootstrap
+    # Job rotates every `clientSecretRotationDays` via the
+    # Keycloak Admin API + Vault. Each client has its own
+    # Vault secret path declared in `client-configs.yaml`.
+    # ----------------------------------------------------------------
+    clientSecretRotationDays: 30
+    clientSecretOverlapHours: 24
+    clientSecretRotationSchedule: "0 2 * * *"
+    clientSecretRotationJob: keycloak-client-secret-rotation
+    # Clients excluded from rotation — `kong-oidc-broker` and
+    # `grafana-sso` use static secrets pinned at install time
+    # because Kong / Grafana are long-lived platform components
+    # with their own restart sequence. The rotation Job issues a
+    # Helm PR with the new secret + a coordinated rollout.
+    clientSecretRotationExcludes:
+      - kong-oidc-broker
+      - grafana-sso
+    # ----------------------------------------------------------------
+    # JWKS endpoint — the active + grace keys are published at
+    # `/realms/{realm}/protocol/openid-connect/certs`. Kong
+    # uses the standard OIDC discovery endpoint
+    # `/.well-known/openid-configuration`.
+    # ----------------------------------------------------------------
+    jwksEndpoint:
+      path: /realms/genealogy-shared/protocol/openid-connect/certs
+      cacheTtlSeconds: 300
+      # Allowlist of JWS algorithms. `none` is FORBIDDEN.
+      jwksAlgorithmsAllowed:
+        - RS256
+        - PS256
+        - ES256
+      jwksAlgorithmsForbidden:
+        - none
+        - HS256   # symmetric secret — never signed by Keycloak server
+        - HS512   # symmetric secret — never signed by Keycloak server
+    # ----------------------------------------------------------------
+    # Database credential — Keycloak JPA datasource password.
+    # Rotated every 30 days by `scripts/rotate-keycloak-db-password.sh`.
+    # ----------------------------------------------------------------
+    databaseCredential:
+      rotationDays: 30
+      vaultPath: "secret/<env>/data/keycloak/db-password"
+      rotationJob: keycloak-db-password-rotation
+      rotationSchedule: "0 1 * * *"
+    # ----------------------------------------------------------------
+    # Logout + revoke — `frontchannelLogout` is enabled on every
+    # confidential client (see `client-configs.yaml`); the
+    # BFF calls `/realms/{realm}/protocol/openid-connect/logout`
+    # on user logout. The Keycloak server revokes the refresh
+    # token + active session in the JPA DB.
+    # ----------------------------------------------------------------
+    logout:
+      frontchannelLogoutEnabled: true
+      # Backchannel revocation — R2 §R2.3.
+      revokeRefreshToken: true
+      # Session revocation SLA — 5 seconds max propagation.
+      sessionRevocationPropagationSeconds: 5
+    # ----------------------------------------------------------------
+    # Backup posture — Keycloak DB snapshot is part of the
+    # `postgres-backup` CronJob. Per
+    # `privacy-and-legal-gate.md` §5 the DB snapshot is
+    # encrypted with the platform KMS key (SaaS = AWS KMS;
+    # on-prem = Vault transit).
+    # ----------------------------------------------------------------
+    backup:
+      # Snapshot of `genea_keycloak` Postgres database.
+      postgresDatabase: genea_keycloak
+      # Snapshot schedule — daily at 02:00 UTC (E14.1).
+      snapshotSchedule: "0 2 * * *"
+      retentionDays: 14
+      kmsEncrypted: true
+      # Restore SLA — 30 minutes RTO.
+      rtoMinutes: 30
+      rpoMinutes: 15
+      # Offsite — SaaS: cross-region snapshot replication;
+      # on-prem: customer-managed offsite store.
+      offsiteReplication:
+        saas: enabled
+        onprem: customer-managed
+        dev: disabled

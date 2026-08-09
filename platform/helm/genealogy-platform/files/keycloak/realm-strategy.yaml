@@ -1,0 +1,126 @@
+# Source-of-truth Keycloak realm strategy — E3.1.
+#
+# Per `tasks.md` E3.1 + `design.md` §4.2 + ADR-E0.5-05
+# (Keycloak topology, realm strategy and federation policy),
+# the platform manages Keycloak realm layout as config-as-code.
+# The runtime instance is the upstream `quay.io/keycloak/keycloak:26.x`
+# image (ADR-E0.5-01 baseline).
+#
+# This file documents the platform defaults; the chart (`values.yaml`
+# + `values-{saas,onprem,dev}.yaml`) injects the env-time overrides.
+# The deep linter (`scripts/lint-keycloak-config.mjs`) enforces:
+#   - `realmTopology` is one of `realm-per-tenant-group` /
+#     `realm-per-tenant`;
+#   - the SaaS shared realm name is `genealogy-shared`;
+#   - enterprise-only realms declare the isolation rationale;
+#   - `dedicatedRealm` blocks in onprem lists a `justification`
+#     and an owning team;
+#   - `groupClaimLimit` is set; linter refuses a number above 5000
+#     (per ADR-E0.5-05 §Consequences — switch to dedicated realm).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-realm-strategy
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: "26.0"
+    gp.genealogy/contract-only: "true"
+data:
+  realm-strategy.yaml: |
+    # ----------------------------------------------------------------
+    # Realm strategy — ADR-E0.5-05 §Decision.
+    #
+    # SaaS shared tenants share the `genealogy-shared` realm.
+    # Authorization boundary is *group membership* inside the realm
+    # (tenant membership groups), not the realm boundary.
+    #
+    # Enterprise / on-prem tenants may run a dedicated realm
+    # (option 3 — opt-in for isolation). The realm list lives in
+    # the per-env values file so an operator never edits this
+    # source-of-truth.
+    # ----------------------------------------------------------------
+    realmTopology: realm-per-tenant-group
+    defaultTopologyForEnv:
+      saas: realm-per-tenant-group
+      onprem: realm-per-tenant-group
+      dev: realm-per-tenant-group
+    # SaaS shared realm name. The realm JSON file
+    # (`realm-export.yaml`) declares this exact name.
+    saasSharedRealm: genealogy-shared
+    # Enterprise isolation opt-in — only fired when a customer
+    # contract requires it (e.g. regulated healthcare / public
+    # sector tenants).
+    dedicatedRealmEligibility:
+      saas: opt-in
+      onprem: opt-in
+      dev: never
+    # When a dedicated realm is provisioned, the chart requires
+    # a `justification` + `owner` block in the per-env values
+    # file. The deep linter rejects a dedicated realm block
+    # without both fields.
+    dedicatedRealmRequiredFields:
+      - justification
+      - owner
+      - isolationPolicy
+      - backupRegion
+    # Group claim size limit. Per ADR-E0.5-05 §Consequences
+    # "if a tenant exceeds 5000 groups, switch to dedicated realm".
+    # The linter refuses a number above 5000.
+    groupClaimLimit: 1000
+    # Federation — only OIDC is the canonical path. SAML is the
+    # deprecated path and requires a contractual justification
+    # block (per ADR-E0.5-05 §License/TCO).
+    federationPreferredProtocol: oidc
+    federationDeprecatedProtocols:
+      - saml
+    # Custom SPI extensions are forbidden per `design.md` §13
+    # + ADR-E0.5-05 §Decision. Realm-only extensions go through
+    # OIDC protocol.
+    customSpiAllowed: false
+    # Realm-level event logging. The OTel Collector
+    # (`genea-otel-collector-config`) ingests the audit events;
+    # the eventListener section is wired by the bootstrap Job
+    # against the platform Logstash / Loki / Tempo sink.
+    eventListener:
+      enabled: true
+      sink: otel-collector:4318/v1/audit
+      # Events captured: LOGIN, LOGIN_ERROR, LOGOUT, REGISTER,
+      # REGISTER_ERROR, UPDATE_EMAIL, UPDATE_PASSWORD,
+      # SEND_RESET_PASSWORD, RESET_PASSWORD, VERIFY_EMAIL,
+      # UPDATE_PROFILE, GRANT_ROLE, REVOKE_ROLE,
+      # IMPERSONATE, IMPERSONATE_ERROR, TOKEN_EXCHANGE,
+      # FEDERATED_IDENTITY_LINK, REMOVE_FEDERATED_IDENTITY,
+      # IDENTITY_PROVIDER_LINK_ACCOUNT, IDENTITY_PROVIDER_LOGIN,
+      # DELETE_ACCOUNT, CLIENT_DELETE, CLIENT_INFO,
+      # CLIENT_LOGIN, CLIENT_REGISTER.
+      events:
+        - LOGIN
+        - LOGIN_ERROR
+        - LOGOUT
+        - REGISTER
+        - REGISTER_ERROR
+        - UPDATE_EMAIL
+        - UPDATE_PASSWORD
+        - SEND_RESET_PASSWORD
+        - RESET_PASSWORD
+        - VERIFY_EMAIL
+        - UPDATE_PROFILE
+        - GRANT_ROLE
+        - REVOKE_ROLE
+        - IMPERSONATE
+        - IMPERSONATE_ERROR
+        - CLIENT_LOGIN
+        - CLIENT_REGISTER
+        - FEDERATED_IDENTITY_LINK
+        - REMOVE_FEDERATED_IDENTITY
+        - DELETE_ACCOUNT
+      # Raw events are NOT persisted into Keycloak's JPA
+      # database — only the platform OTel audit sink receives
+      # them. This is required by the privacy posture in
+      # `privacy-and-legal-gate.md` §10.
+      persistToDb: false
+    # Realm signing key + provider keys are rotated by
+    # `key-rotation.yaml` (90-day default).
+    signingKeyRotationDays: 90

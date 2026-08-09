@@ -1,0 +1,56 @@
+{{/*
+Keycloak Services — two Services:
+  - `keycloak` (ClusterIP, port 8080) — public Keycloak API,
+    reachable from inside the mesh. Kong / BFF / Grafana /
+    Argo CD resolve this for OIDC token issuance + introspection.
+  - `keycloak-management` (headless, port 9000) — JGroups
+    cluster listener, intra-pod-only. Never exposed to
+    non-Keycloak pods.
+*/}}
+{{- $keycloak := .Values.components.keycloak }}
+{{- if $keycloak.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: https
+      port: 8443
+      targetPort: https
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-internal
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+  ports:
+    - name: management
+      port: 9000
+      targetPort: management
+      protocol: TCP
+{{- end }}

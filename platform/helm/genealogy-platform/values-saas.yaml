@@ -28,7 +28,49 @@ components:
   kong:
     replicas: 6
   keycloak:
+    # SaaS clustered — 4 replicas across 3 AZs.
     replicas: 4
+    topology: clustered
+    # Realm strategy — ADR-E0.5-05 §Decision.
+    realmStrategy: realm-per-tenant-group
+    saasSharedRealm: genealogy-shared
+    # Secret refs — managed Vault cluster (`vault-backend`).
+    secretRefs:
+      clusterSecretStore: vault-backend
+      adminVaultPath: secret/saas/data/keycloak/admin
+      webBffClientVaultPath: secret/saas/data/keycloak/web-bff-client
+      publicApiClientVaultPath: secret/saas/data/keycloak/public-api-client
+      kongBrokerClientVaultPath: secret/saas/data/keycloak/kong-broker-client
+      grafanaClientVaultPath: secret/saas/data/keycloak/grafana-client
+      smtpVaultPath: secret/saas/data/keycloak/smtp
+      dbPasswordVaultPath: secret/saas/data/keycloak/db-password
+      signingKeysVaultPath: secret/saas/data/keycloak/signing-keys
+    # Federation — managed IdPs (Google Workspace / Microsoft
+    # Entra / Okta / Auth0 / PingFederate).
+    federation:
+      okta:
+        url: REPLACE_VIA_VALUES
+      auth0:
+        url: REPLACE_VIA_VALUES
+      ping:
+        url: REPLACE_VIA_VALUES
+      saml:
+        oktaJustification: ""
+        pingJustification: ""
+    # Resources — 4 replicas × 2 vCPU each.
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    persistence:
+      storageClass: gp-data-ssd
+      size: 100Gi
+    # mTLS — opt-in for tenant-facing clients.
+    mtls:
+      enabled: false
   kafka:
     replicas: 6
     replicationFactor: 3

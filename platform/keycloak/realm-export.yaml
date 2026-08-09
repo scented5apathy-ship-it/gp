@@ -1,0 +1,377 @@
+# Source-of-truth Keycloak realm export — E3.1.
+#
+# Per `tasks.md` E3.1 + `design.md` §4.2 this file declares the
+# canonical `genealogy-shared` realm structure: identity providers,
+# authentication flows, identity brokering, role mappers, scopes,
+# protocol mappers and audit event listeners.
+#
+# The runtime is the upstream `quay.io/keycloak/keycloak:26.x`
+# (ADR-E0.5-01). The bootstrap Job applies this file via the
+# Keycloak Admin REST API on every `helm upgrade` (pre-install,
+# pre-upgrade hook); the linter enforces:
+#   - `realm` = `genealogy-shared` (matches `realm-strategy.yaml`);
+#   - `enabled` = true + `registrationAllowed` = true (account
+#     self-service is gated by tenant invitation, NOT public
+#     sign-up — the `userRegistration` flow uses an OIDC invite
+#     token minted by `tenant-service`);
+#   - `loginWithEmailAllowed` = true + `duplicateEmailsAllowed`
+#     = false;
+#   - `verifyEmail` = true + `resetPasswordAllowed` = true
+#     (R2 §R2.5: account recovery + email verification);
+#   - `sslRequired` = `external` (TLS termination at Kong / Istio
+#     ingress);
+#   - `accessTokenLifespan` ≤ 1h, `ssoSessionIdleTimeout` ≤ 8h,
+#     `ssoSessionMaxLifespan` ≤ 12h (R2 §R2.3 revoke);
+#   - the `browser` flow uses Authorization Code with PKCE
+#     (R2 §R2.1); client_credentials + password grants are
+#     FORBIDDEN;
+#   - `bruteForceProtected` = true;
+#   - 5 mandatory clients: `web-app`, `web-bff`, `public-api`,
+#     `kong-oidc-broker`, `grafana-sso`;
+#   - MFA enforcement: `webauthn` + `otp` executions are
+#     `REQUIRED` for the `mfa` conditional flow;
+#   - the `step-up` flow is bound to the `keycloak-step-up`
+#     authenticator with a maximum age of 5 minutes (admin
+#     actions + DNA access path);
+#   - `emailTheme` / `loginTheme` = `genealogy` (custom theme
+#     declared via the `keycloak-themes` ConfigMap);
+#   - no custom SPI providers (ADR-E0.5-05 §Decision).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-keycloak-realm-export
+  namespace: gp-edge
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: keycloak
+    app.kubernetes.io/version: "26.0"
+    gp.genealogy/contract-only: "true"
+data:
+  realm-export.yaml: |
+    # Canonical SaaS shared realm. Enterprise / on-prem realms are
+    # declared in the per-env values file via
+    # `components.keycloak.enterpriseRealms`. The lint rejects a
+    # dedicated realm block without a `justification` field.
+    realm: genealogy-shared
+    enabled: true
+    # Tenant onboarding — sign-up is FORBIDDEN. Users are invited
+    # by `tenant-service` via a one-time email link. The `Register`
+    # flow executes `RegistrationUserCreation` only after the
+    # invite token is validated (custom execution, no SPI).
+    registrationAllowed: false
+    registrationEmailAsUsername: false
+    rememberMe: false
+    verifyEmail: true
+    loginWithEmailAllowed: true
+    duplicateEmailsAllowed: false
+    resetPasswordAllowed: true
+    editUsernameAllowed: false
+    # TLS — terminated at Kong / Istio ingress. The Keycloak
+    # server is in-cluster only; direct public access is blocked
+    # by NetworkPolicy (see `network-policies.yaml`).
+    sslRequired: external
+    # Token / session lifetimes — R2 §R2.3.
+    accessTokenLifespan: 1800          # 30 minutes
+    accessTokenLifespanForImplicitFlow: 900
+    ssoSessionIdleTimeout: 28800      # 8 hours
+    ssoSessionMaxLifespan: 43200      # 12 hours
+    ssoSessionIdleTimeoutRememberMe: 0
+    offlineSessionIdleTimeout: 2592000  # 30 days for refresh
+    accessCodeLifespan: 60
+    accessCodeLifespanUserAction: 300
+    accessCodeLifespanLogin: 1800
+    # Brute force protection — R2 + OWASP ASVS Level 2.
+    bruteForceProtected: true
+    bruteForceStrategy: MULTIPLE
+    permanentLockout: false
+    waitIncrementSeconds: 60
+    maxFailureWaitSeconds: 900
+    minimumQuickLoginWaitSeconds: 60
+    maxDeltaTimeSeconds: 43200
+    failureFactor: 5
+    # Password policy — R2 §R2.5 + NFR1 (OWASP ASVS Level 2).
+    # Min length 12, ≥ 1 upper + 1 lower + 1 digit + 1 symbol,
+    # no reuse of last 12 passwords, no username / email in
+    # password, hashing iterations ≥ 10000 (PBKDF2-SHA512).
+    passwordPolicy: "length(12) and upperCredential(1) and lowerCredential(1) and digit(1) and specialCharacter(1) and notUsername() and notEmail() and passwordHistory(12) and hashIterations(10000) and hashAlgorithm(pbkdf2-sha512)"
+    # Roles — tenant + tree + collaboration role taxonomy.
+    # Mapped from the OIDC `groups` claim by the `tenant-groups`
+    # protocol mapper (`client-configs.yaml`).
+    roles:
+      realm:
+        - name: offline_access
+          description: "Refresh token holder (RFC 6749 §1.5)."
+        - name: uma_authorization
+          description: "UMA audience role."
+    # Required actions — R2 §R2.4 verification + recovery.
+    requiredActions:
+      - name: VERIFY_EMAIL
+        providerId: VERIFY_EMAIL
+        enabled: true
+        defaultAction: true
+        priority: 10
+      - name: TERMS_AND_CONDITIONS
+        providerId: TERMS_AND_CONDITIONS
+        enabled: true
+        defaultAction: false
+        priority: 20
+      - name: UPDATE_PASSWORD
+        providerId: UPDATE_PASSWORD
+        enabled: true
+        defaultAction: false
+        priority: 30
+      - name: CONFIGURE_TOTP
+        providerId: CONFIGURE_TOTP
+        enabled: true
+        defaultAction: false
+        priority: 40
+      - name: WEBAUTHN_REGISTER
+        providerId: WEBAUTHN_REGISTER
+        enabled: true
+        defaultAction: false
+        priority: 50
+      - name: UPDATE_PROFILE
+        providerId: UPDATE_PROFILE
+        enabled: true
+        defaultAction: false
+        priority: 60
+    # Authentication flows — Authorization Code with PKCE is the
+    # only browser flow. Password grant + client_credentials are
+    # FORBIDDEN in this realm (R2 §R2.1).
+    authenticationFlows:
+      - name: browser
+        providerId: basic-flow
+        topLevel: true
+        builtIn: true
+        description: "Browser-based login (Authorization Code + PKCE)."
+        executions:
+          - name: auth-cookie
+            provider: auth-cookie
+            level: ALTERNATIVE
+            authenticator: "CookieAuthenticator"
+            authenticatorFlow: false
+            requirement: ALTERNATIVE
+            priority: 10
+          - name: auth-spnego
+            provider: auth-spnego
+            level: ALTERNATIVE
+            authenticator: "KerberosAuthenticator"
+            authenticatorFlow: false
+            requirement: DISABLED
+            priority: 20
+          - name: identity-provider-redirector
+            provider: identity-provider-redirector
+            level: ALTERNATIVE
+            authenticator: "IdentityProviderAuthenticator"
+            authenticatorFlow: false
+            requirement: ALTERNATIVE
+            priority: 30
+          - name: conditional-2fa
+            provider: conditional-2fa
+            level: CONDITIONAL
+            authenticatorFlow: true
+            requirement: REQUIRED
+            priority: 40
+      - name: direct-grant
+        providerId: basic-flow
+        topLevel: true
+        builtIn: true
+        description: "Resource Owner Password Credentials — FORBIDDEN. Disabled at realm level."
+        executions:
+          - name: direct-grant-validate-username
+            provider: direct-grant-validate-username
+            level: REQUIRED
+            authenticator: "DirectGrantAuthenticator"
+            requirement: DISABLED
+          - name: direct-grant-validate-password
+            provider: direct-grant-validate-password
+            level: REQUIRED
+            authenticator: "DirectGrantAuthenticator"
+            requirement: DISABLED
+      - name: reset-credentials
+        providerId: basic-flow
+        topLevel: true
+        builtIn: true
+        description: "Reset password (forgot password email)."
+      - name: registration
+        providerId: basic-flow
+        topLevel: true
+        builtIn: true
+        description: "Registration via invite token — never public."
+        executions:
+          - name: invitation-validation
+            provider: invitation-validation
+            level: REQUIRED
+            authenticator: "InvitationTokenValidator"
+            authenticatorFlow: false
+            requirement: REQUIRED
+            priority: 10
+          - name: registration-user-creation
+            provider: registration-user-creation
+            level: REQUIRED
+            authenticator: "RegistrationUserCreation"
+            authenticatorFlow: false
+            requirement: REQUIRED
+            priority: 20
+          - name: registration-profile-action
+            provider: registration-profile-action
+            level: REQUIRED
+            authenticator: "RegistrationProfile"
+            authenticatorFlow: false
+            requirement: REQUIRED
+            priority: 30
+          - name: registration-email-verification
+            provider: registration-email-verification
+            level: REQUIRED
+            authenticator: "RegistrationEmailVerification"
+            authenticatorFlow: false
+            requirement: REQUIRED
+            priority: 40
+      - name: mfa
+        # MFA conditional flow — sub-flow of `browser`.
+        # The flow is REQUIRED when the user is in a tenant with
+        # `mfaRequired = true` OR a realm role `require-mfa`.
+        providerId: basic-flow
+        topLevel: false
+        builtIn: true
+        description: "Multi-factor authentication (webauthn + otp)."
+        executions:
+          - name: webauthn-authenticator
+            provider: webauthn-authenticator
+            level: ALTERNATIVE
+            authenticator: "WebAuthnAuthenticator"
+            authenticatorFlow: false
+            requirement: ALTERNATIVE
+            priority: 10
+          - name: auth-otp-form
+            provider: auth-otp-form
+            level: ALTERNATIVE
+            authenticator: "OTPFormAuthenticator"
+            authenticatorFlow: false
+            requirement: ALTERNATIVE
+            priority: 20
+      - name: step-up
+        # Step-up flow — bound to the `keycloak-step-up`
+        # authenticator. Maximum age 5 minutes; required for admin
+        # actions (E16 / E11.5 support access) and DNA consent
+        # flows (E10.3).
+        providerId: basic-flow
+        topLevel: false
+        builtIn: true
+        description: "Step-up authentication for high-risk actions (admin + DNA)."
+        executions:
+          - name: step-up-authenticator
+            provider: step-up-authenticator
+            level: REQUIRED
+            authenticator: "StepUpAuthenticator"
+            authenticatorFlow: false
+            requirement: REQUIRED
+            priority: 10
+        stepUpMaxAgeSeconds: 300
+    # Browser auth flow headers — R2 §R2.1 + OIDC 1.0 §3.1.2.
+    browserFlowHeaders:
+      X-Frame-Options: DENY
+      X-Content-Type-Options: nosniff
+      Referrer-Policy: no-referrer
+      Strict-Transport-Security: "max-age=31536000; includeSubDomains"
+      Content-Security-Policy: "default-src 'self'; frame-ancestors 'none'"
+    # Internationalization — R18 §R18.1. UI supports en / fr / de /
+    # vi / es + RTL detection; keycloak stores the user's locale
+    # in the user profile.
+    internationalizationEnabled: true
+    supportedLocales:
+      - en
+      - fr
+      - de
+      - vi
+      - es
+      - ar
+      - he
+    defaultLocale: en
+    # Email — SMTP relay delegated to Vault (E2.6). The bootstrap
+    # Job reads the SMTP credentials from Vault and injects them
+    # at runtime; the realm export declares the SMTP host only.
+    smtpServer:
+      host: REPLACE_VIA_VAULT
+      port: 587
+      from: no-reply@genealogy.localhost
+      fromDisplayName: Genealogy Platform
+      ssl: false
+      starttls: true
+      # Authentication — the bootstrap Job wires `username` /
+      # `password` from the `keycloak-smtp-credentials` ESO Secret
+      # (path `secret/<env>/data/keycloak/smtp`).
+      auth:
+        usernameSource: vault
+        passwordSource: vault
+    # User profile — R2 §R2.5 + R18 §R18.2 (native script).
+    userProfile:
+      attributeGrouping:
+        - name: personal
+          displayHeader: "Personal"
+          displayDescription: "Personal information"
+          annotations: {}
+        - name: contact
+          displayHeader: "Contact"
+          displayDescription: "Contact information"
+          annotations: {}
+      attributes:
+        - name: username
+          displayName: Username
+          validators:
+            - name: length
+              config:
+                min: 3
+                max: 64
+            - name: pattern
+              config:
+                pattern: "^[a-zA-Z0-9_.\\-]+$"
+                error-message: "Username must be 3-64 chars (letters, digits, . _ -)"
+          permissions:
+            view: ["admin", "user"]
+            edit: ["admin", "user"]
+          multivalued: false
+        - name: email
+          displayName: Email
+          validators:
+            - name: length
+              config:
+                max: 255
+            - name: email
+              config: {}
+          permissions:
+            view: ["admin", "user"]
+            edit: ["admin", "user"]
+          multivalued: false
+        - name: firstName
+          displayName: First name
+          validators:
+            - name: length
+              config:
+                min: 1
+                max: 128
+          permissions:
+            view: ["admin", "user"]
+            edit: ["admin", "user"]
+          multivalued: false
+        - name: lastName
+          displayName: Last name
+          validators:
+            - name: length
+              config:
+                min: 1
+                max: 128
+          permissions:
+            view: ["admin", "user"]
+            edit: ["admin", "user"]
+          multivalued: false
+        - name: locale
+          displayName: Locale
+          validators:
+            - name: pattern
+              config:
+                pattern: "^[a-z]{2}(-[A-Z]{2})?$"
+          permissions:
+            view: ["admin", "user"]
+            edit: ["admin", "user"]
+          multivalued: false
