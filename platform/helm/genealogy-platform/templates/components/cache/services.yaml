@@ -1,0 +1,64 @@
+{{/*
+Valkey Service + Sentinel Service.
+
+The cache Service (port 6379) is the cache endpoint consumed
+by application code (BFF, media-service, openfga-cache,
+rate-limiter, abac-cache). It is cluster-internal only.
+
+The sentinel Service (port 26379) is reserved for the
+Sentinel-managed HA. The chart ships bitnami `valkey-sentinel`
+operators alongside the StatefulSet.
+*/}}
+{{- $cache := .Values.components.cache }}
+{{- if and $cache.enabled (eq $cache.provider "valkey") }}
+{{- $ns := "gp-data" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+  ports:
+    - name: tls
+      port: 6379
+      targetPort: tls
+      protocol: TCP
+    - name: sentinel
+      port: 26379
+      targetPort: sentinel
+      protocol: TCP
+    - name: metrics
+      port: 9121
+      targetPort: metrics
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-internal
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+  ports:
+    - name: tls
+      port: 6379
+      targetPort: tls
+      protocol: TCP
+{{- end }}

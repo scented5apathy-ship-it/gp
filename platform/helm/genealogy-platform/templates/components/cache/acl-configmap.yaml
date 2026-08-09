@@ -1,0 +1,44 @@
+{{/*
+Valkey ACL ConfigMap — the per-user ACL file referenced by
+the StatefulSet via `--aclfile`. The chart never inlines
+a literal password; the password is sourced from the
+`valkey-credentials` Secret (Vault-backed).
+
+The ACL file follows the Valkey / Redis 7 ACL syntax:
+  user <name> on > <password> ~<key-pattern> <commands>
+*/}}
+{{- $cache := .Values.components.cache }}
+{{- if and $cache.enabled (eq $cache.provider "valkey") }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-cache-valkey-acl
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    gp.genealogy/contract-only: "true"
+data:
+  users.acl: |
+    # E2.7 Valkey ACL — config-as-code.
+    # Per-tenant key namespace: every key MUST be prefixed by
+    # `gp:{tenant_pseudo_id}:`. The deep linter rejects any
+    # ACL that grants @admin to a service user.
+    #
+    # The password for each user is supplied via
+    # `requirepass` + the `valkey-credentials` Secret. The
+    # bootstrap Job (`cache-acl-init`) sets the per-user
+    # password via `ACL SETUSER`.
+
+    user web-bff on ~gp:*:session:* &* +@read -@admin
+    user media-service on ~gp:*:media:* &* +@read +set +del +expire -@admin
+    user genealogy-service on ~gp:*:genealogy:* &* +@read +set +del +expire -@admin
+    user search-service on ~gp:*:search:* &* +@read +set +del +expire -@admin
+    user rate-limiter on ~gp:*:rate:* &* +@read +set +del +expire +incr -@admin
+    user openfga-cache on ~gp:*:openfga:* &* +@read +set +del +expire -@admin
+    user abac-cache on ~gp:*:abac:* &* +@read +set +del +expire -@admin
+    user tenant-lookup on ~gp:*:tenant:* &* +@read +set +del +expire -@admin
+    user observability on ~gp:* &* +@read +info -@admin
+    user operator on ~* &* +@admin
+{{- end }}

@@ -230,10 +230,35 @@ temporal:
       type: CustomStringField
 
 # MinIO + bucket layout.
+#
+# Per `tasks.md` E2.7 + `design.md` §11 + §13 the local
+# profile runs MinIO (the on-prem + dev path). The bucket
+# policy + lifecycle + CORS + object lock posture is
+# declared in `platform/storage/bucket-policy.yaml`; the
+# `storage-bucket-init` Job applies it via `mc` at first
+# install. The deep linter
+# (`scripts/lint-s3-config.mjs`) enforces the contract.
 minio:
   image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+  # MC client image — same pin as `components.storage.mcImage`
+  # in `values.yaml` (E2.7 bootstrap Job).
+  mcImage: minio/mc:RELEASE.2024-10-13T15-34-59Z
   apiPort: 9000
   consolePort: 9001
+  # Region — local cluster always uses `local`. The chart
+  # never inlines a literal AWS region.
+  region: local
+  # CORS — dev allows the localhost origin only. Wildcard
+  # is forbidden per `privacy-and-legal-gate.md` §11.
+  corsAllowedOrigins:
+    - http://app.genealogy.localhost
+    - http://api.genealogy.localhost
+  # Object lock — enabled. The `dna-raw` bucket is set to
+  # compliance mode with 7-year retention.
+  objectLock: enabled
+  # Audit — every PutObject / DeleteObject / GetObject is
+  # logged to the OTel Collector (E2.10).
+  audit: enabled
   buckets:
     - name: media
       versioning: enabled
@@ -252,13 +277,44 @@ minio:
   rootPasswordEnv: MINIO_ROOT_PASSWORD
 
 # Valkey (Redis-compatible) cache / session / rate state.
+#
+# Per `tasks.md` E2.7 + `design.md` §3 + §13 Valkey carries
+# the cache / session / rate-state substrate. The deep
+# linter (`scripts/lint-s3-config.mjs`) enforces the per-class
+# TTL ceiling + the per-user ACL allowlist.
 valkey:
   image: valkey/valkey:7.2-alpine
   port: 6379
+  # Single replica on dev (no Sentinel HA).
+  replicas: 1
+  # Persistence — AOF + RDB. Cache is fail-safe, not
+  # source-of-truth.
+  persistence:
+    aof: true
+    aofFsync: everysec
+    rdbSnapshotMinutes: 5
+  # Memory limit + eviction policy.
+  maxmemory: 256Mi
+  maxmemoryPolicy: allkeys-lru
+  # ACL — per-user allowlist. The linter rejects `@admin`
+  # for service users (operator only).
+  aclRequired: true
+  # TTLs per cache class (matches
+  # `platform/storage/valkey-config.yaml.ttl`).
   ttl:
     sessionSeconds: 3600
+    sessionSecondsCeiling: 7200
     rateStateSeconds: 60
+    rateStateSecondsCeiling: 300
     cacheSeconds: 300
+    cacheSecondsCeiling: 1800
+    permissionDecisionSeconds: 30
+    permissionDecisionSecondsCeiling: 60
+    abacRedactionSeconds: 30
+    abacRedactionSecondsCeiling: 60
+  # Sentinel — disabled on dev (1 replica).
+  sentinel:
+    enabled: false
 
 # Flagsmith local container.
 flagsmith:

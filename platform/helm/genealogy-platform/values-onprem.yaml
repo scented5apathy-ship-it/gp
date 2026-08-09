@@ -72,7 +72,11 @@ components:
       tokenSecret: vault-bootstrap-token
     sealMode: transit
   storage:
-    driver: minio
+    # E2.7 — on-prem runs MinIO with the customer's
+    # bootstrap Vault cluster for the SSE-KMS key. Replica
+    # count is 1 + backup CronJob; DR runs on the customer's
+    # second site (ADR-E0.5-03 supersession).
+    provider: minio
     buckets:
       - media
       - media-quarantine
@@ -80,9 +84,23 @@ components:
       - import-export
     encryption: envelope
     versioning: enabled
+    replicas: 1
+    # On-prem never has a public Object store endpoint;
+    # CORS allowlist uses the customer's public-api host.
+    corsAllowedOrigins:
+      - https://app.customer.local
+      - https://api.customer.local
+    persistence:
+      storageClass: gp-data-ssd
+      size: 250Gi
   cache:
+    # E2.7 — on-prem runs Valkey (Redis-compatible) with
+    # 3 replicas + Sentinel HA. The customer's secret
+    # store backs the password Secret.
+    provider: valkey
     driver: valkey
     replicas: 3
+    maxmemory: "1Gi"
   featureFlags:
     driver: flagsmith
     replicas: 2

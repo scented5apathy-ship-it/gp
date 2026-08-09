@@ -128,21 +128,85 @@ services:
   minio:
     image: minio/minio:RELEASE.2024-10-13T13-34-11Z
     container_name: gp-minio
-    command: ["server", "/data", "--console-address", ":9001"]
+    # E2.7 — MinIO dev server. The local stack runs MinIO
+    # with object lock + CORS allowlist; the `storage-bucket-init`
+    # container applies the bucket policy (mirrored from
+    # `platform/storage/bucket-policy.yaml`) on first install.
+    command:
+      - "server"
+      - "/data"
+      - "--console-address=:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-genealogy}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_REGION: local
+      MINIO_BROWSER: "off"
+      MINIO_API_OBJECT_LOCK_API: "on"
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
       - minio-data:/data
+      - ../storage/s3-config.yaml:/minio/config/s3-config.yaml:ro
+      - ../storage/bucket-policy.yaml:/minio/config/bucket-policy.yaml:ro
+      - ../storage/compatibility-matrix.yaml:/minio/config/compatibility-matrix.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  storage-bucket-init:
+    # E2.7 — applies the bucket policy via `mc` against the
+    # local MinIO alias. Idempotent: every `mc` call is
+    # skipped if the resource already exists. The Job runs
+    # once at `docker compose up` time.
+    image: minio/mc:RELEASE.2024-10-13T15-34-59Z
+    container_name: gp-storage-bucket-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mc alias set local http://minio:9000 "${MINIO_ROOT_USER:-genealogy}" "${MINIO_ROOT_PASSWORD}"
+        for bucket in media media-quarantine dna-raw import-export; do
+          if ! mc ls "local/${bucket}" >/dev/null 2>&1; then
+            mc mb "local/${bucket}" --region=local
+          fi
+          mc version enable "local/${bucket}" || true
+        done
+        mc retention set --default COMPLIANCE 2555d local/dna-raw || true
+        echo "[storage-bucket-init] OK"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-genealogy}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    restart: "no"
 
   valkey:
+    # E2.7 — Valkey (Redis-compatible) dev server. The
+    # local stack runs single replica without TLS. The
+    # platform's source-of-truth file
+    # (`platform/storage/valkey-config.yaml`) is mounted
+    # read-only so the contract test sees the same config
+    # the chart applies.
     image: valkey/valkey:7.2-alpine
     container_name: gp-valkey
+    command:
+      - "valkey-server"
+      - "--maxmemory=256mb"
+      - "--maxmemory-policy=allkeys-lru"
+      - "--appendonly=yes"
+      - "--appendfsync=everysec"
+      - "--save=300,1"
+      - "--slowlog-log-slower-than=10000"
+      - "--slowlog-max-len=128"
     ports:
       - "6379:6379"
+    volumes:
+      - valkey-data:/data
+      - ../storage/valkey-config.yaml:/valkey/config/valkey-config.yaml:ro
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
@@ -248,4 +312,5 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  valkey-data:
   kafka-data:

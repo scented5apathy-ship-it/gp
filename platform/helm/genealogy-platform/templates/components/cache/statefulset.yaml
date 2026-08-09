@@ -1,0 +1,183 @@
+{{/*
+Valkey StatefulSet — Redis-compatible cache server.
+
+Per `tasks.md` E2.7 + `design.md` §3 + §13:
+  - master + replicas topology (Sentinel-managed HA)
+  - 3 replicas on SaaS + on-prem; 1 on dev
+  - TLS 1.2 minimum, AUTH + ACL
+  - Persistence is AOF everysec + RDB every 5 min
+  - No `noeviction` policy (allkeys-lru)
+  - Memory limit + per-replica maxmemory
+*/}}
+{{- $cache := .Values.components.cache }}
+{{- if and $cache.enabled (eq $cache.provider "valkey") }}
+{{- $image := $cache.image }}
+{{- $replicas := $cache.replicas }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/version: {{ $image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  serviceName: valkey-internal
+  replicas: {{ $replicas }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/version: {{ $image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: valkey
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: valkey
+          image: {{ include "genealogy-platform.image" (dict "image" $image) }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - "valkey-server"
+          args:
+            - "--requirepass=$(VALKEY_PASSWORD)"
+            - "--maxmemory={{ $cache.maxmemory }}"
+            - "--maxmemory-policy=allkeys-lru"
+            - "--appendonly=yes"
+            - "--appendfsync=everysec"
+            - "--save=300,1"
+            - "--tls-port=6379"
+            - "--port=0"
+            - "--tls-cert-file=/tls/tls.crt"
+            - "--tls-key-file=/tls/tls.key"
+            - "--tls-ca-cert-file=/tls/ca.crt"
+            - "--aclfile=/acl/users.acl"
+            - "--slowlog-log-slower-than=10000"
+            - "--slowlog-max-len=128"
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: valkey-credentials
+                  key: password
+          ports:
+            - name: tls
+              containerPort: 6379
+              protocol: TCP
+            - name: sentinel
+              containerPort: 26379
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "-a", "$(VALKEY_PASSWORD)", "--tls", "--cacert", "/tls/ca.crt", "ping"]
+            failureThreshold: {{ .Values.baseline.probes.readiness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.readiness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.readiness.initialDelaySeconds }}
+          livenessProbe:
+            exec:
+              command: ["valkey-cli", "-a", "$(VALKEY_PASSWORD)", "--tls", "--cacert", "/tls/ca.crt", "ping"]
+            failureThreshold: {{ .Values.baseline.probes.liveness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.liveness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.liveness.initialDelaySeconds }}
+          startupProbe:
+            exec:
+              command: ["valkey-cli", "-a", "$(VALKEY_PASSWORD)", "--tls", "--cacert", "/tls/ca.crt", "ping"]
+            failureThreshold: {{ .Values.baseline.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.startup.timeoutSeconds }}
+          resources:
+            requests:
+              cpu: {{ $cache.resources.requests.cpu | quote }}
+              memory: {{ $cache.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ $cache.resources.limits.cpu | quote }}
+              memory: {{ $cache.resources.limits.memory | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            - name: acl
+              mountPath: /acl
+              readOnly: true
+        - name: valkey-exporter
+          image: quay.io/oliver006/redis_exporter:v1.62.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--redis.addr=valkey://localhost:6379"
+            - "--redis.password=$(VALKEY_PASSWORD)"
+            - "--tls-server-name=valkey.gp-data.svc.cluster.local"
+            - "--web.listen-address=:9121"
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: valkey-credentials
+                  key: password
+          ports:
+            - name: metrics
+              containerPort: 9121
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 64Mi
+            limits:
+              cpu: "200m"
+              memory: 128Mi
+      volumes:
+        - name: tls
+          projected:
+            sources:
+              - secret:
+                  name: valkey-server-tls
+                  items:
+                    - key: tls.crt
+                      path: tls.crt
+                    - key: tls.key
+                      path: tls.key
+                    - key: ca.crt
+                      path: ca.crt
+        - name: acl
+          configMap:
+            name: genea-cache-valkey-acl
+            items:
+              - key: users.acl
+                path: users.acl
+                mode: 0644
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: genealogy-platform
+          app.kubernetes.io/component: cache
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp-data-ssd
+        resources:
+          requests:
+            storage: {{ $cache.persistence.size | default "10Gi" }}
+{{- end }}

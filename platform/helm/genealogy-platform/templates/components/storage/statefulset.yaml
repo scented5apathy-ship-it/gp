@@ -1,0 +1,153 @@
+{{/*
+MinIO server — StatefulSet running the upstream `minio/minio`
+container. Per ADR-E0.5-01 the pinned image is
+`minio/minio:RELEASE.2024-10-13T13-34-11Z`. The chart renders
+MinIO whenever `components.storage.provider: minio` is set;
+SaaS uses `provider: aws-s3` and bypasses the MinIO workload
+(the chart still mounts the bucket policy so the same
+prefixes are reachable via the AWS SDK).
+
+Per `tasks.md` E2.7 + `design.md` §11 + §13 the storage
+cluster carries:
+  - the S3 API on port 9000 (internal Service)
+  - the console on port 9001 (internal Service only)
+  - the per-bucket KMS key alias (Vault-backed)
+  - the audit log to the OTel Collector (E2.10)
+  - Prometheus scrape on `/minio/v2/metrics/cluster`
+  - Replica count per env (4 SaaS / 1 on-prem / 1 dev)
+*/}}
+{{- $storage := .Values.components.storage }}
+{{- if and $storage.enabled (eq $storage.provider "minio") }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/version: {{ $storage.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  serviceName: minio-internal
+  replicas: {{ $storage.replicas }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: storage
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: storage
+        app.kubernetes.io/version: {{ $storage.image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/minio/v2/metrics/cluster"
+    spec:
+      serviceAccountName: minio
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: minio
+          image: {{ include "genealogy-platform.image" (dict "image" $storage.image) }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - "server"
+            - "/data"
+            - "--address=:9000"
+            - "--console-address=:9001"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: rootUser
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: rootPassword
+            - name: MINIO_REGION
+              value: {{ .Values.global.region | default "ap-southeast-1" | quote }}
+            - name: MINIO_BROWSER
+              value: "off"
+            - name: MINIO_API_CORS_ALLOW_ORIGIN
+              value: {{ join "," $storage.corsAllowedOrigins | quote }}
+            # Object lock — always enabled. The bucket policy
+            # toggles per-bucket compliance vs governance.
+            - name: MINIO_API_OBJECT_LOCK_API
+              value: "on"
+            # Auditing — every PutObject / DeleteObject /
+            # GetObject hits the OTel Collector.
+            - name: MINIO_AUDIT_WEBHOOK_ENABLE
+              value: "on"
+            - name: MINIO_AUDIT_WEBHOOK_ENDPOINT
+              value: {{ $storage.auditEndpoint | quote }}
+          ports:
+            - name: api
+              containerPort: 9000
+              protocol: TCP
+            - name: console
+              containerPort: 9001
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+              scheme: HTTP
+            failureThreshold: {{ .Values.baseline.probes.readiness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.readiness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.readiness.initialDelaySeconds }}
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+              scheme: HTTP
+            failureThreshold: {{ .Values.baseline.probes.liveness.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.liveness.timeoutSeconds }}
+            initialDelaySeconds: {{ .Values.baseline.probes.liveness.initialDelaySeconds }}
+          startupProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+              scheme: HTTP
+            failureThreshold: {{ .Values.baseline.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.baseline.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.baseline.probes.startup.timeoutSeconds }}
+          resources:
+            requests:
+              cpu: {{ $storage.resources.requests.cpu | quote }}
+              memory: {{ $storage.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ $storage.resources.limits.cpu | quote }}
+              memory: {{ $storage.resources.limits.memory | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes: []
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: genealogy-platform
+          app.kubernetes.io/component: storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp-data-ssd
+        resources:
+          requests:
+            storage: {{ $storage.persistence.size | default "100Gi" }}
+{{- end }}

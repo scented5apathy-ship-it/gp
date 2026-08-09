@@ -153,7 +153,7 @@ _Requirements: R12, R17, R18, NFR1, NFR5, NFR7, NFR8_
   - Cloud KMS bọc key SaaS; Vault/on-premise key provider dùng cùng application contract.
   - Không đưa secret vào Git, Helm values, image, log hoặc Temporal payload.
 
-- [ ] E2.7 Cấu hình S3/MinIO và Valkey
+- [x] E2.7 Cấu hình S3/MinIO và Valkey
 
   - Chuẩn hóa bucket/prefix, encryption, lifecycle, versioning, CORS và signed URL behavior.
   - Dùng Valkey cho cache/session/rate state có TTL; không làm source of truth.

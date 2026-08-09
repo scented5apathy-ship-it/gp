@@ -1,0 +1,77 @@
+{{/*
+Valkey NetworkPolicy — default deny all Ingress + Egress;
+allow the platform workloads in `gp-services` / `gp-workers`
+/ `gp-bff` to reach the cache endpoint. Allow the metrics
+exporter to be scraped by Prometheus.
+*/}}
+{{- $cache := .Values.components.cache }}
+{{- if and $cache.enabled (eq $cache.provider "valkey") }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: valkey-default-deny
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: cache
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: valkey-allow-clients
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: cache
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-bff
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Prometheus scrape on the metrics port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 9121
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

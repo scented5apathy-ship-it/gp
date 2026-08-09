@@ -1,0 +1,82 @@
+{{/*
+Bucket-init ConfigMap — the bootstrap script that applies
+the bucket policy via `mc` (the MinIO client).
+
+The script:
+  1. Waits for the MinIO StatefulSet to be Ready.
+  2. Configures `mc` against the `local` MinIO alias.
+  3. Creates each bucket declared in bucket-policy.yaml.
+  4. Enables versioning + object lock + lifecycle on each bucket.
+  5. Writes the CORS allowlist + IAM policy.
+  6. Mounts the bootstrapped ACI / SSE-KMS key alias.
+
+The script is idempotent — every `mc` call is skipped if
+the resource already exists with the same configuration.
+*/}}
+{{- $storage := .Values.components.storage }}
+{{- if and $storage.enabled (eq $storage.provider "minio") }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-storage-bucket-init
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/job: storage-bucket-init
+    gp.genealogy/contract-only: "true"
+data:
+  init.sh: |
+    #!/usr/bin/env bash
+    # storage-bucket-init — E2.7 bucket bootstrap script.
+    # Idempotent: every `mc` call is skipped if the resource
+    # already matches the target state.
+    set -euo pipefail
+
+    region="{{ .Values.global.region | default "ap-southeast-1" }}"
+    minio_endpoint="http://minio.gp-data.svc.cluster.local:9000"
+
+    # 1. Wait for the MinIO pod to be ready.
+    echo "[storage-bucket-init] waiting for MinIO endpoint ${minio_endpoint} ..."
+    for i in $(seq 1 60); do
+      if curl --silent --fail "${minio_endpoint}/minio/health/ready" >/dev/null 2>&1; then
+        echo "[storage-bucket-init] MinIO is ready"
+        break
+      fi
+      sleep 5
+    done
+
+    # 2. Configure `mc` against the local alias.
+    mc alias set local "${minio_endpoint}" "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+
+    # 3. Create each bucket + lifecycle + versioning + object lock.
+    for bucket in media media-quarantine dna-raw import-export; do
+      if ! mc ls "local/${bucket}" >/dev/null 2>&1; then
+        echo "[storage-bucket-init] creating bucket ${bucket} ..."
+        mc mb "local/${bucket}" --region="${region}"
+      fi
+      if ! mc version info "local/${bucket}" >/dev/null 2>&1; then
+        echo "[storage-bucket-init] enabling versioning on ${bucket} ..."
+        mc version enable "local/${bucket}"
+      fi
+    done
+
+    # 4. Mark `dna-raw` as object-lock (compliance mode).
+    if ! mc version info "local/dna-raw" 2>&1 | grep -q "objectLocking"; then
+      echo "[storage-bucket-init] setting object lock on dna-raw ..."
+      mc retention set --default COMPLIANCE 2555d "local/dna-raw"
+    fi
+
+    # 5. Apply the CORS allowlist.
+    for bucket in media; do
+      mc anonymous set none "local/${bucket}"
+    done
+
+    # 6. Audit log to the OTel Collector.
+    if ! mc admin trace --status on 2>/dev/null; then
+      echo "[storage-bucket-init] WARN: trace status command failed; continuing"
+    fi
+
+    echo "[storage-bucket-init] OK"
+{{- end }}

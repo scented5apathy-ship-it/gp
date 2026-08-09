@@ -1,0 +1,54 @@
+# OWNERS — platform/storage (E2.7 S3/MinIO + Valkey)
+#
+# Per `tasks.md` E0.6 + `ownership-catalog.md` §3 + ADR §C #3,
+# this file mirrors `config/teams.yaml` and labels the
+# primary owner, secondary reviewer and on-call lead for
+# the S3/MinIO + Valkey platform components.
+primary: platform-primary
+secondary: "@genealogy/platform"
+on-call: sre-primary
+review-cadence: quarterly
+components:
+  - id: storage
+    name: S3/MinIO + bucket policy
+    primary: platform-primary
+    secondary: "@genealogy/platform"
+    on-call: sre-primary
+    syncs:
+      - dependency: dna-service
+        direction: "writes dna-raw/*"
+        contract: "E10.4 envelope encryption + Vault KMS key"
+      - dependency: media-service
+        direction: "writes media/* + media-quarantine/*"
+        contract: "E7.1 multipart + signed URL"
+      - dependency: import-export-service
+        direction: "writes import-export/*"
+        contract: "E9.4 signed download + audit"
+      - dependency: search-service
+        direction: "reads media/* thumbnails"
+        contract: "E8.2 authorized search"
+  - id: cache
+    name: Valkey (Redis-compatible)
+    primary: platform-secondary
+    secondary: "@genealogy/platform"
+    on-call: sre-secondary
+    syncs:
+      - dependency: web-bff
+        direction: "session lookup"
+        contract: "E3.5 trusted tenant context"
+      - dependency: openfga-cache
+        direction: "decision cache"
+        contract: "E3.4 TTL 30s + invalidation on tuple write"
+      - dependency: rate-limiter
+        direction: "rate-state bucket"
+        contract: "E2.2 Kong + service-side limiter"
+      - dependency: abac-cache
+        direction: "redaction cache"
+        contract: "E3.4 TTL 30s + invalidation on policy change"
+version-policy:
+  - component: minio
+    pin: "RELEASE.2024-10-13T13-34-11Z"
+    review: "2026-11-01"
+  - component: valkey
+    pin: "7.2-alpine"
+    review: "2026-11-01"

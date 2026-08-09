@@ -1,0 +1,195 @@
+# Valkey (Redis-compatible) configuration — E2.7 source-of-truth.
+#
+# Per `tasks.md` E2.7 ("Dùng Valkey cho cache/session/rate state
+# có TTL; không làm source of truth") + `design.md` §3 + §13,
+# the platform declares:
+#   - Valkey as the cache / session / rate-state substrate.
+#   - TTLs per cache class (session / rate state / cache).
+#   - Persistence posture (AOF + RDB snapshot, but
+#     cache-only — Valkey is NEVER the source of truth).
+#   - TLS 1.2 minimum + AUTH + ACL per service.
+#   - Sentinel-based HA on SaaS + on-prem (3 replicas).
+#   - Memory limit + eviction policy (allkeys-lru).
+#   - Replica-only reads for read-heavy workloads.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-cache-valkey-config
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # Valkey server configuration (E2.7 source-of-truth).
+    # The chart renders the upstream `valkey/valkey` image
+    # for on-prem + dev profiles; SaaS uses AWS ElastiCache
+    # for Valkey (mode-eligible via ADR-E0.5-03).
+    valkey:
+      # ADR-E0.5-01 baseline — Valkey 7.2-alpine.
+      image: "valkey/valkey:7.2-alpine"
+      # Port — 6379. Sentinel uses 26379.
+      port: 6379
+      sentinelPort: 26379
+      # Region pin — bucket keys + ACL replication are
+      # region-scoped (matches the bucket policy region).
+      region:
+        saas: "ap-southeast-1"
+        onprem: "ap-southeast-1"
+        dev: "local"
+      # TLS — minimum 1.2. The chart wires a cert-manager
+      # cert into the Pod.
+      tlsMinVersion: "tls12"
+      # AUTH — required. The password is sourced from a
+      # Kubernetes Secret (Vault-backed). The chart never
+      # inlines a literal password.
+      authRequired: true
+      # ACL — every service has its own user with a
+      # subcommand allowlist. The platform forbids `KEYS *`,
+      # `FLUSHDB`, `FLUSHALL`, `CONFIG SET`, `DEBUG`, `SHUTDOWN`.
+      # The deep linter rejects any ACL that grants
+      # `@admin` to a service user.
+      aclRequired: true
+      # Persistence — AOF (every-second fsync) + RDB
+      # snapshot every 5 minutes. Note: cache data is
+      # evictable by design; this is fail-safe, not
+      # source-of-truth.
+      persistence:
+        aof: true
+        aofFsync: "everysec"
+        rdbSnapshotMinutes: 5
+      # Replica configuration — read-heavy workloads read
+      # from replicas via `READONLY`.
+      replicas:
+        saas: 3
+        onprem: 3
+        dev: 1
+      # Sentinel — works at 3 replicas. The chart ships
+      # the bitnami `valkey-sentinel` image.
+      sentinel:
+        enabled: true
+        quorum: 2
+      # Memory limit — `maxmemory` is pinned per replica.
+      # `allkeys-lru` is the eviction policy. The deep
+      # linter rejects `noeviction` (silent OOM risk).
+      maxmemory:
+        saas: "2Gi"
+        onprem: "1Gi"
+        dev: "256Mi"
+      maxmemoryPolicy: "allkeys-lru"
+      # Slow log — slow queries beyond 10ms are logged.
+      slowLogThresholdMicros: 10000
+      slowLogMaxLen: 128
+      # Latency monitoring — Valkey 7.2 exposes
+      # `LATENCY` events. The chart wires the Prometheus
+      # exporter (`valkey_exporter`).
+      latencyMonitoringEnabled: true
+      # Client output buffer — modest defaults so a
+      # buffering client cannot OOM the server.
+      clientOutputBufferLimit:
+        normal: "0 0 0"
+        replica: "256mb 64mb 60"
+        pubsub: "32mb 8mb 60"
+      # Tenant-aware key namespace — every key MUST be
+      # prefixed by `gp:{tenant_pseudo_id}:`. The platform
+      # standardises the prefix length to 14 chars + 1
+      # delimiter.
+      tenantKeyPrefix: "gp:{tenant_pseudo_id}:"
+      # PII / DNA / raw content — never stored in Valkey.
+      forbiddenKeyPatterns:
+        - "*raw_dna*"
+        - "*password*"
+        - "*apiKey*"
+        - "*token*"
+        - "*private_key*"
+        - "*ssn*"
+        - "*credit_card*"
+    # TTLs per cache class — the deep linter enforces the
+    # ceiling per class. The bucket policy file pins the
+    # defaults.
+    ttl:
+      # Session — 1 hour. Refreshed on every authenticated
+      # request. The web-bff service owns the session.
+      sessionSeconds: 3600
+      sessionSecondsCeiling: 7200
+      # Rate-state — 60s. The Kong rate-limiter plugin
+      # (E2.2) reads its own bucket; Valkey backs the
+      # service-side rate limiter for sensitive endpoints.
+      rateStateSeconds: 60
+      rateStateSecondsCeiling: 300
+      # Generic cache — 5 minutes. OpenFGA decision cache
+      # (E3.4) + tenant lookup (E3.5) + search projection
+      # cache (E8.2) all use this class.
+      cacheSeconds: 300
+      cacheSecondsCeiling: 1800
+      # Permission decision — 30s. OpenFGA allows this
+      # short TTL because invalidation on tuple write is
+      # mandatory (E3.4).
+      permissionDecisionSeconds: 30
+      permissionDecisionSecondsCeiling: 60
+      # ABAC redaction cache — 30s. Same invalidation rules.
+      abacRedactionSeconds: 30
+      abacRedactionSecondsCeiling: 60
+    # Connection pool — the platform's `valkey-client`
+    # library enforces a per-pod pool of 16 + 8 idle.
+    # This is exposed for the Java services via
+    # `application.yml` + the contract test asserts the
+    # values.
+    connectionPool:
+      maxTotal: 16
+      maxIdle: 8
+      minIdle: 2
+      # Block when exhausted — false. The client fails
+      # fast (cache miss path is the slow path; never
+      # block the request thread).
+      blockWhenExhausted: false
+      # Test on borrow — true. Detects stale connections.
+      testOnBorrow: true
+    # Required ACL users — the chart's bootstrap Job
+    # creates one user per workload class. The deep
+    # linter rejects any ACL that grants @admin.
+    requiredUsers:
+      - name: "web-bff"
+        commands: "@read"
+        keys: "gp:*:session:*"
+        purpose: "session store"
+      - name: "media-service"
+        commands: "@read +set +del +expire"
+        keys: "gp:*:media:*"
+        purpose: "rate limiter + cache"
+      - name: "genealogy-service"
+        commands: "@read +set +del +expire"
+        keys: "gp:*:genealogy:*"
+        purpose: "tree projection cache"
+      - name: "search-service"
+        commands: "@read +set +del +expire"
+        keys: "gp:*:search:*"
+        purpose: "authorized search projection"
+      - name: "rate-limiter"
+        commands: "@read +incr +expire"
+        keys: "gp:*:rate:*"
+        purpose: "service-side rate limiter"
+      - name: "openfga-cache"
+        commands: "@read +set +del +expire"
+        keys: "gp:*:openfga:*"
+        purpose: "OpenFGA decision cache (E3.4)"
+      - name: "abac-cache"
+        commands: "@read +set +del +expire"
+        keys: "gp:*:abac:*"
+        purpose: "ABAC redaction cache (E3.4)"
+      - name: "tenant-lookup"
+        commands: "@read +set +del +expire"
+        keys: "gp:*:tenant:*"
+        purpose: "tenant membership lookup (E3.5)"
+      - name: "observability"
+        commands: "@read +info"
+        keys: "gp:*"
+        purpose: "Prometheus scrape + slow log"
+      # Valkey admin user — reserved for the bootstrap Job
+      # + the runbook operator. NOT exposed to domain code.
+      - name: "operator"
+        commands: "@admin"
+        keys: "*"
+        purpose: "bootstrap Job + runbook access"

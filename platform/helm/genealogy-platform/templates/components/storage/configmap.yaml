@@ -1,0 +1,51 @@
+{{/*
+S3/MinIO config ConfigMaps — mirror the four source-of-truth
+files into the cluster. The chart never mutates the
+source-of-truth files; the contracts are enforced by the
+deep linter + the byte-identity check on the mirror.
+*/}}
+{{- $storage := .Values.components.storage }}
+{{- $sourceServer := printf "files/%s" ($storage.configPaths.s3Config | default "storage/s3-config.yaml") }}
+{{- $sourceBuckets := printf "files/%s" ($storage.configPaths.bucketPolicy | default "storage/bucket-policy.yaml") }}
+{{- $sourceCompat := printf "files/%s" ($storage.configPaths.compatibilityMatrix | default "storage/compatibility-matrix.yaml") }}
+{{- if $storage.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-storage-s3-config
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+    {{- (.Files.Get $sourceServer) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-storage-bucket-policy
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+    {{- (.Files.Get $sourceBuckets) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-storage-compatibility-matrix
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |-
+    {{- (.Files.Get $sourceCompat) | nindent 4 }}
+{{- end }}

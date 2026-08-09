@@ -327,6 +327,143 @@ data:
         policy (E10.2 isolation); emergency revoke is wired to
         E10.5 consent revocation.
 {{- end }}
+{{- if eq $name "storage" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storage-contract-stub
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # S3/MinIO + bucket policy contract (E2.7).
+    responsibilities:
+      - S3-compatible object storage (MinIO on-prem + dev; AWS S3 on SaaS)
+      - per-bucket versioning + lifecycle + encryption (SSE-KMS) + CORS
+      - per-bucket IAM policy (workload SA → read/write)
+      - per-bucket prefix template with `{tenant_pseudo_id}`
+      - cross-region replication on SaaS (RPO ≤ 15 min)
+      - object lock (compliance mode) on dna-raw + import-export
+      - signed URL TTL ceiling (1 hour, 15 min for export)
+      - audit log to OTel Collector (E2.10)
+      - byte-identity mirror of source-of-truth files
+    buckets:
+      - media            # tree media (images, audio, video, PDF)
+      - media-quarantine # uploads waiting for scan
+      - dna-raw          # raw DNA (E10.4, isolated bucket)
+      - import-export    # GEDCOM / CSV / JSON / PDF bundles
+    bucket_invariants:
+      publicAccessBlock: enforced
+      kmsKeyAliasRequired: true
+      prefixTenantPseudoIdRequired: true
+      corsWildcardForbidden: true
+    forbidden:
+      - public READ ACL on the `media` bucket
+      - raw tenant UUID in any prefix template
+      - raw DNA outside `dna-raw/*`
+      - raw PII outside `media-quarantine/*`
+      - signed URL TTL > 1 hour (export bucket ≤ 15 min)
+      - literal AWS access key / secret key in any values file
+      - CORS wildcard origin
+    signed_url_ttl_ceiling_seconds: 3600
+    export_signed_url_ttl_seconds: 900
+    replication:
+      saas: enabled     # cross-region active-passive
+      onprem: customer-managed
+      dev: disabled
+    s3_api_operations:
+      - PutObject
+      - GetObject
+      - HeadObject
+      - DeleteObject
+      - CopyObject
+      - CreateMultipartUpload
+      - UploadPart
+      - CompleteMultipartUpload
+      - AbortMultipartUpload
+      - ListObjectVersions
+      - GetObjectSignedUrl
+      - PutObjectSignedUrl
+      - PutBucketLifecycle
+      - PutBucketCors
+      - PutObjectWithSSEKMS
+      - PutObjectLegalHold
+      - PutObjectRetention
+    notes:
+      - Source-of-truth: platform/storage/{s3-config,bucket-policy,compatibility-matrix}.yaml.
+      - Mirror: platform/helm/genealogy-platform/files/storage/*.yaml.
+      - Bootstrap Job: templates/components/storage/bucket-init-job.yaml.
+      - Compatibility test: scripts/check-s3-compatibility.mjs (Testcontainers + aws-sdk-client-mock).
+      - Domain code binds to com.genealogy.platform.storage.ObjectStorageProvider;
+        runtime provider is selected via the per-env `storage.provider` value.
+      - The dna-raw bucket is E10.2 isolated (separate IAM, separate KMS key,
+        separate NetworkPolicy). The web-bff has NO access to dna-raw.
+      - Lifecycle: media 365d; media-quarantine 30d; dna-raw indefinite (legal hold);
+        import-export 30d.
+{{- end }}
+{{- if eq $name "cache" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cache-contract-stub
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    gp.genealogy/contract-only: "true"
+data:
+  contract: |
+    # Valkey (Redis-compatible) cache contract (E2.7).
+    responsibilities:
+      - cache / session / rate-state substrate (NOT source of truth)
+      - Sentinel-managed HA (3 replicas SaaS + on-prem)
+      - per-class TTL ceiling (session 1h, rate 60s, cache 5m, decision 30s)
+      - per-user ACL with subcommand allowlist
+      - tenant-aware key namespace `gp:{tenant_pseudo_id}:*`
+      - persistence AOF + RDB snapshot (fail-safe, not source-of-truth)
+      - Prometheus exporter on port 9121
+    required_users:
+      - web-bff
+      - media-service
+      - genealogy-service
+      - search-service
+      - rate-limiter
+      - openfga-cache
+      - abac-cache
+      - tenant-lookup
+      - observability
+      - operator       # @admin; bootstrap + runbook only
+    ttl_ceilings:
+      sessionSeconds: 7200
+      rateStateSeconds: 300
+      cacheSeconds: 1800
+      permissionDecisionSeconds: 60
+      abacRedactionSeconds: 60
+    maxmemoryPolicy: allkeys-lru
+    forbidden:
+      - storing raw DNA / raw PII / raw sensitive content
+      - key pattern containing `password`, `apiKey`, `token`, `private_key`
+      - `@admin` ACL for any service user (operator only)
+      - `noeviction` policy (silent OOM risk)
+      - `KEYS *` / `FLUSHDB` / `FLUSHALL` from service users
+    notes:
+      - Source-of-truth: platform/storage/valkey-config.yaml.
+      - Mirror: platform/helm/genealogy-platform/files/storage/valkey-config.yaml.
+      - Domain code binds to com.genealogy.platform.cache.CacheClient;
+        the adapter is `valkey-client` on on-prem + dev and
+        `elasticache-client` on SaaS.
+      - Cache data is fail-safe only — domain services must
+        rebuild cache state from PostgreSQL on Valkey restart.
+      - The openfga-cache / abac-cache users MUST be invalidated
+        on tuple write / policy change (E3.4). The cache client
+        publishes `gp.cache.invalidate` events to Kafka on key
+        delete.
+{{- end }}
 {{- if eq $name "observability" }}
 ---
 apiVersion: v1

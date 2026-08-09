@@ -1,0 +1,251 @@
+# S3/MinIO bucket policy — E2.7 source-of-truth.
+#
+# Per `tasks.md` E2.7 + `design.md` §11 + `privacy-and-legal-gate.md`
+# §5 + §6 the platform declares:
+#   - 4 buckets: `media`, `media-quarantine`, `dna-raw`,
+#     `import-export` (matches the `components.storage.buckets`
+#     list in `values.yaml`).
+#   - Per-bucket: versioning, lifecycle, encryption (KMS key
+#     alias), CORS, prefix layout, IAM policy, replication
+#     posture, object lock.
+#   - Forbidden objects: raw DNA outside `dna-raw/*`, raw
+#     PII outside `media-quarantine/*`, signed URLs without
+#     expiry, public READ ACL on `media` (delivery always
+#     goes through OpenFGA + ABAC).
+#   - Tenant isolation: every bucket is prefixed by
+#     `tenant_pseudo_id`; the raw tenant UUID NEVER appears
+#     in a key.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-storage-bucket-policy
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # Bucket policy — config-as-code. The chart's bootstrap
+    # Job (`storage-bucket-init`) applies this file via `mc`.
+    # Source-of-truth: this file. The chart mirrors the file
+    # into `files/storage/bucket-policy.yaml`.
+    buckets:
+      # -----------------------------------------------------------
+      # media — public-read CACHE via CDN, but every read is
+      # gated by OpenFGA + ABAC on the application side. The
+      # bucket NEVER carries a public ACL.
+      # -----------------------------------------------------------
+      - name: media
+        purpose: "tree media (images, audio, video, PDF)"
+        versioning: enabled
+        # Lifecycle — 1 year default; quarantined uploads are
+        # dropped after 30 days (managed by the
+        # `media-quarantine` bucket).
+        lifecycleDays: 365
+        # Encryption — alias pinned to the
+        # `MEDIA.DERIVATIVE` data class (E2.6 KMS matrix).
+        kmsKeyAlias: "alias/genea-s3-media-derivative"
+        # CORS — browser PUT for multipart upload + GET for
+        # preview. The chart's bootstrap Job enforces the same
+        # list as the storage server.
+        cors:
+          - id: "web-app"
+            allowedOrigins:
+              - "https://app.genealogy.local"
+            allowedMethods:
+              - GET
+              - HEAD
+            allowedHeaders:
+              - "*"
+            exposeHeaders:
+              - ETag
+              - x-amz-version-id
+            maxAgeSeconds: 3000
+        # Prefix layout — every object is namespaced by
+        # tenant_pseudo_id (opaque pseudonymous ID).
+        prefixTemplate: "{tenant_pseudo_id}/tree/{tree_id}/{asset_id}/{filename}"
+        # IAM — only the `media-service` SA + the scan workers
+        # SA + `media-derive` worker SA may write. The web-bff
+        # has READ-only on this bucket.
+        iam:
+          writers:
+            - sa: "media-service"
+              namespace: "gp-services"
+            - sa: "media-scan"
+              namespace: "gp-workers"
+            - sa: "media-derive"
+              namespace: "gp-workers"
+          readers:
+            - sa: "web-bff"
+              namespace: "gp-bff"
+            - sa: "search-service"
+              namespace: "gp-services"
+        # Replication — required on SaaS only.
+        replication:
+          enabled: true
+          replicaRegion: "ap-southeast-2"
+        # Object lock — OFF for media. Audit is satisfied by
+        # the OTel access log (E2.10).
+        objectLock: false
+        # Public ACL — FORBIDDEN. Delivery always goes
+        # through the BFF + ABAC.
+        publicAccessBlock: enforced
+        # Forbidden — bucket must NOT hold raw DNA / raw
+        # sensitive PII / signed URL secrets.
+        forbiddenPrefixes:
+          - "dna/"
+          - "import-export/secrets/"
+      # -----------------------------------------------------------
+      # media-quarantine — every upload lands here first.
+      # Media-service scan worker (ClamAV + Tika + FFmpeg)
+      # verifies + moves READY assets to `media`.
+      # -----------------------------------------------------------
+      - name: media-quarantine
+        purpose: "uploads waiting for malware scan + metadata extraction"
+        versioning: enabled
+        # Lifecycle — 30 days. Scan worker deletes after
+        # promotion; abandoned uploads are garbage-collected
+        # by Temporal (E7.1).
+        lifecycleDays: 30
+        kmsKeyAlias: "alias/genea-s3-media-derivative"
+        # CORS — none. Quarantine is service-only.
+        cors: []
+        # Prefix layout — upload session ID + part number.
+        prefixTemplate: "{tenant_pseudo_id}/upload/{session_id}/{part_id}"
+        iam:
+          # Only the `media-service` + the upload worker
+          # write. The web-bff holds a WRITE-only token
+          # bound to an upload session (E7.1 signed URL).
+          writers:
+            - sa: "media-service"
+              namespace: "gp-services"
+            - sa: "web-bff"
+              namespace: "gp-bff"
+          readers:
+            - sa: "media-scan"
+              namespace: "gp-workers"
+            - sa: "media-derive"
+              namespace: "gp-workers"
+        # No replication — local / same-az durability is
+        # enough; the worker copies to `media` on success.
+        replication:
+          enabled: false
+        objectLock: false
+        publicAccessBlock: enforced
+        # Forbidden — bucket must NOT hold DNA / media.
+        forbiddenPrefixes:
+          - "dna/"
+          - "media/"
+      # -----------------------------------------------------------
+      # dna-raw — raw DNA. Isolated bucket (E10.2). Object
+      # lock enabled (compliance mode). One KMS key per
+      # `GENETIC.RAW` data class.
+      # -----------------------------------------------------------
+      - name: dna-raw
+        purpose: "raw DNA uploads (E10.4) — envelope-encrypted"
+        versioning: enabled
+        # Lifecycle — INDEFINITE legal hold semantics. The
+        # lifecycle rule never expires objects; deletion
+        # goes through E10.5 consent revocation.
+        lifecycleDays: 0
+        kmsKeyAlias: "alias/genea-s3-genetic-raw"
+        cors: []
+        # Prefix layout — opaque IDs only. The raw
+        # subject_id NEVER appears in the key.
+        prefixTemplate: "{tenant_pseudo_id}/dna/{kit_id}/{asset_id}"
+        iam:
+          # Only the `dna-service` + the `dna-raw` worker
+          # write. The web-bff has NO access (E10.2 isolation).
+          writers:
+            - sa: "dna-service"
+              namespace: "gp-services"
+            - sa: "dna-raw"
+              namespace: "gp-workers"
+          readers:
+            - sa: "dna-service"
+              namespace: "gp-services"
+            - sa: "dna-match"
+              namespace: "gp-workers"
+        # Replication — required on SaaS (RPO ≤ 15 min, DNA
+        # bucket is the highest-priority for DR).
+        replication:
+          enabled: true
+          replicaRegion: "ap-southeast-2"
+        # Object lock — COMPLIANCE mode for the legal hold.
+        # Retention is enforced via the `GENETIC.RAW` data class.
+        objectLock: true
+        objectLockMode: "COMPLIANCE"
+        objectLockRetentionDays: 2555
+        # Public ACL — forbidden.
+        publicAccessBlock: enforced
+        # Forbidden — bucket must NOT hold media / cache /
+        # signed URL secrets.
+        forbiddenPrefixes:
+          - "media/"
+          - "cache/"
+      # -----------------------------------------------------------
+      # import-export — GEDCOM / CSV / JSON / PDF / media
+      # bundles. WORM-style retention for the audit log.
+      # -----------------------------------------------------------
+      - name: import-export
+        purpose: "import bundles (quarantine) + export bundles (signed download)"
+        versioning: enabled
+        # Lifecycle — 30 days for imports; 30 days for
+        # exports (download audit + manual cleanup).
+        lifecycleDays: 30
+        kmsKeyAlias: "alias/genea-s3-secret"
+        cors: []
+        # Prefix layout — opaque job ID + direction.
+        prefixTemplate: "{tenant_pseudo_id}/transfer/{job_id}/{direction}/{filename}"
+        iam:
+          writers:
+            - sa: "import-export-service"
+              namespace: "gp-services"
+          readers:
+            - sa: "import-export-service"
+              namespace: "gp-services"
+            - sa: "web-bff"
+              namespace: "gp-bff"
+        # Replication — optional on SaaS (export bundles are
+        # regenerated on demand).
+        replication:
+          enabled: false
+        # Object lock — COMPLIANCE mode for the 30-day
+        # audit window after export.
+        objectLock: true
+        objectLockMode: "COMPLIANCE"
+        objectLockRetentionDays: 30
+        publicAccessBlock: enforced
+        # Signed URL — exports sign for ≤ 15 min (E9.4
+        # privacy-aware export).
+        signedUrlMaxTtlSeconds: 900
+        signedUrlRequiredHeaders:
+          - "x-amz-meta-tenant-pseudo-id"
+        # Forbidden — bucket must NOT hold raw DNA / raw PII.
+        forbiddenPrefixes:
+          - "dna/"
+          - "media/persons/{person_id}/raw/"
+    # Bucket-wide invariants — the deep linter enforces these
+    # even if a per-bucket entry accidentally drifts.
+    invariants:
+      # Every bucket MUST enable public-access-block.
+      publicAccessBlockRequired: true
+      # Every bucket MUST use a KMS key alias (no plaintext).
+      kmsKeyAliasRequired: true
+      # Every bucket MUST declare a prefix template that
+      # includes `{tenant_pseudo_id}`.
+      prefixTenantPseudoIdRequired: true
+      # Buckets MUST NOT include raw tenant UUID / raw PII /
+      # raw DNA in the prefix template.
+      rawIdentifierPrefixesForbidden:
+        - "tenant_id="
+        - "person_id="
+        - "user_id="
+        - "raw_dna/"
+      # Signed URL TTL ceiling — 1 hour. The export bucket
+      # overrides to 15 minutes.
+      signedUrlMaxTtlSecondsCeiling: 3600
+      # CORS wildcard forbidden.
+      corsWildcardForbidden: true

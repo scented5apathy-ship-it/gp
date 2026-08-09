@@ -1,0 +1,176 @@
+# Prometheus alert rules for S3/MinIO (E2.7).
+#
+# Per `tasks.md` E2.7 + ADR-E0.5-01 the S3-compatible storage
+# cluster must be observable. The SLI sources are:
+#   - MinIO node-level metrics on `/minio/v2/metrics/cluster`
+#     and `/minio/v2/metrics/bucket` (exposed on port 9000).
+#   - MinIO audit log events (PutObject / DeleteObject /
+#     GetObject) — wired through the OTel Collector (E2.10).
+#   - MinIO replication lag (cross-region active-passive
+#     on SaaS).
+#   - Bucket-init Job events (`storage-bucket-init`).
+#   - S3 API error rate (5xx) + signed URL TTL violations.
+#
+# The rules below mirror the istio + temporal + vault rule
+# groups in `platform/observability/alerts/`: severity
+# ladder (warning → critical), `for:` clause tuned per
+# severity, and `runbook_url` pointing at `runbook/s3.md`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-s3-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/version: "RELEASE.2024-10-13T13-34-11Z"
+    gp.genealogy/contract-only: "true"
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    # -----------------------------------------------------------------
+    # S3/MinIO availability — the canonical SLO SLI from
+    # `ownership-catalog.md` §3 (99.9%, HEAD p95 < 100 ms).
+    # -----------------------------------------------------------------
+    - name: s3.availability
+      interval: 30s
+      rules:
+        - alert: S3ServerDown
+          expr: up{job="minio"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: storage
+            slo: storage.availability
+          annotations:
+            summary: "MinIO/S3 server is unreachable"
+            description: "Prometheus has not been able to scrape the MinIO server for 2m. Object storage GET / PUT will fail across the platform."
+            runbook_url: "https://runbooks.genealogy.local/s3#server-down"
+        - alert: S3HeadLatencyHigh
+          expr: histogram_quantile(0.95, sum(rate(minio_s3_requests_duration_seconds_bucket{api="HeadObject"}[5m])) by (le)) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            component: storage
+            slo: storage.availability
+          annotations:
+            summary: "S3 HEAD p95 > 100ms"
+            description: "Object HEAD latency has been above 100ms p95 for 5m. Investigate the MinIO disk + KMS provider."
+            runbook_url: "https://runbooks.genealogy.local/s3#head-latency"
+        - alert: S3HeadLatencyCritical
+          expr: histogram_quantile(0.95, sum(rate(minio_s3_requests_duration_seconds_bucket{api="HeadObject"}[5m])) by (le)) > 0.5
+          for: 5m
+          labels:
+            severity: critical
+            component: storage
+            slo: storage.availability
+          annotations:
+            summary: "S3 HEAD p95 > 500ms"
+            description: "Object HEAD latency has been above 500ms p95 for 5m. The media preview pipeline will be impacted."
+            runbook_url: "https://runbooks.genealogy.local/s3#head-latency"
+    # -----------------------------------------------------------------
+    # S3/MinIO API errors — 5xx rate + 403 (signed URL
+    # violation).
+    # -----------------------------------------------------------------
+    - name: s3.api-errors
+      interval: 30s
+      rules:
+        - alert: S3ServerErrorRateHigh
+          expr: sum(rate(minio_s3_requests_total{status_code=~"5.."}[5m])) by (api) / sum(rate(minio_s3_requests_total[5m])) by (api) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+            component: storage
+          annotations:
+            summary: "S3 5xx error rate > 1%"
+            description: "S3 5xx error rate for api={{ $labels.api }} has been > 1% for 5m."
+            runbook_url: "https://runbooks.genealogy.local/s3#api-errors"
+        - alert: S3ServerErrorRateCritical
+          expr: sum(rate(minio_s3_requests_total{status_code=~"5.."}[5m])) by (api) / sum(rate(minio_s3_requests_total[5m])) by (api) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+            component: storage
+          annotations:
+            summary: "S3 5xx error rate > 5%"
+            description: "S3 5xx error rate for api={{ $labels.api }} has been > 5% for 5m. Investigate the MinIO cluster immediately."
+            runbook_url: "https://runbooks.genealogy.local/s3#api-errors"
+        - alert: S3SignedUrlTtlViolation
+          expr: increase(minio_audit_s3_signed_url_ttl_violation_total[5m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+            component: storage
+          annotations:
+            summary: "S3 signed URL TTL violation"
+            description: "The platform audit log detected a signed URL TTL > 1 hour. This violates `bucket-policy.yaml` invariants."
+            runbook_url: "https://runbooks.genealogy.local/s3#signed-url-ttl"
+    # -----------------------------------------------------------------
+    # S3/MinIO storage capacity — disk pressure + free space.
+    # -----------------------------------------------------------------
+    - name: s3.capacity
+      interval: 60s
+      rules:
+        - alert: S3StorageLowDisk
+          expr: minio_node_disk_used_bytes / minio_node_disk_total_bytes > 0.85
+          for: 10m
+          labels:
+            severity: warning
+            component: storage
+          annotations:
+            summary: "MinIO disk usage > 85%"
+            description: "MinIO node {{ $labels.server }} has used > 85% of its disk. Expand the PVC or run lifecycle."
+            runbook_url: "https://runbooks.genealogy.local/s3#low-disk"
+        - alert: S3StorageNoDisk
+          expr: minio_node_disk_used_bytes / minio_node_disk_total_bytes > 0.95
+          for: 5m
+          labels:
+            severity: critical
+            component: storage
+          annotations:
+            summary: "MinIO disk usage > 95%"
+            description: "MinIO node {{ $labels.server }} has used > 95% of its disk. Uploads will start failing."
+            runbook_url: "https://runbooks.genealogy.local/s3#low-disk"
+    # -----------------------------------------------------------------
+    # S3/MinIO replication (SaaS only).
+    # -----------------------------------------------------------------
+    - name: s3.replication
+      interval: 60s
+      rules:
+        - alert: S3ReplicationLagHigh
+          expr: max by (bucket) (minio_s3_replication_pending_bytes) > 1073741824
+          for: 15m
+          labels:
+            severity: warning
+            component: storage
+          annotations:
+            summary: "S3 replication lag > 1 GiB"
+            description: "Bucket {{ $labels.bucket }} has > 1 GiB of pending replication data. RPO may be at risk."
+            runbook_url: "https://runbooks.genealogy.local/s3#replication-lag"
+        - alert: S3ReplicationLagCritical
+          expr: max by (bucket) (minio_s3_replication_pending_bytes) > 10737418240
+          for: 15m
+          labels:
+            severity: critical
+            component: storage
+          annotations:
+            summary: "S3 replication lag > 10 GiB"
+            description: "Bucket {{ $labels.bucket }} has > 10 GiB of pending replication data. RPO violated."
+            runbook_url: "https://runbooks.genealogy.local/s3#replication-lag"
+    # -----------------------------------------------------------------
+    # Bucket-init Job (Helm-hook).
+    # -----------------------------------------------------------------
+    - name: s3.bootstrap
+      interval: 60s
+      rules:
+        - alert: S3BootstrapJobFailed
+          expr: kube_job_status_failed{job_name="storage-bucket-init"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: storage
+          annotations:
+            summary: "storage-bucket-init Job failed"
+            description: "The storage-bucket-init Job has failed. The bucket policy is not applied; check the Job log + the bucket-policy.yaml file."
+            runbook_url: "https://runbooks.genealogy.local/s3#bootstrap-failed"

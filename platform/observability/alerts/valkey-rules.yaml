@@ -1,0 +1,179 @@
+# Prometheus alert rules for Valkey (Redis-compatible) — E2.7.
+#
+# Per `tasks.md` E2.7 + ADR-E0.5-01 the Valkey cluster must
+# be observable. The SLI sources are:
+#   - Valkey exporter metrics on port 9121
+#     (`valkey_up`, `valkey_memory_used_bytes`,
+#     `valkey_commands_total`, `valkey_keyspace_hits_total`,
+#     `valkey_keyspace_misses_total`, `valkey_slowlog_length`).
+#   - Sentinel metrics (master / replica state).
+#   - ACL authentication failures.
+#   - Connection pool exhaustion (per service).
+#
+# The rules below mirror the istio + temporal + vault + s3
+# rule groups in `platform/observability/alerts/`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-valkey-rules
+  namespace: gp-observability
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/version: "7.2-alpine"
+    gp.genealogy/contract-only: "true"
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    # -----------------------------------------------------------------
+    # Valkey availability — the canonical SLO SLI from
+    # `ownership-catalog.md` §3 (99.9%, GET p95 < 5 ms).
+    # -----------------------------------------------------------------
+    - name: valkey.availability
+      interval: 30s
+      rules:
+        - alert: ValkeyServerDown
+          expr: up{job="valkey"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            component: cache
+            slo: cache.availability
+          annotations:
+            summary: "Valkey server is unreachable"
+            description: "Prometheus has not been able to scrape the Valkey exporter for 1m. Cache miss path is now the slow path; investigate immediately."
+            runbook_url: "https://runbooks.genealogy.local/valkey#server-down"
+        - alert: ValkeySentinelNoMaster
+          expr: count(valkey_sentinel_master_status == 0) > 0
+          for: 30s
+          labels:
+            severity: critical
+            component: cache
+          annotations:
+            summary: "Valkey Sentinel has no master"
+            description: "Sentinel cannot find a master. The cluster is in a no-master state; failover is required."
+            runbook_url: "https://runbooks.genealogy.local/valkey#no-master"
+        - alert: ValkeyGetLatencyHigh
+          expr: histogram_quantile(0.95, sum(rate(valkey_command_duration_seconds_bucket{command="get"}[5m])) by (le)) > 0.005
+          for: 5m
+          labels:
+            severity: warning
+            component: cache
+            slo: cache.availability
+          annotations:
+            summary: "Valkey GET p95 > 5ms"
+            description: "Valkey GET latency has been above 5ms p95 for 5m. Investigate memory pressure + connection pool exhaustion."
+            runbook_url: "https://runbooks.genealogy.local/valkey#get-latency"
+        - alert: ValkeyGetLatencyCritical
+          expr: histogram_quantile(0.95, sum(rate(valkey_command_duration_seconds_bucket{command="get"}[5m])) by (le)) > 0.020
+          for: 5m
+          labels:
+            severity: critical
+            component: cache
+            slo: cache.availability
+          annotations:
+            summary: "Valkey GET p95 > 20ms"
+            description: "Valkey GET latency has been above 20ms p95 for 5m. The platform cache layer is degraded."
+            runbook_url: "https://runbooks.genealogy.local/valkey#get-latency"
+    # -----------------------------------------------------------------
+    # Valkey memory + eviction.
+    # -----------------------------------------------------------------
+    - name: valkey.memory
+      interval: 60s
+      rules:
+        - alert: ValkeyMemoryHigh
+          expr: valkey_memory_used_bytes / valkey_max_memory_bytes > 0.80
+          for: 10m
+          labels:
+            severity: warning
+            component: cache
+          annotations:
+            summary: "Valkey memory usage > 80%"
+            description: "Valkey used memory on {{ $labels.instance }} has been > 80% of maxmemory for 10m. Eviction will start affecting hit ratio."
+            runbook_url: "https://runbooks.genealogy.local/valkey#memory-high"
+        - alert: ValkeyMemoryCritical
+          expr: valkey_memory_used_bytes / valkey_max_memory_bytes > 0.95
+          for: 5m
+          labels:
+            severity: critical
+            component: cache
+          annotations:
+            summary: "Valkey memory usage > 95%"
+            description: "Valkey used memory on {{ $labels.instance }} has been > 95% of maxmemory for 5m. Hit ratio is degraded."
+            runbook_url: "https://runbooks.genealogy.local/valkey#memory-high"
+        - alert: ValkeyEvictionsHigh
+          expr: rate(valkey_evicted_keys_total[5m]) > 100
+          for: 10m
+          labels:
+            severity: warning
+            component: cache
+          annotations:
+            summary: "Valkey eviction rate > 100 keys/s"
+            description: "Valkey is evicting > 100 keys/s. The hit ratio will drop; investigate which key class is filling memory."
+            runbook_url: "https://runbooks.genealogy.local/valkey#evictions"
+    # -----------------------------------------------------------------
+    # Valkey cache hit ratio — the canonical SLO from
+    # `scale-and-slo.md` §5 (≥ 85% target).
+    # -----------------------------------------------------------------
+    - name: valkey.hit-ratio
+      interval: 60s
+      rules:
+        - alert: ValkeyHitRatioLow
+          expr: rate(valkey_keyspace_hits_total[10m]) / (rate(valkey_keyspace_hits_total[10m]) + rate(valkey_keyspace_misses_total[10m])) < 0.85
+          for: 15m
+          labels:
+            severity: warning
+            component: cache
+            slo: cache.hit_ratio
+          annotations:
+            summary: "Valkey hit ratio < 85%"
+            description: "Valkey hit ratio has been < 85% for 15m. The platform cache is no longer absorbing read load."
+            runbook_url: "https://runbooks.genealogy.local/valkey#hit-ratio"
+        - alert: ValkeyHitRatioCritical
+          expr: rate(valkey_keyspace_hits_total[10m]) / (rate(valkey_keyspace_hits_total[10m]) + rate(valkey_keyspace_misses_total[10m])) < 0.50
+          for: 15m
+          labels:
+            severity: critical
+            component: cache
+            slo: cache.hit_ratio
+          annotations:
+            summary: "Valkey hit ratio < 50%"
+            description: "Valkey hit ratio has been < 50% for 15m. Cache is effectively bypassed; backend pressure is high."
+            runbook_url: "https://runbooks.genealogy.local/valkey#hit-ratio"
+    # -----------------------------------------------------------------
+    # Valkey connection pool + ACL.
+    # -----------------------------------------------------------------
+    - name: valkey.access
+      interval: 30s
+      rules:
+        - alert: ValkeyConnectionsHigh
+          expr: valkey_connected_clients > 5000
+          for: 5m
+          labels:
+            severity: warning
+            component: cache
+          annotations:
+            summary: "Valkey connected clients > 5000"
+            description: "Valkey has > 5000 connected clients on {{ $labels.instance }}. Connection pool exhaustion risk."
+            runbook_url: "https://runbooks.genealogy.local/valkey#connections"
+        - alert: ValkeyAclAuthFailures
+          expr: increase(valkey_authentication_failures_total[5m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+            component: cache
+          annotations:
+            summary: "Valkey ACL authentication failures"
+            description: "The platform audit log detected Valkey ACL authentication failures. Investigate which workload is misconfigured."
+            runbook_url: "https://runbooks.genealogy.local/valkey#acl-failures"
+        - alert: ValkeySlowLogHigh
+          expr: valkey_slowlog_length > 50
+          for: 10m
+          labels:
+            severity: warning
+            component: cache
+          annotations:
+            summary: "Valkey slow log length > 50"
+            description: "Valkey has accumulated > 50 slow queries. Investigate which command is slow + which key class it targets."
+            runbook_url: "https://runbooks.genealogy.local/valkey#slow-log"

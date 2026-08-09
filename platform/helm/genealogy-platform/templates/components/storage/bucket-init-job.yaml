@@ -1,0 +1,77 @@
+{{/*
+Bucket-init Helm-hook Job — applies the bucket policy.
+
+Runs on every `helm upgrade` (pre-install, pre-upgrade). The
+script is idempotent. The Job is small + fast: it waits
+for the MinIO pod + applies the bucket policy + exits.
+*/}}
+{{- $storage := .Values.components.storage }}
+{{- if and $storage.enabled (eq $storage.provider "minio") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-bucket-init
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/job: storage-bucket-init
+    gp.genealogy/contract-only: "true"
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: storage
+        app.kubernetes.io/job: storage-bucket-init
+    spec:
+      serviceAccountName: storage-bucket-init
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mc
+          image: {{ $storage.mcImage.repository }}:{{ $storage.mcImage.tag }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/init.sh"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: rootUser
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: rootPassword
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 128Mi
+            limits:
+              cpu: "500m"
+              memory: 512Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: genea-storage-bucket-init
+            items:
+              - key: init.sh
+                path: init.sh
+                mode: 0755
+{{- end }}

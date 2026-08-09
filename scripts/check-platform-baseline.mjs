@@ -970,4 +970,208 @@ if (existsSync(valuesPath)) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// E2.7 — S3/MinIO + Valkey runtime invariants (static check;
+// `scripts/lint-s3-config.mjs` runs the deep YAML validation).
+// ---------------------------------------------------------------------------
+const STORAGE_DIR = join(ROOT, "platform", "storage");
+const STORAGE_FILES = [
+  join(STORAGE_DIR, "s3-config.yaml"),
+  join(STORAGE_DIR, "bucket-policy.yaml"),
+  join(STORAGE_DIR, "compatibility-matrix.yaml"),
+  join(STORAGE_DIR, "valkey-config.yaml"),
+];
+const storageTemplates = join(HELM_DIR, "templates", "components", "storage");
+const cacheTemplates = join(HELM_DIR, "templates", "components", "cache");
+const REQUIRED_STORAGE_TEMPLATES = [
+  "statefulset.yaml",
+  "services.yaml",
+  "serviceaccounts.yaml",
+  "secrets.yaml",
+  "configmap.yaml",
+  "bucket-init-configmap.yaml",
+  "bucket-init-job.yaml",
+  "network-policies.yaml",
+];
+const REQUIRED_CACHE_TEMPLATES = [
+  "statefulset.yaml",
+  "services.yaml",
+  "serviceaccounts.yaml",
+  "secrets.yaml",
+  "acl-configmap.yaml",
+  "configmap.yaml",
+  "network-policies.yaml",
+];
+
+for (const f of STORAGE_FILES) {
+  if (!existsSync(f)) {
+    fail(`E2.7 source-of-truth file missing — ${relative(ROOT, f)}`);
+  }
+}
+
+for (const tpl of REQUIRED_STORAGE_TEMPLATES) {
+  const p = join(storageTemplates, tpl);
+  if (!existsSync(p)) {
+    fail(`E2.7 storage helm template missing — ${relative(ROOT, p)}`);
+  }
+}
+
+for (const tpl of REQUIRED_CACHE_TEMPLATES) {
+  const p = join(cacheTemplates, tpl);
+  if (!existsSync(p)) {
+    fail(`E2.7 cache helm template missing — ${relative(ROOT, p)}`);
+  }
+}
+
+if (existsSync(valuesPath)) {
+  const v = readFileSync(valuesPath, "utf8");
+  // ADR-E0.5-01 baseline pin (MinIO RELEASE +
+  // Valkey 7.2-alpine). The image references are split
+  // across `repository:` + `tag:` lines; the regex tolerates
+  // either a single-line reference or a multi-line block.
+  if (!/minio\/minio[\s\S]*?RELEASE\.2024-10-13T13-34-11Z/.test(v)) {
+    fail("values.yaml must pin MinIO image to RELEASE.2024-10-13T13-34-11Z (ADR-E0.5-01)");
+  }
+  if (!/valkey\/valkey[\s\S]*?7\.2-alpine/.test(v)) {
+    fail("values.yaml must pin Valkey image to 7.2-alpine (ADR-E0.5-01)");
+  }
+  // Source-of-truth ConfigMap paths.
+  for (const path of [
+    "s3Config:",
+    "bucketPolicy:",
+    "compatibilityMatrix:",
+  ]) {
+    if (!new RegExp(`${path}\\s*storage/`).test(v)) {
+      fail(`values.yaml must declare components.storage.configPaths.${path} (E2.7 §1)`);
+    }
+  }
+  if (!/configPath:\s*storage\/valkey-config\.yaml/.test(v)) {
+    fail("values.yaml must declare components.cache.configPath (E2.7 §6)");
+  }
+  // Bucket list — must match `bucket-policy.yaml`.
+  for (const bucket of ["media", "media-quarantine", "dna-raw", "import-export"]) {
+    if (!new RegExp(`-\\s*${bucket}\\s*$`, "m").test(v)) {
+      fail(`values.yaml must declare bucket '${bucket}' in components.storage.buckets (E2.7 §1)`);
+    }
+  }
+  // CORS allowlist — wildcard is forbidden.
+  if (/\bcorsAllowedOrigins:\s*\[\s*"\s*\*\s*"/.test(v) || /\b-\s*\*\s*$/.test(v)) {
+    fail("values.yaml must not declare a wildcard corsAllowedOrigins (E2.7 §2)");
+  }
+  // MaxmemoryPolicy — `allkeys-lru` is the only allowed
+  // value (no `noeviction`). The value is quoted in the
+  // chart values; the regex tolerates either form.
+  if (!/maxmemoryPolicy:\s*["']?allkeys-lru["']?/.test(v)) {
+    fail("values.yaml must declare components.cache.maxmemoryPolicy: allkeys-lru (E2.7 §6)");
+  }
+}
+
+// Alert rules must cover the 5 E2.7 signal classes for S3 + 4
+// for Valkey.
+if (!existsSync(ALERTS_DIR) || !existsSync(join(ALERTS_DIR, "s3-rules.yaml"))) {
+  fail("platform/observability/alerts/s3-rules.yaml missing (E2.7 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR, "s3-rules.yaml"), "utf8");
+  for (const alert of [
+    "S3ServerDown",
+    "S3HeadLatencyHigh",
+    "S3HeadLatencyCritical",
+    "S3ServerErrorRateHigh",
+    "S3ServerErrorRateCritical",
+    "S3SignedUrlTtlViolation",
+    "S3StorageLowDisk",
+    "S3StorageNoDisk",
+    "S3ReplicationLagHigh",
+    "S3ReplicationLagCritical",
+    "S3BootstrapJobFailed",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/s3-rules.yaml missing alert '${alert}' (E2.7)`);
+    }
+  }
+}
+
+if (!existsSync(ALERTS_DIR) || !existsSync(join(ALERTS_DIR, "valkey-rules.yaml"))) {
+  fail("platform/observability/alerts/valkey-rules.yaml missing (E2.7 alert contract)");
+} else {
+  const r = readFileSync(join(ALERTS_DIR, "valkey-rules.yaml"), "utf8");
+  for (const alert of [
+    "ValkeyServerDown",
+    "ValkeySentinelNoMaster",
+    "ValkeyGetLatencyHigh",
+    "ValkeyGetLatencyCritical",
+    "ValkeyMemoryHigh",
+    "ValkeyMemoryCritical",
+    "ValkeyEvictionsHigh",
+    "ValkeyHitRatioLow",
+    "ValkeyHitRatioCritical",
+    "ValkeyConnectionsHigh",
+    "ValkeyAclAuthFailures",
+    "ValkeySlowLogHigh",
+  ]) {
+    if (!new RegExp(`alert:\\s*${alert}\\b`).test(r)) {
+      fail(`platform/observability/alerts/valkey-rules.yaml missing alert '${alert}' (E2.7)`);
+    }
+  }
+}
+
+// Per-env overrides — the storage provider must be pinned.
+// dev / onprem uses `minio` + `valkey`; saas uses
+// `aws-s3` + `aws-elasticache`.
+for (const envFile of REQUIRED_ENV_VALUES) {
+  const p = join(HELM_DIR, envFile);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, "utf8");
+  const envName = basename(envFile, ".yaml").replace(/^values-/, "");
+  if (envName === "saas") {
+    if (!/provider:\s*aws-s3/.test(text)) {
+      fail(`${envFile} must declare components.storage.provider: aws-s3 (E2.7 §3)`);
+    }
+    if (!/provider:\s*aws-elasticache/.test(text)) {
+      fail(`${envFile} must declare components.cache.provider: aws-elasticache (E2.7 §3)`);
+    }
+  } else {
+    if (!/provider:\s*minio/.test(text)) {
+      fail(`${envFile} must declare components.storage.provider: minio (E2.7 §3)`);
+    }
+    if (!/provider:\s*valkey/.test(text)) {
+      fail(`${envFile} must declare components.cache.provider: valkey (E2.7 §3)`);
+    }
+  }
+}
+
+// Profile.yaml + docker-compose must declare the ADR-E0.5-01
+// pins + the E2.7 service entries.
+if (existsSync(join(LOCAL_DIR, "profile.yaml"))) {
+  const p = readFileSync(join(LOCAL_DIR, "profile.yaml"), "utf8");
+  if (!/image:\s*minio\/minio:RELEASE\.2024-10-13T13-34-11Z/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin MinIO image to RELEASE.2024-10-13T13-34-11Z (ADR-E0.5-01)",
+    );
+  }
+  if (!/mcImage:\s*minio\/mc:RELEASE\.2024-10-13T15-34-59Z/.test(p)) {
+    fail(
+      "platform/local/profile.yaml must pin the MinIO MC client image (E2.7 bucket-init Job)",
+    );
+  }
+  if (!/image:\s*valkey\/valkey:7\.2-alpine/.test(p)) {
+    fail("platform/local/profile.yaml must pin Valkey image to 7.2-alpine (ADR-E0.5-01)");
+  }
+}
+
+const composePath = join(LOCAL_DIR, "docker-compose.yml");
+if (existsSync(composePath)) {
+  const compose = readFileSync(composePath, "utf8");
+  // E2.7 adds `storage-bucket-init` service.
+  if (!/^  storage-bucket-init:/m.test(compose)) {
+    fail("docker-compose.yml must declare the 'storage-bucket-init' service (E2.7)");
+  }
+  // MinIO + Valkey must reference env vars for secrets.
+  if (!/MINIO_ROOT_USER/.test(compose) || !/MINIO_ROOT_PASSWORD/.test(compose)) {
+    fail(
+      "docker-compose.yml must reference MINIO_ROOT_USER / MINIO_ROOT_PASSWORD env vars (E2.7 §1)",
+    );
+  }
+}
+
 finish();

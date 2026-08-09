@@ -1,0 +1,64 @@
+{{/*
+MinIO + bucket-init Services.
+
+The API Service (port 9000) is the S3 endpoint consumed by
+application code (BFF, media-service, dna-service,
+import-export-service, search-service). It is cluster-internal
+only — public traffic reaches S3 via the Kong public-api
+plugin (E2.2) which signs the request and forwards through
+Istio strict mTLS.
+
+The console Service (port 9001) is reserved for the
+operator console. It is reachable only from the
+`platform-primary` / `sre-primary` workstation via the
+bastion VPN — never from the public ingress.
+*/}}
+{{- $storage := .Values.components.storage }}
+{{- if and $storage.enabled (eq $storage.provider "minio") }}
+{{- $ns := "gp-data" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-internal
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+      protocol: TCP
+    - name: console
+      port: 9001
+      targetPort: console
+      protocol: TCP
+{{- end }}

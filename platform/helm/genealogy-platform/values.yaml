@@ -668,19 +668,145 @@ components:
         cpu: 500m
         memory: 512Mi
   storage:
-    # S3/MinIO + bucket policy (E2.7).
-    driver: minio
+    # E2.7 — S3/MinIO + bucket policy. The chart renders the
+    # upstream `minio/minio` StatefulSet on on-prem + dev;
+    # SaaS uses managed AWS S3 (provider: aws-s3). The four
+    # source-of-truth ConfigMaps (`platform/storage/*.yaml`)
+    # are mirrored into `files/storage/` and mounted into
+    # the StatefulSet + the `storage-bucket-init` Helm-hook
+    # Job. The deep linter (`scripts/lint-s3-config.mjs`)
+    # enforces:
+    #   - s3-config.yaml pins MinIO RELEASE
+    #     2024-10-13T13-34-11Z (ADR-E0.5-01);
+    #   - bucket-policy.yaml carries 4 buckets with versioning
+    #     + lifecycle + KMS key alias + IAM + CORS;
+    #   - no public READ ACL on the `media` bucket;
+    #   - no raw tenant UUID / raw PII / raw DNA in any prefix
+    #     template;
+    #   - signed URL TTL ≤ 1 hour (export bucket ≤ 15 min);
+    #   - no literal AWS access key / secret key in any file.
+    enabled: true
+    # `provider` selects which workload to render:
+    #   - `minio`  → StatefulSet (on-prem + dev)
+    #   - `aws-s3` → managed AWS S3 (SaaS, ADR-E0.5-03)
+    provider: minio
+    # Bucket list — must match `bucket-policy.yaml.buckets`.
+    # The linter rejects a drift between the values list and
+    # the source-of-truth list.
     buckets:
       - media
       - media-quarantine
       - dna-raw
       - import-export
+    # Server posture — defaults to MinIO on-prem defaults.
     encryption: envelope
     versioning: enabled
+    # Image pin — ADR-E0.5-01 baseline (MinIO
+    # RELEASE.2024-10-13T13-34-11Z).
+    image:
+      repository: minio/minio
+      tag: RELEASE.2024-10-13T13-34-11Z
+      registry: docker.io
+    mcImage:
+      repository: minio/mc
+      tag: RELEASE.2024-10-13T15-34-59Z
+      registry: docker.io
+    # CORS allowlist — restricted to the platform public
+    # origins. Wildcard is forbidden per
+    # `privacy-and-legal-gate.md` §11.
+    corsAllowedOrigins:
+      - https://app.genealogy.local
+      - https://api.genealogy.local
+      - https://public-api.genealogy.local
+    # OTel audit endpoint (E2.10).
+    auditEndpoint: "http://otel-collector.gp-observability.svc.cluster.local:4318/v1/audit"
+    # Replica count — per-env values files override.
+    replicas: 1
+    # Persistence — local cache + MinIO data on the gp-data
+    # StorageClass (encrypted-at-rest per ADR-E0.5-02 +
+    # `privacy-and-legal-gate.md` §6).
+    persistence:
+      storageClass: gp-data-ssd
+      size: 100Gi
+    # Resources — sized for SaaS / on-prem (3+ replicas).
+    # The dev values file overrides to a single replica +
+    # smaller requests.
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    # Source-of-truth list of ConfigMaps mirrored from
+    # `platform/storage/`. The chart mounts them into
+    # the StatefulSet + the `storage-bucket-init` Helm-hook
+    # Job.
+    configPaths:
+      s3Config: storage/s3-config.yaml
+      bucketPolicy: storage/bucket-policy.yaml
+      compatibilityMatrix: storage/compatibility-matrix.yaml
+    # Bucket-init Job resources.
+    bucketInitResources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   cache:
-    # Valkey (Redis-compatible) for cache/session/rate state (E2.7).
+    # E2.7 — Valkey (Redis-compatible) for cache / session /
+    # rate state. The chart renders the upstream
+    # `valkey/valkey` StatefulSet on on-prem + dev; SaaS
+    # uses AWS ElastiCache for Valkey (provider: aws-elasticache).
+    # The four source-of-truth files
+    # (`platform/storage/valkey-config.yaml`) are mirrored
+    # into `files/storage/`. The deep linter enforces:
+    #   - valkey-config.yaml pins Valkey 7.2-alpine
+    #     (ADR-E0.5-01);
+    #   - per-user ACL forbids `@admin` for service users;
+    #   - forbiddenKeyPatterns forbids raw DNA / password /
+    #     token storage;
+    #   - maxmemoryPolicy is `allkeys-lru` (no `noeviction`);
+    #   - per-class TTL ceilings enforced.
+    enabled: true
+    # `provider` selects which workload to render:
+    #   - `valkey`         → StatefulSet (on-prem + dev)
+    #   - `aws-elasticache` → managed (SaaS, ADR-E0.5-03)
+    provider: valkey
+    # Legacy alias preserved for the dev profile.
     driver: valkey
     replicas: 2
+    # Image pin — ADR-E0.5-01 baseline (Valkey 7.2-alpine).
+    image:
+      repository: valkey/valkey
+      tag: "7.2-alpine"
+      registry: docker.io
+    # Maximum memory per replica. Per-env values files
+    # override (SaaS = 2Gi, on-prem = 1Gi, dev = 256Mi).
+    maxmemory: "1Gi"
+    # Memory limit + eviction policy. The linter rejects
+    # `noeviction`.
+    maxmemoryPolicy: "allkeys-lru"
+    # Persistence — AOF + RDB snapshot.
+    persistence:
+      storageClass: gp-data-ssd
+      size: 10Gi
+    # Sentinel — works at 3 replicas. Disabled on dev (1
+    # replica).
+    sentinel:
+      enabled: true
+      quorum: 2
+    # Resources — sized for on-prem (3 replicas).
+    resources:
+      requests:
+        cpu: "200m"
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # Source-of-truth file.
+    configPath: storage/valkey-config.yaml
   featureFlags:
     # Flagsmith + OpenFeature (E2.8).
     driver: flagsmith

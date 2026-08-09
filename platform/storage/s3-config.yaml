@@ -1,0 +1,142 @@
+# S3/MinIO server configuration — E2.7 source-of-truth.
+#
+# Per `tasks.md` E2.7 + `design.md` §11 + §13 the platform
+# declares:
+#   - S3-compatible storage via MinIO for on-prem + local dev
+#     and via AWS S3 (ADR-E0.5-03 candidate) for SaaS.
+#   - A single `ObjectStorageProvider` contract so domain code
+#     never branches on cloud vs on-prem.
+#   - Bucket / prefix / lifecycle / encryption / CORS / signed
+#     URL posture declared in `bucket-policy.yaml` (sibling
+#     file, mirrored byte-identical into the chart).
+#   - Compatibility matrix between cloud S3 and MinIO in
+#     `compatibility-matrix.yaml`.
+#
+# The deep linter `scripts/lint-s3-config.mjs` enforces:
+#   - MinIO RELEASE pin (chart always renders the upstream
+#     `minio/minio` image for on-prem + dev profiles).
+#   - Region pinned to the per-env region (saas =
+#     ap-southeast-1; on-prem = ap-southeast-1 default; dev =
+#     local).
+#   - TLS 1.2 minimum on every listener (public + console).
+#   - `browser` CORS allowlist is restricted to the platform
+#     public-api origin + the web-app domain (no wildcard).
+#   - Prometheus telemetry enabled on the MinIO endpoint.
+#   - Replication factor is 4 SaaS / 1 on-prem minimum / 1 dev.
+#   - No literal AWS access key / secret key in any values file.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-storage-s3-config
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # S3-compatible server configuration (E2.7 source-of-truth).
+    # The chart renders MinIO whenever `provider: minio` is set
+    # in the umbrella values; SaaS uses `provider: aws-s3` and
+    # bypasses the MinIO workload (the chart still mounts the
+    # bucket policy so the same prefixes are reachable).
+    s3:
+      # ADR-E0.5-01 baseline — MinIO RELEASE.2024-10-13T13-34-11Z.
+      # On-prem + dev profiles pin this image; SaaS uses managed
+      # S3 + the AWS S3 SDK (no MinIO workload).
+      minioImage: "minio/minio:RELEASE.2024-10-13T13-34-11Z"
+      # MC client image — used by the bootstrap Job to apply
+      # the bucket policy + lifecycle + CORS + replication
+      # configuration. Same pin as the server.
+      mcImage: "minio/mc:RELEASE.2024-10-13T15-34-59Z"
+      # Region pin — bucket keys + lifecycle rules are
+      # region-scoped. SaaS gets the AWS region; on-prem gets
+      # the customer's region; dev gets a placeholder.
+      region:
+        saas: "ap-southeast-1"
+        onprem: "ap-southeast-1"
+        dev: "local"
+      # Console port — admin UI. The chart exposes it only on
+      # the cluster-internal Service (NetworkPolicy deny
+      # public ingress).
+      consolePort: 9001
+      # API port — S3 endpoint exposed behind Istio + Kong.
+      apiPort: 9000
+      # TLS minimum — TLS 1.2 minimum, TLS 1.3 preferred. The
+      # Kong policy (E2.2) enforces the same posture on the
+      # public edge.
+      tlsMinVersion: "tls12"
+      # CORS allowlist — the platform restricts browser
+      # cross-origin access to the PWA + public-api hosts only.
+      # Wildcard is forbidden per `privacy-and-legal-gate.md`
+      # §11. The deep linter rejects an empty or wildcard
+      # allowlist.
+      corsAllowedOrigins:
+        - "https://app.genealogy.local"
+        - "https://api.genealogy.local"
+        - "https://public-api.genealogy.local"
+      # CORS methods — only GET/HEAD/PUT for browser-driven
+      # multipart uploads. DELETE is forbidden (lifecycle /
+      # GC jobs only).
+      corsAllowedMethods:
+        - GET
+        - HEAD
+        - PUT
+      # CORS headers — the platform only exposes the headers
+      # the SDK + browser need for signed URL + ETag.
+      corsExposeHeaders:
+        - ETag
+        - x-amz-version-id
+        - x-amz-request-id
+      # Object retention defaults — applied to every bucket
+      # that does not carry an explicit `lifecycleDays`.
+      defaultLifecycleDays: 365
+      # Versioning — every bucket is versioned by default.
+      # `import-export` opts into per-object versioning for
+      # legal hold (E9.4).
+      versioning: enabled
+      # Object lock — DNA bucket only. This is wired into the
+      # per-bucket policy in `bucket-policy.yaml`.
+      objectLock:
+        enabled: true
+        compliantMode: true
+        # Max retention 7 years — covers Wyndham-style audit
+        # / DPA retention. The `dna-raw` bucket overrides
+        # this with `legalHold: true` (indefinite).
+        maxRetentionDays: 2555
+      # Prometheus telemetry — MinIO exposes node-level
+      # metrics on `/minio/v2/metrics/cluster` and
+      # `/minio/v2/metrics/bucket`. The ServiceMonitor is
+      # shipped by the chart.
+      prometheusEnabled: true
+      # Scan interval — bucket lifecycle scanner runs every
+      # 7 days. Smaller values increase backend pressure.
+      scanIntervalDays: 7
+      # Audit — every PutObject / DeleteObject / GetObject is
+      # logged to the OTel Collector (E2.10). The deep
+      # linter rejects `audit: disabled` (privacy / DPIA
+      # require medium fidelity).
+      audit: enabled
+      # Server-side encryption — KMS-managed. The chart
+      # wires the Vault / cloud KMS key ID through the
+      # per-env values file (`seal.kmsKeyId` is the Vault
+      # seal; the S3 KMS key is the `storage.kmsKeyId`).
+      serverSideEncryption:
+        mode: "aws:kms"
+        # Per-bucket KMS key overrides live in
+        # `bucket-policy.yaml`.
+        defaultKeyId: "alias/genea-s3-root"
+      # Replication — required on SaaS (`replicas: 4`) for
+      # RPO ≤ 15 min; on-prem uses 1 replica + external
+      # backup; dev uses 1 replica.
+      replicas:
+        saas: 4
+        onprem: 1
+        dev: 1
+      # Storage class — buckets are created on the
+      # `gp-data-ssd` encrypted StorageClass (E2.1).
+      storageClass: "gp-data-ssd"
+      # Object size limit — 5 GiB per object. E7.1 enforces
+      # the same on the media-service upload session.
+      maxObjectSizeBytes: 5368709120

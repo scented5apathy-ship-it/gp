@@ -1,0 +1,209 @@
+# S3/MinIO ↔ AWS S3 compatibility matrix — E2.7 source-of-truth.
+#
+# Per `tasks.md` E2.7 ("Chạy compatibility tests giữa cloud S3 và
+# MinIO") + `design.md` §13 + ADR-E0.5-03 (cloud provider
+# selection), the platform MUST verify that the same domain
+# code path works identically on a managed AWS S3 bucket
+# (SaaS) and a self-hosted MinIO bucket (on-prem + dev).
+#
+# The test suite is wired through Testcontainers + the
+# `minio/minio` image (`scripts/check-s3-compatibility.mjs`).
+# The matrix below defines which S3 API operations MUST
+# succeed on both providers and which subset is `best-effort`
+# (MinIO may support it; AWS S3 may require a different
+# action).
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genea-storage-compatibility-matrix
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+data:
+  config.yaml: |
+    # S3 compatibility matrix.
+    #
+    # Each row is one S3 API operation. The `required: true`
+    # flag indicates the operation MUST work identically on
+    # AWS S3 + MinIO. The `testS3` / `testMinIO` flags
+    # identify which provider the contract test must cover.
+    operations:
+      # ----- Object CRUD (required) -----
+      - op: PutObject
+        required: true
+        saas: aws-s3
+        onprem: minio
+        apiVersion: "2006-03-01"
+      - op: GetObject
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: HeadObject
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: DeleteObject
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: DeleteObjects
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: CopyObject
+        required: true
+        saas: aws-s3
+        onprem: minio
+      # ----- Multipart upload (required, E7.1) -----
+      - op: CreateMultipartUpload
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: UploadPart
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: UploadPartCopy
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: CompleteMultipartUpload
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: AbortMultipartUpload
+        required: true
+        saas: aws-s3
+        onprem: minio
+      # ----- Versioning (required) -----
+      - op: ListObjectVersions
+        required: true
+        saas: aws-s3
+        onprem: minio
+      # ----- Signed URL (required, E7.4) -----
+      - op: GetObjectSignedUrl
+        required: true
+        saas: aws-s3
+        onprem: minio
+        # Generated via the `presign` SDK call (AWS SDK v3).
+        # MinIO requires the same query parameters the AWS SDK
+        # emits.
+      - op: PutObjectSignedUrl
+        required: true
+        saas: aws-s3
+        onprem: minio
+      # ----- Lifecycle (required) -----
+      - op: PutBucketLifecycle
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: GetBucketLifecycle
+        required: true
+        saas: aws-s3
+        onprem: minio
+      # ----- CORS (required) -----
+      - op: PutBucketCors
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: GetBucketCors
+        required: true
+        saas: aws-s3
+        onprem: minio
+      # ----- Server-side encryption (required) -----
+      - op: PutObjectWithSSEKMS
+        required: true
+        saas: aws-s3
+        onprem: minio
+        # MinIO uses server-side `aws:kms` mode against the
+        # KMS provider wired by `bucket-policy.yaml.kmsKeyAlias`.
+      # ----- Object lock (required for DNA + import-export) -----
+      - op: PutObjectLegalHold
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: PutObjectRetention
+        required: true
+        saas: aws-s3
+        onprem: minio
+      # ----- Replication (required on SaaS) -----
+      - op: PutBucketReplication
+        required: true
+        saas: aws-s3
+        onprem: minio
+      - op: GetBucketReplication
+        required: true
+        saas: aws-s3
+        onprem: minio
+      # ----- Best-effort / optional -----
+      - op: SelectObjectContent
+        required: false
+        saas: aws-s3
+        onprem: minio
+        # MinIO supports S3 Select via a Parquet-only subset.
+      - op: GetBucketTagging
+        required: false
+        saas: aws-s3
+        onprem: minio
+      - op: DeleteBucketTagging
+        required: false
+        saas: aws-s3
+        onprem: minio
+    # Provider parity — the contract test asserts the
+    # following invariants on both providers.
+    parity:
+      # PUT then HEAD must succeed and round-trip the
+      # x-amz-version-id header.
+      versionIdRoundTrip: required
+      # Multipart upload with 3 parts then HEAD must return
+      # the same `ETag` regardless of provider.
+      multipartETagDeterminism: required
+      # SSE-KMS PUT then GET must succeed (ciphertext may
+      # differ; the SDK must decrypt transparently).
+      sseKmsRoundTrip: required
+      # Signed URL TTL must be respected (object expires
+      # regardless of provider).
+      signedUrlTtl: required
+      # Object lock retention must be enforced server-side
+      # (a DeleteObject attempt before retention expires
+      # returns AccessDenied).
+      objectLockRetention: required
+      # Lifecycle expiry must run on both providers within
+      # the documented `scanIntervalDays` window.
+      lifecycleExpiry: required
+      # Cross-region replication must reach the replica
+      # within RPO ≤ 15 minutes (SaaS only).
+      replicationRpo: required
+    # Test harness — the contract test runs against both
+    # providers. The harness is `scripts/check-s3-compatibility.mjs`.
+    testHarness:
+      fixtures:
+        - provider: minio
+          image: "minio/minio:RELEASE.2024-10-13T13-34-11Z"
+          # Testcontainers brings up MinIO on a random port.
+          # The test reads `endpoint` + `region` + `AccessKey`
+          # + `SecretKey` from MinIO's `MINIO_ROOT_USER` /
+          # `MINIO_ROOT_PASSWORD` env vars.
+          env:
+            MINIO_ROOT_USER: "minio-test"
+            MINIO_ROOT_PASSWORD: "minio-test-password"
+        - provider: aws-s3
+          # Uses `aws-sdk-client-mock` against the
+          # virtual-hosted–style S3 endpoint. CI runs the
+          # mock in unit; integration tests skip when the
+          # `AWS_ACCESS_KEY_ID` env var is missing.
+          env:
+            AWS_REGION: "ap-southeast-1"
+            AWS_ACCESS_KEY_ID: "AKIA-TEST-ONLY"
+            AWS_SECRET_ACCESS_KEY: "test-only-secret"
+      # Forbidden patterns — the contract test must reject
+      # any operation that:
+      forbidden:
+        - "writes raw DNA outside the dna-raw bucket"
+        - "writes raw PII outside the per-tenant prefix"
+        - "sets a signed URL TTL > 3600 seconds"
+        - "applies a public READ ACL on the media bucket"
+        - "exposes an S3 key containing a literal tenant UUID"

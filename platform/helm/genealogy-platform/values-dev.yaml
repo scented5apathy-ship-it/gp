@@ -102,11 +102,40 @@ components:
       storageClass: standard
       size: 2Gi
   storage:
+    # E2.7 — dev runs MinIO single replica on the local
+    # kind cluster. kind cluster cannot provision
+    # `gp-data-ssd`, so the storage class falls through
+    # to `standard` (local-path provisioner).
+    provider: minio
     driver: minio
+    buckets:
+      - media
+      - media-quarantine
+      - dna-raw
+      - import-export
     encryption: envelope
+    versioning: enabled
+    replicas: 1
+    persistence:
+      storageClass: standard
+      size: 50Gi
+    # Dev never has a real public origin; the CORS list
+    # uses the local dev domain.
+    corsAllowedOrigins:
+      - http://app.genealogy.localhost
+      - http://api.genealogy.localhost
   cache:
+    # E2.7 — dev runs Valkey single replica + no
+    # Sentinel HA. TLS is disabled (dev only).
+    provider: valkey
     driver: valkey
     replicas: 1
+    maxmemory: "256Mi"
+    sentinel:
+      enabled: false
+    persistence:
+      storageClass: standard
+      size: 2Gi
   featureFlags:
     driver: flagsmith
     replicas: 1

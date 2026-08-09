@@ -45,7 +45,7 @@
 > - [x] **E2.4** Temporal
 > - [x] **E2.5** Istio service mesh
 > - [x] **E2.6** Vault + cloud KMS abstraction
-> - [ ] **E2.7** S3/MinIO + Valkey
+> - [x] **E2.7** S3/MinIO + Valkey
 > - [ ] **E2.8** Flagsmith / OpenFeature
 > - [ ] **E2.9** Argo CD / Rollouts
 > - [ ] **E2.10** Grafana OSS stack (OTel Collector + Prometheus + Loki + Tempo + Grafana)
@@ -1166,12 +1166,109 @@ kubectl -n gp-data exec vault-0 -- \
 
 ### 4.6 E2.7 S3/MinIO + Valkey
 
-**Trạng thái**: 🚧 planned. Chart đã có block `components.storage`
-(buckets: media, media-quarantine, dna-raw, import-export) +
-`components.cache` (driver: valkey, replicas: 2).
+**Trạng thái**: ✅ shipped. Chart đã ship `components.storage`
+(MinIO StatefulSet + bucket policy + CORS allowlist +
+SSE-KMS + lifecycle + object lock + signed URL TTL ceiling +
+`storage-bucket-init` Helm-hook Job) và `components.cache`
+(Valkey StatefulSet + Sentinel HA + ACL + per-class TTL ceilings
++ `valkey-exporter` Prometheus sidecar). 4 source-of-truth file
+`platform/storage/{s3-config,bucket-policy,compatibility-matrix,
+valkey-config}.yaml` được mirror byte-identical vào
+`platform/helm/genealogy-platform/files/storage/`.
 
-**Sẽ có**: Helm install MinIO (on-prem) hoặc dùng managed S3 (SaaS) +
-Valkey chart. Hiện tại chưa ship — theo dõi `tasks.md` E2.7.
+#### 4.6.1 Source-of-truth
+
+| File                                                       | Purpose                                                                                  |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `platform/storage/s3-config.yaml`                          | MinIO posture (image pin, region, TLS, CORS, versioning, replication, SSE-KMS, audit)    |
+| `platform/storage/bucket-policy.yaml`                      | 4 buckets (media, media-quarantine, dna-raw, import-export) + lifecycle + KMS + IAM + CORS + object lock + signed URL |
+| `platform/storage/compatibility-matrix.yaml`               | S3 API operations phải work identically on AWS S3 + MinIO (E2.7 compatibility test)     |
+| `platform/storage/valkey-config.yaml`                      | Valkey posture (image pin, region, TLS, ACL, persistence, TTL ceilings, required users)   |
+| `platform/storage/OWNERS`                                  | Mirrors `config/teams.yaml` — primary / secondary / on-call                              |
+
+#### 4.6.2 Verify
+
+```bash
+# 1. Static checks (CI commands)
+pnpm lint:s3                    # deep validator cho E2.7 source-of-truth
+pnpm check:s3:compat            # AWS S3 ↔ MinIO compatibility contract
+pnpm smoke:s3                   # structural-only smoke (kind/kubectl/helm optional)
+pnpm check:platform:baseline    # E2.7 invariants
+node --test scripts/__tests__/lint-s3-config.test.mjs
+# Kỳ vọng: 7/7 tests pass
+
+# 2. Helm render check (xác nhận chart không lỗi)
+docker run --rm -v "${PWD}:/src:ro" -w /src alpine/helm:3.16.3 \
+  lint platform/helm/genealogy-platform
+# Kỳ vọng: 0 chart(s) failed
+
+# 3. Live smoke tests (cần Docker + kubectl)
+docker compose -f platform/local/docker-compose.yml up -d minio valkey storage-bucket-init
+pnpm smoke:s3
+# Kỳ vọng: 4/4 PASS (structural-only khi không có kind/kubectl/helm)
+# Khi có cluster: 8/8 PASS — MinIO + Valkey Ready, 4 ConfigMaps applied,
+# bucket-init Job succeeded, 4 buckets created, Valkey ACL applied
+```
+
+#### 4.6.3 Bucket policy
+
+| Bucket             | Lifecycle  | KMS key alias                     | Object lock | Signed URL TTL | Replication |
+| ------------------ | ---------- | --------------------------------- | ----------- | -------------- | ----------- |
+| `media`            | 365d       | `alias/genea-s3-media-derivative` | OFF         | n/a            | SaaS only   |
+| `media-quarantine` | 30d        | `alias/genea-s3-media-derivative` | OFF         | n/a            | OFF         |
+| `dna-raw`          | indefinite | `alias/genea-s3-genetic-raw`      | COMPLIANCE  | n/a            | SaaS only   |
+| `import-export`    | 30d        | `alias/genea-s3-secret`           | COMPLIANCE  | ≤ 15 min       | OFF         |
+
+Mọi bucket prefix template PHẢI chứa `{tenant_pseudo_id}` —
+linter reject raw `tenant_id=` / `person_id=` / `raw_dna/`
+prefixes. `media` bucket không bao giờ có public READ ACL —
+delivery luôn qua BFF + ABAC (E3.4). `dna-raw` isolated
+(E10.2): web-bff KHÔNG có IAM binding.
+
+#### 4.6.4 Valkey cache
+
+| Class               | TTL    | TTL ceiling | Users                                   |
+| ------------------- | ------ | ----------- | --------------------------------------- |
+| session             | 3600s  | 7200s       | web-bff                                 |
+| rate-state          | 60s    | 300s        | rate-limiter                            |
+| generic cache       | 300s   | 1800s       | media-service, genealogy-service, search-service, openfga-cache, abac-cache, tenant-lookup |
+| permission decision | 30s    | 60s         | openfga-cache                           |
+| ABAC redaction      | 30s    | 60s         | abac-cache                              |
+
+10 required users: `web-bff`, `media-service`,
+`genealogy-service`, `search-service`, `rate-limiter`,
+`openfga-cache`, `abac-cache`, `tenant-lookup`,
+`observability`, `operator`. Service users KHÔNG được
+carry `@admin` (chỉ `operator` mới có `@admin`). `maxmemoryPolicy`
+PHẢI là `allkeys-lru` (no `noeviction`). Cache data KHÔNG
+được lưu `password`, `apiKey`, `token`, `private_key`,
+`raw_dna`.
+
+#### 4.6.5 Troubleshooting
+
+| #   | Symptom                                              | Cách xử lý                                                                                                                                                                                                                                                                  |
+| --- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `S3ServerDown` alert firing                          | `kubectl -n gp-data get pods -l app.kubernetes.io/component=storage`. Nếu pod down, `kubectl rollout undo statefulset/minio`. PVC full? `kubectl edit pvc data-minio-0`. Xem `runbook/s3.md` §1.                                                                          |
+| 2   | `S3HeadLatencyHigh` alert firing                      | `kubectl -n gp-data exec -it minio-0 -- iostat -dx 1 5`. Disk latency cao? Kiểm tra KMS provider (Vault / cloud KMS). Xem `runbook/s3.md` §2.                                                                                                                            |
+| 3   | `S3SignedUrlTtlViolation` alert firing                | Application code deploy signed URL > 1 hour. Roll back deployment; verify `bucket-policy.yaml` invariants + the platform's signed URL TTL ceiling.                                                                                                                          |
+| 4   | `ValkeyServerDown` alert firing                      | `kubectl -n gp-data get pods -l app.kubernetes.io/component=cache`. Cache miss path giờ là slow path. Xem `runbook/valkey.md` §1.                                                                                                                                          |
+| 5   | `ValkeySentinelNoMaster` alert firing                 | `kubectl exec -it valkey-0 -- valkey-cli -a $PASSWORD sentinel failover`. Nếu không elect được master, replication chain bị broken. Xem `runbook/valkey.md` §2.                                                                                                            |
+| 6   | `ValkeyMemoryHigh` alert firing                       | `kubectl exec -it valkey-0 -- valkey-cli -a $PASSWORD info keyspace`. OpenFGA / ABAC cache có thể đang leak (E3.4 invalidation). Per-class TTL bị miss? Xem `runbook/valkey.md` §4.                                                                                       |
+| 7   | `ValkeyHitRatioLow` (< 85%)                          | Application code đang include timestamp trong key. `valkey-cli --user observability keys "gp:*:openfga:*" \| head`. Verify Kafka invalidation topic healthy. Xem `runbook/valkey.md` §5.                                                                                  |
+| 8   | `pnpm lint:s3` fail "prefixTemplate must contain"     | Một bucket prefix template không chứa `{tenant_pseudo_id}`. Linter liệt kê tên bucket. Restore hoặc edit `platform/storage/bucket-policy.yaml` rồi sync mirror `platform/helm/genealogy-platform/files/storage/bucket-policy.yaml`.                                |
+| 9   | `pnpm lint:s3` fail "@admin on service user"          | Một service user (không phải `operator`) đang có `@admin`. Linter liệt kê user. Restore ACL trong `platform/storage/valkey-config.yaml`.                                                                                                                                   |
+| 10  | `pnpm check:s3:compat` fail "missing required op"     | Một S3 operation (`PutObject`, `GetObject`, ...) bị xoá khỏi `platform/storage/compatibility-matrix.yaml`. Linter liệt kê operation. Restore + sync mirror.                                                                                                               |
+| 11  | `storage-bucket-init` Job fail "connection refused"   | MinIO pod chưa Ready. Job retries tự động. Nếu persistent fail, kiểm tra IAM binding của `storage-bucket-init` SA trong `templates/components/storage/serviceaccounts.yaml`. Xem `runbook/s3.md` §7.                                                                   |
+
+#### 4.6.6 Liên kết
+
+- **Source-of-truth**: `platform/storage/{s3-config,bucket-policy,compatibility-matrix,valkey-config}.yaml`
+- **Mirror**: `platform/helm/genealogy-platform/files/storage/*.yaml`
+- **Helm templates**: `platform/helm/genealogy-platform/templates/components/storage/*.yaml` + `templates/components/cache/*.yaml`
+- **Alert rules**: `platform/observability/alerts/s3-rules.yaml` (11 alerts × 5 rule groups) + `valkey-rules.yaml` (12 alerts × 4 rule groups)
+- **Runbook**: `runbook/s3.md` (7 alert playbooks + backup/restore) + `runbook/valkey.md` (7 alert playbooks + failover)
+- **Validation scripts**: `scripts/lint-s3-config.mjs`, `scripts/smoke-s3.mjs`, `scripts/check-s3-compatibility.mjs`, `scripts/__tests__/lint-s3-config.test.mjs`
+- **Evidence**: `.kiro/specs/genealogy-platform/evidence/E2.7.md`
 
 ### 4.7 E2.8 Flagsmith / OpenFeature
 
@@ -1213,9 +1310,11 @@ pnpm lint:kafka
 pnpm lint:kong
 pnpm lint:istio
 pnpm lint:vault
+pnpm lint:s3
+pnpm check:s3:compat
 pnpm check:platform:baseline
 pnpm test:scripts
-# Kỳ vọng: tất cả clean, 54/54 tests pass
+# Kỳ vọng: tất cả clean, 61/61 tests pass
 
 # 2. Helm render check (xác nhận chart không lỗi)
 docker run --rm -v "${PWD}:/src:ro" -w /src alpine/helm:3.16.3 \
@@ -1228,6 +1327,7 @@ pnpm smoke:apicurio      # E2.3
 pnpm smoke:temporal      # E2.4
 pnpm smoke:istio         # E2.5
 pnpm smoke:vault         # E2.6
+pnpm smoke:s3            # E2.7
 # Kỳ vọng: tất cả PASS
 
 # 4. Resource counts per environment

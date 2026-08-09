@@ -62,13 +62,31 @@ components:
       # ARN is resolved by External Secrets at runtime.
       kmsKeyId: arn:aws:kms:ap-southeast-1:REPLACE_ME:alias/genea-vault-root
   storage:
-    driver: s3-managed
+    # E2.7 — SaaS uses managed AWS S3 (ADR-E0.5-03 candidate).
+    # The chart does NOT render the MinIO workload; the same
+    # bucket policy file is shipped to the AWS account via
+    # the IaC pipeline (terraform / Cloud Custodian). The
+    # deep linter still asserts the source-of-truth file
+    # is present in `platform/storage/`.
+    provider: aws-s3
     region: ap-southeast-1
+    buckets:
+      - media
+      - media-quarantine
+      - dna-raw
+      - import-export
+    encryption: envelope
+    versioning: enabled
   cache:
-    # Managed Redis for SaaS; replica count + shard count live in
-    # `cache.managed` and are reconciled by the cluster operator.
+    # E2.7 — SaaS uses AWS ElastiCache for Valkey (managed).
+    # The chart does NOT render the Valkey StatefulSet; the
+    # same Valkey config file is shipped to the AWS account
+    # via the IaC pipeline. The deep linter still asserts
+    # the source-of-truth file is present.
+    provider: aws-elasticache
     driver: redis-managed
     replicas: 6
+    maxmemory: "2Gi"
   observability:
     retention:
       prometheus: 90d

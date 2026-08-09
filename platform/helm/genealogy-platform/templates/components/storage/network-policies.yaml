@@ -1,0 +1,95 @@
+{{/*
+MinIO NetworkPolicy — default deny all Ingress + Egress; allow
+the bucket policy + lifecycle jobs + S3 clients in
+`gp-services` / `gp-workers` / `gp-bff` to reach the API
+endpoint.
+*/}}
+{{- $storage := .Values.components.storage }}
+{{- if and $storage.enabled (eq $storage.provider "minio") }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: minio-default-deny
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: storage
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: minio-allow-clients
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: storage
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: storage
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-workers
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-bff
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Operator console — bastion VPN only.
+    - from:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 9001
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # OTel Collector (audit log)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-observability
+      ports:
+        - protocol: TCP
+          port: 4317
+    # KMS provider (Vault transit / AWS KMS)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+{{- end }}

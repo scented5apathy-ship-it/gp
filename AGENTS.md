@@ -90,6 +90,10 @@ Every change must respect:
       AuthorizationPolicy / disjoint retry validator — E2.5)
 - [ ] `pnpm lint:vault` passes (Vault server-config / auth-methods /
       policies / KMS abstraction / injector templates validator — E2.6)
+- [ ] `pnpm lint:s3` passes (S3/MinIO + bucket policy + Valkey
+      config-as-code validator — E2.7)
+- [ ] `pnpm check:s3:compat` passes (AWS S3 ↔ MinIO compatibility
+      contract test — E2.7)
 - [ ] OWNERS touched when ownership changes
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`
