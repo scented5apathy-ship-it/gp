@@ -104,7 +104,13 @@ Every change must respect:
       dashboard catalogue + retention validator — E2.10)
 - [ ] `pnpm lint:keycloak` passes (Keycloak OIDC realm / client /
       flow / federation / key rotation config-as-code validator — E3.1)
-- [ ] OWNERS touched when ownership changes
+- [ ] Nếu commit PARTIAL: prompt continuation PHẢI liệt kê rõ từng
+      residual gap (đánh số 1, 2, 3, …) từ `evidence/<TASK_ID>.md`
+      và yêu cầu cứng cho gap đặc thù; không dùng cụm từ mơ hồ
+      "hoàn thiện", "đóng các gap còn lại", "DONE <TASK_ID>" — xem
+      `agent-execution.md` §6.5
+- [ ] Checkbox trong `tasks.md` flipped to `[x]` **only after**
+      evidence file is committed
 - [ ] Completion Evidence file added at
       `.kiro/specs/genealogy-platform/evidence/<TASK_ID>.md`
 - [ ] Checkbox in `tasks.md` flipped to `[x]` **only after** the

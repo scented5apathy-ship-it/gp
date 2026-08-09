@@ -239,6 +239,97 @@ Epic hiện được xem hoàn tất khi:
 - Có evidence cho từng subtask.
 - Có thể thêm dòng `**Epic status: DONE**` dưới tiêu đề epic; không thay thế checkbox subtask.
 
+### 6.5 PARTIAL → DONE continuation protocol
+
+Task đã commit ở trạng thái **PARTIAL** (Status: PARTIAL trong
+`evidence/<TASK_ID>.md`) phải được đóng bằng một commit **riêng biệt**
+theo continuation protocol này. Agent nhận yêu cầu "hoàn thiện
+task" hoặc "PARTIAL → DONE" phải:
+
+#### 6.5.1 Đọc evidence file của commit PARTIAL trước khi viết code
+
+`evidence/<TASK_ID>.md` của lần commit PARTIAL đã liệt kê **đầy đủ
+residual gaps** dưới dạng bảng có cột `Owner epic`. Agent phải đọc
+file đó và **không tự phát hiện lại** các gap đã được sub-agent
+review xác nhận.
+
+#### 6.5.2 Liệt kê gap cụ thể trong prompt
+
+Prompt giao continuation PHẢI:
+
+1. **Dẫn link `evidence/<TASK_ID>.md`** của commit PARTIAL.
+2. **Liệt kê rõ từng gap cụ thể** (đánh số 1, 2, 3, …) thay vì dùng
+   cụm từ mơ hồ như "hoàn thiện", "đóng các gap còn lại",
+   "DONE E3.1".
+3. **Ghi rõ scope guard** — agent-execution.md §4.4 cấm mở rộng ngoài
+   các gap đã liệt kê; nếu phát hiện gap mới phải đề xuất ADR / task
+   riêng.
+4. **Chỉ rõ yêu cầu cứng** cho gap đặc thù (ví dụ: "cấm tự xây SPI
+   per ADR-E0.5-05"; "federated `groups` KHÔNG được force-sync trực
+   tiếp vào tenant_groups user attribute"; "helm chart render phải
+   pass thực sự, không được skip silently khi `helm` không có trên
+   PATH").
+
+#### 6.5.3 Anti-pattern
+
+Các prompt dưới đây bị cấm vì không đủ rõ để agent PARTIAL → DONE
+một cách an toàn:
+
+- ❌ "Hoàn thiện E3.1" — agent tự quyết ưu tiên, có thể bỏ sót gap.
+- ❌ "Đóng các gap còn lại" — không liệt kê → bỏ sót.
+- ❌ "DONE E3.1" — yêu cầu status mà không nói rõ phải đóng gap nào.
+- ❌ "Triển khai tiếp E3.1" — không có scope guard.
+- ❌ "Hoàn thành E3.1 theo spec" — quá rộng, có thể vi phạm §4.4.
+
+#### 6.5.4 Template prompt khuyến nghị
+
+```text
+Triển khai task <TASK_ID> theo .kiro/specs/genealogy-platform/agent-execution.md,
+mở rộng commit scaffold PARTIAL <COMMIT_SHA> thành DONE.
+
+Nguồn sự thật:
+1. .kiro/specs/genealogy-platform/evidence/<TASK_ID>.md
+   ← danh sách N residual gap cần close trong epic này
+2. .kiro/specs/genealogy-platform/{requirements,design,tasks,
+   architecture-decisions}.md (các ADR liên quan)
+
+Yêu cầu cứng (KHÔNG được giữ [ ] cho đến khi mọi mục đạt):
+1. <Gap #1 — mô tả + bằng chứng đạt>
+2. <Gap #2 — mô tả + bằng chứng đạt>
+…
+N. <Gap #N — mô tả + bằng chứng đạt>
+
+Quy trình:
+1. Đọc evidence/<TASK_ID>.md trước (đã liệt kê residual gaps).
+2. Viết TODO list cho N mục, gán thứ tự dependency.
+3. Triển khai theo contract-first + test-first.
+4. Chạy validation thực sự (không skip silently khi toolchain thiếu).
+5. Self-review secret/PII/DNA leak + tenant bypass + cross-service coupling.
+6. Cập nhật evidence/<TASK_ID>.md: Status DONE + timestamp mới +
+   checklist N mục ✓.
+7. Commit với message `<TASK_ID>: hoàn thiện … (DONE)`.
+8. Chỉ flip checkbox `[ ] <TASK_ID>` → `[x]` khi toàn bộ N mục ✓
+   + tests pass + evidence DONE.
+
+Báo cáo cuối:
+- Status: DONE / BLOCKED / PARTIAL / FAILED
+- N mục residual gap: đã close mục nào + bằng chứng
+- Lệnh validation + kết quả
+- Checkbox đã cập nhật hay chưa + lý do
+```
+
+#### 6.5.5 Quy tắc commit
+
+- Commit PARTIAL → DONE **KHÔNG ĐƯỢC** squash vào commit PARTIAL
+  gốc. Hai commit tách biệt giúp `git log` truy vết được lịch sử.
+  Nếu cần thiết khi review, dùng `git rebase -i` để gộp nhưng
+  KHÔNG thay đổi nội dung evidence của commit trước.
+- Commit message phải có prefix `<TASK_ID>:` (ví dụ
+  `E3.1: hoàn thiện Keycloak OIDC runtime + integration tests (DONE)`).
+- Không tạo commit mới nếu validation chưa pass thực sự (nếu
+  `helm` không có trên PATH, smoke render phải exit với
+  `BLOCKED` chứ không `PASS`).
+
 ## 7. Prompt review độc lập
 
 Sau khi Agent triển khai, nên giao Agent khác review bằng prompt:
