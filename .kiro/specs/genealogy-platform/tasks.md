@@ -330,7 +330,7 @@ _Requirements: R1, R2, R3, R13, R16, NFR1, NFR4, NFR8_
   - Thực thi `PRIVATE/UNLISTED/PUBLIC`; unlisted token được hash, hết hạn và thu hồi.
   - Phát event tái tạo/xóa public projection khi visibility đổi.
 
-- [ ] E4.2 Person aggregate
+- [x] E4.2 Person aggregate
 
   - Nhiều tên/script/alias, pronoun, living status, biography, identifiers và field privacy.
   - Dùng optimistic version/ETag; ghi actor, reason và diff.
