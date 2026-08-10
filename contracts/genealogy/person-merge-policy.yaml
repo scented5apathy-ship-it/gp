@@ -1,0 +1,185 @@
+# contracts/genealogy — Person merge and history contract (E4.6).
+#
+# Source of truth for the person merge workflow:
+# candidate scoring, comparison / preview, merge command,
+# source preservation, redirect / reference preservation, and
+# reversal. Mirrors `requirements.md` R3 (tenant), R4.5 (merge
+# with preview + source preservation + revert), R4.6 (version,
+# actor, timestamp, reason, diff), R5.5 (citations preserved),
+# R8.5 (provenance preserved across merge), R10 (collaboration
+# audit), R16 (admin + audit + retention), and `design.md`
+# §5.2 (the conceptual `RELATIONSHIP + participant/role`
+# model that merge must preserve), §6.2 (ABAC obligations
+# attached to merge mutations), §7.3 (outbox event envelope
+# the merge service writes), and §8.3 (the proposal /
+# review workflow that merge reuses).
+#
+# The Java executor lives under
+# `services/genealogy-service/src/main/java/com/genealogy/
+# platform/services/genealogy/domain/` (merge records +
+# `MergeService` + `MergeInvariants`). The Flyway migration
+# that lands the persistence contract is
+# `services/genealogy-service/src/main/resources/db/migration/
+# V7__person_merge.sql`. The chart mirror (byte-identical)
+# lives at `platform/helm/genealogy-platform/files/person-
+# merge-policy.yaml` and is enforced by
+# `scripts/lint-person-merge-config.mjs`.
+#
+# The contract hard-pins three properties from
+# `glossary-and-policy-matrix.md` §2.4 (`MERGE` rule):
+#   1. The losing Person is retained as a tombstone
+#      (`person.lifecycle = MERGED`) with references to the
+#      winning Person; it is NEVER hard-deleted.
+#   2. All Claims, Citations, Events, Media links,
+#      Relationships and Proposals MUST be re-keyed to the
+#      winning Person in the same transactional boundary.
+#   3. Citations are preserved verbatim; evidence is NEVER
+#      destroyed by merge (R5.5 + R8.5).
+# Numeric thresholds (`autoScoreThreshold = 0.85`,
+# `revertWindowDays = 30`) are pinned per `architecture-
+# decisions.md` §A `DRAFT` ratification list; they are
+# intentionally hard-coded here so the merge service is
+# deterministic and contract-reviewable.
+apiVersion: v1
+kind: PersonMergePolicy
+metadata:
+  name: default-person-merge/v1
+  namespace: gp-platform
+spec:
+  policyId: default-person-merge/v1
+  description: >-
+    Person merge defaults. Mirrors `requirements.md` R4.5 /
+    R4.6 / R5.5 / R8.5 / R10 / R16 and `design.md` §5.2 +
+    §6.2 + §7.3 + §8.3. The merge service is the
+    authoritative "two Persons become one" workflow; the
+    audit trail is append-only and reversible within
+    `revertWindowDays`.
+  # R4.5 — closed-set of merge kinds. E4.6 lands
+  # `DUPLICATE_PERSON_MERGE` only. `RELATIONSHIP_MERGE`,
+  # `EVENT_MERGE`, `CLAIM_MERGE` are deferred to follow-up
+  # tasks per the E4.6 scope guard; adding them requires
+  # a separate epic so the merge service can apply the
+  # closed-set vocabulary without surprises.
+  mergeKinds:
+    - DUPLICATE_PERSON_MERGE
+  # R4.5 — merge lifecycle. A merge record walks
+  # `CANDIDATES_SCORED → REVIEWED → MERGED` for the
+  # happy path; `REVERTED` is reachable from `MERGED`
+  # only inside `revertWindowDays`. `REJECTED` is the
+  # terminal state when a reviewer dismisses a candidate.
+  mergeStatusLifecycle:
+    - CANDIDATES_SCORED
+    - REVIEWED
+    - MERGED
+    - REVERTED
+    - REJECTED
+  # R4.5 — scoring component closed-set. The merge
+  # service computes a single score in [0,1] by combining
+  # each component's weight × component value. The closed-
+  # set ensures every score row is auditable and the
+  # renderer can show a per-component breakdown without
+  # re-implementing the policy.
+  scoringComponents:
+    - name: NAME_EQUALITY
+      weight: 0.4
+      description: >-
+        Normalised Levenshtein on primary name (E4.2
+        `Person.primaryName`). `1.0` on exact match after
+        locale-normalised lowercasing + accent stripping.
+    - name: DATE_PROXIMITY
+      weight: 0.25
+      description: >-
+        Birth-date proximity. `1.0` on exact same
+        `DateValue`; falls off linearly to `0.0` past
+        ±5 years. `null` birth-date on either side
+        contributes `0.0` and emits WARN.
+    - name: PLACE_PROXIMITY
+      weight: 0.15
+      description: >-
+        Birth-place proximity. `1.0` on same `Place.id`;
+        degrades by hierarchy distance (same village > same
+        city > same country); `0.0` on null.
+    - name: IDENTIFIER_MATCH
+      weight: 0.2
+      description: >-
+        Exact equality on at least one `PersonIdentifier`
+        (E4.2). `1.0` on exact match; `0.0` otherwise.
+  # R4.5 — auto-merge threshold. When the weighted score
+  # exceeds this value, the candidate is offered to the
+  # editor as an "auto-merge" suggestion (still requires
+  # human confirmation per R4.5). Below the threshold the
+  # candidate is offered as a manual review. Pinned to
+  # `0.85` per `architecture-decisions.md` §A (E0.2 §5 #4).
+  autoScoreThreshold: 0.85
+  # R4.5 — manual-score floor. Below this value the
+  # candidate is rejected at scoring time (no preview, no
+  # audit row). Pinned to `0.5` so the renderer never
+  # offers obvious noise to the editor.
+  manualScoreFloor: 0.5
+  # R4.5 — revert window. A `MERGED` record can be
+  # reverted (winner ↔ loser swap, references re-keyed
+  # back) within this window. Pinned to `30` days per
+  # `architecture-decisions.md` §A (E0.2 §2.4 #6).
+  revertWindowDays: 30
+  # R4.5 — cap on re-keyed references per merge. The
+  # service re-keys every Claim / Citation / Event /
+  # Relationship / Proposal / Media link from loser to
+  # winner in one transaction. A merge that touches more
+  # than this many rows is rejected at command time; the
+  # operator is told to split the batch (the merge is
+  # still valid, just too large to commit atomically).
+  maxRekeyedReferencesPerMerge: 10000
+  # R4.5 — cap on candidates per scoring run. Prevents
+  # the scorer from emitting an unbounded candidate set
+  # against a huge tree. Mirrors the per-tree cap in
+  # Relationship (E4.4) so the renderer can rely on a
+  # single upper bound.
+  maxCandidatesPerScoringRun: 1000
+  # R4.6 — cap on the reviewer-supplied reason string.
+  # Mirrors the date-place policy cap. The reason is
+  # mandatory (audit hook requires it).
+  maxReasonChars: 2048
+  # R5.5 / R8.5 — source preservation. Citations and
+  # Sources attached to a losing Person's claims are
+  # preserved verbatim; the merge service re-keys the
+  # claim (so `claim.subjectId = winner`) but never
+  # touches the citation row or its media attachment.
+  sourcePreservationRequired: true
+  # R4.5 — redirect / reference preservation. The
+  # service reissues external identifiers (share tokens,
+  # public URLs) on the winner and revokes the loser's.
+  # The platform surfaces the redirect to the user; an
+  # external party that follows the old URL gets a 410
+  # Gone + the new URL (when visibility allows).
+  redirectPreservationRequired: true
+  # R4.5 / R10 — provenance closed-set for the merge
+  # record. The platform records HOW the merge was
+  # proposed (user, import, automated scorer).
+  mergeProvenances:
+    - USER_REVIEW
+    - AUTOMATED_SCORER
+    - IMPORTED
+    - CORRECTION
+  # R4.5 / NFR4 — audit hooks. Each merge lifecycle
+  # transition emits an audit event with a closed-set
+  # action. Audit class = `consent` because merge shifts
+  # the privacy surface (R10 / living-link redaction)
+  # and the audit row must remain immutable.
+  auditClassOnScore: consent
+  auditActionOnScore: candidate.scored
+  auditClassOnCompare: consent
+  auditActionOnCompare: merge.compared
+  auditClassOnPreview: consent
+  auditActionOnPreview: merge.previewed
+  auditClassOnCommit: consent
+  auditActionOnCommit: merge.committed
+  auditClassOnRevert: consent
+  auditActionOnRevert: merge.reverted
+  auditClassOnReject: consent
+  auditActionOnReject: merge.rejected
+  # R4.6 — review reason requirement. The reviewer MUST
+  # supply a non-blank `reason` text before the merge
+  # can transition to `MERGED`. Same rule applies to
+  # `REVERTED` so the audit trail always carries a
+  # human-readable explanation.
+  reviewReasonRequired: true
