@@ -336,7 +336,7 @@ _Requirements: R1, R2, R3, R13, R16, NFR1, NFR4, NFR8_
   - Dùng optimistic version/ETag; ghi actor, reason và diff.
   - Không liên kết User↔Person nếu chưa qua verification workflow.
 
-- [ ] E4.3 Date/calendar/place model
+- [x] E4.3 Date/calendar/place model
 
   - Hỗ trợ exact/about/range/before/after/unknown và giữ original expression.
   - Lưu UTC, IANA timezone, calendar ID và normalized interval.
