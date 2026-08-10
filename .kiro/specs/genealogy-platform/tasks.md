@@ -360,7 +360,7 @@ _Requirements: R1, R2, R3, R13, R16, NFR1, NFR4, NFR8_
   - Bảo toàn redirect/reference; hỗ trợ reversal theo domain rules.
   - Audit toàn bộ reviewer, reason, before/after version.
 
-- [ ] E4.7 Outbox/event publishing
+- [x] E4.7 Outbox/event publishing
   - Ghi aggregate + outbox trong một transaction Flyway-managed schema.
   - Relay sang Kafka với Apicurio schema; consumer inbox/idempotency mẫu.
   - Thiết lập retry/DLQ/replay có audit và không phát PII thừa.
