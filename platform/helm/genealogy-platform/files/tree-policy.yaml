@@ -1,0 +1,83 @@
+# contracts/genealogy — Tree aggregate contracts (E4.1)
+#
+# Source of truth for the tree aggregate and its lifecycle
+# (CRUD / archive / restore / transfer / delete) plus the
+# visibility contract (PRIVATE / UNLISTED / PUBLIC) and the
+# UNLISTED-token issuance / revocation contract.
+#
+# Mirror (byte-identical) lives under
+# `platform/helm/genealogy-platform/files/tree-*.yaml`.
+#
+# The matching Java executor is the `tree-service` module under
+# `services/tree-service/`. Per `agent-execution.md` §4.4
+# config-as-code is the contract; the Java implementation is the
+# executor.
+apiVersion: v1
+kind: TreePolicy
+metadata:
+  name: default-tree/v1
+  namespace: gp-platform
+spec:
+  policyId: default-tree/v1
+  description: >-
+    Tree aggregate defaults. Mirrors `requirements.md` R3
+    (tree visibility, metadata, collaboration mode) and
+    `design.md` §6.3 (PRIVATE / UNLISTED / PUBLIC) + §5.4 (tree
+    projection lifecycle).
+  # R3.1/R3.2 — every tree carries locale / timezone / default
+  # calendar / naming convention / branding.
+  supportedLocales:
+    - en-US
+    - vi-VN
+    - fr-FR
+    - ja-JP
+    - zh-Hans
+  supportedTimezones:
+    - UTC
+    - Asia/Ho_Chi_Minh
+    - Asia/Tokyo
+    - Europe/Paris
+    - America/New_York
+  supportedCalendars:
+    - GREGORIAN
+    - JAPANESE
+    - VIETNAMESE_LUNISOLAR
+    - ISLAMIC_CIVIL
+    - HEBREW
+  # R3.3 — visibility is closed-set; the Java enum mirrors these
+  # symbols exactly.
+  visibilities:
+    - PRIVATE
+    - UNLISTED
+    - PUBLIC
+  # R3.7 — collaboration policy is a closed set.
+  collaborationModes:
+    - DIRECT_EDIT
+    - APPROVAL_REQUIRED
+    - HYBRID_BY_ROLE
+  # Lifecycle states per R3 + `tasks.md` E4.1 line 327.
+  # ARCHIVED = soft-deleted / hidden from projections.
+  # DELETED = terminal (emits TreeDeleted).
+  lifecycleStates:
+    - ACTIVE
+    - ARCHIVED
+    - DELETED
+  # R3.4/R3.5 — PRIVATE is invite-only, UNLISTED requires a
+  # token. PUBLIC may be indexed by search.
+  defaultVisibility: PRIVATE
+  defaultCollaborationMode: DIRECT_EDIT
+  # Default branding keys that may be set on a tree. The key list
+  # is closed so the renderer / BFF never receives a free-form
+  # branding blob.
+  brandingKeys:
+    - primaryColor
+    - logoUrl
+    - coverImageUrl
+    - faviconUrl
+    - tagline
+  # Tree slug format. Lowercase, no spaces, 3-40 chars, lowercase
+  # letters + digits + single hyphens between segments.
+  slugPattern: "^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$"
+  # Max trees per tenant (R1.5 quota baseline; final number ratified
+  # by E0.6).
+  maxTreesPerTenant: 500

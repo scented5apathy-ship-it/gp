@@ -1,0 +1,34 @@
+{
+  "type": "record",
+  "name": "TreeTransferred",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when ownership of a tree transfers to another tenant. Consumers MUST invalidate all local caches and re-check authorization on the new tenant. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "fromTenantId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "toTenantId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "reason",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "transferredAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

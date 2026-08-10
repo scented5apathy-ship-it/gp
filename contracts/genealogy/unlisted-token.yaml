@@ -1,0 +1,54 @@
+# contracts/genealogy — UNLISTED visibility token contract (E4.1).
+#
+# Source of truth for the UNLISTED-token contract. Mirrors
+# `requirements.md` R3.5 and `design.md` §6.3:
+#
+#   "UNLISTED SHALL only be reachable via token/code with expiry
+#    or revocation. Token MUST be hashed, expiry enforced,
+#    noindex returned."
+#
+# The Java executor lives in
+# `services/tree-service/src/main/java/com/genealogy/platform/services/tree/visibility/`.
+apiVersion: v1
+kind: UnlistedTokenPolicy
+metadata:
+  name: default-unlisted-token/v1
+  namespace: gp-platform
+spec:
+  policyId: default-unlisted-token/v1
+  description: >-
+    UNLISTED-visibility token policy. Plaintext token never leaves
+    the originating service; only the SHA-256 fingerprint is
+    persisted and published on the event bus.
+  tokenFormat: URL_SAFE_BASE64URL
+  tokenByteLength: 32
+  fingerprintAlgorithm: SHA-256
+  fingerprintEncoding: HEX_LOWER
+  # Token scope is closed-set so the visibility resolver can
+  # route on it deterministically. "FULL_TREE" grants access to
+  # the whole tree projection; "BRANCH" is restricted to a branch
+  # subtree (token row carries the branch id).
+  scopes:
+    - FULL_TREE
+    - BRANCH
+  # Tokens are bounded to a max lifetime. Hard ceiling; the
+  # service MUST reject any issuance request asking for longer.
+  maxLifetimeSeconds: 2592000
+  defaultLifetimeSeconds: 604800
+  # Rate-limit per token (R3.5: scope / rate limit). Floor; the
+  # service may impose stricter per-tenant / per-IP limits via
+  # Kong.
+  rateLimitPerMinute: 60
+  # Tokens are first-class audit subjects. The audit-class is
+  # closed and matches `contracts/audit/policy.yaml`.
+  auditClassOnIssue: authorization
+  auditActionOnIssue: unlistedToken.issued
+  auditClassOnRevoke: authorization
+  auditActionOnRevoke: unlistedToken.revoked
+  # Sweeper interval — the sweeper expires tokens past their
+  # `expiresAt` and emits `UnlistedTokenRevoked` for each.
+  # Interval is a floor; the operator may run more often.
+  sweepIntervalSeconds: 300
+  # The HTTP layer MUST return `X-Robots-Tag: noindex` and the
+  # `robots` meta equivalent for every UNLISTED page.
+  robotsDirective: noindex

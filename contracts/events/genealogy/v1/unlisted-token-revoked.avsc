@@ -1,0 +1,34 @@
+{
+  "type": "record",
+  "name": "UnlistedTokenRevoked",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when an UNLISTED token is revoked (by actor or by expiry sweep). Cache and CDN layers MUST invalidate. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "tokenId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "fingerprint",
+      "type": "string"
+    },
+    {
+      "name": "revokedBy",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "reason",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "revokedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

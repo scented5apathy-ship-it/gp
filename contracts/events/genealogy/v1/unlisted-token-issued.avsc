@@ -1,0 +1,38 @@
+{
+  "type": "record",
+  "name": "UnlistedTokenIssued",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when an UNLISTED token is issued for a tree. The plaintext token is NEVER sent on the event (only its SHA-256 fingerprint). Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "tokenId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "fingerprint",
+      "type": "string"
+    },
+    {
+      "name": "scope",
+      "type": "string"
+    },
+    {
+      "name": "issuedBy",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "expiresAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    },
+    {
+      "name": "issuedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

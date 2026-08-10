@@ -34,6 +34,7 @@
 /contracts/openfga/            @genealogy/platform @genealogy/security
 /contracts/trusted-context/    @genealogy/platform @genealogy/security
 /contracts/audit/              @genealogy/platform @genealogy/security @genealogy/identity
+/contracts/genealogy/         @genealogy/genealogy @genealogy/platform
 
 /platform/                     @genealogy/platform
 /config/teams.yaml             @genealogy/platform

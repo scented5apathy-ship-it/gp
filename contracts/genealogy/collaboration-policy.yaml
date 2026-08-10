@@ -1,0 +1,45 @@
+# contracts/genealogy — Collaboration policy contract (E4.1).
+#
+# Source of truth for per-tree collaboration mode (R3.7 / R10.4):
+#
+#   - DIRECT_EDIT: any contributor with edit role may mutate
+#     directly; ETag-based optimistic concurrency (E4.2+).
+#   - APPROVAL_REQUIRED: every mutation must travel through a
+#     `collaboration-service` proposal (E7.x) before applying.
+#   - HYBRID_BY_ROLE: the mode is decided per role (e.g.
+#     editors may direct-edit, contributors must propose).
+#
+# The Java executor lives in
+# `services/tree-service/src/main/java/com/genealogy/platform/services/tree/collaboration/`.
+apiVersion: v1
+kind: CollaborationPolicy
+metadata:
+  name: default-collaboration/v1
+  namespace: gp-platform
+spec:
+  policyId: default-collaboration/v1
+  description: >-
+    Per-tree collaboration mode + role overrides. Mirrors
+    `requirements.md` R3.7 and R10.4.
+  modes:
+    - DIRECT_EDIT
+    - APPROVAL_REQUIRED
+    - HYBRID_BY_ROLE
+  # Roles that always direct-edit, regardless of mode. Used by
+  # HYBRID_BY_ROLE.
+  alwaysDirectEditRoles:
+    - TREE_OWNER
+    - TREE_ADMIN
+  # Roles that always go through proposal review.
+  alwaysProposalRoles:
+    - CONTRIBUTOR
+    - GUEST_CONTRIBUTOR
+  # Behaviour on visibility transition: when a tree flips to
+  # APPROVAL_REQUIRED, in-flight direct edits are NOT rolled
+  # back (optimistic); they keep their ETag. The collaboration
+  # service handles the proposal-vs-direct policy decision
+  # at write time.
+  behaviourOnModeChange: opt-in
+  # Proposal TTL for APPROVAL_REQUIRED mode. Default 30d; the
+  # collaboration-service may override per tree.
+  proposalTtlSeconds: 2592000

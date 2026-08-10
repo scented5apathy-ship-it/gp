@@ -12,6 +12,17 @@ Schemas:
 - `tree-visibility-changed.avsc` —
   `gp.genealogy.v1.TreeVisibilityChanged` (PRIVATE/UNLISTED/PUBLIC
   transition per `design.md` §6.3).
+- `tree-archived.avsc` — `gp.genealogy.v1.TreeArchived` (E4.1
+  archive/restore/transfer/delete lifecycle).
+- `tree-restored.avsc` — `gp.genealogy.v1.TreeRestored`.
+- `tree-transferred.avsc` — `gp.genealogy.v1.TreeTransferred`
+  (cross-tenant ownership transfer; consumers MUST invalidate cache).
+- `tree-deleted.avsc` — `gp.genealogy.v1.TreeDeleted` (terminal;
+  projections MUST remove every artifact).
+- `unlisted-token-issued.avsc` — `gp.genealogy.v1.UnlistedTokenIssued`
+  (only SHA-256 fingerprint on the wire; plaintext token never
+  serialised per `design.md` §6.3).
+- `unlisted-token-revoked.avsc` — `gp.genealogy.v1.UnlistedTokenRevoked`.
 
 Owner: Core Genealogy team. Reviewers: Privacy (visibility
 transitions are privacy-critical).

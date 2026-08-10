@@ -1,0 +1,30 @@
+{
+  "type": "record",
+  "name": "TreeDeleted",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a tree is hard-deleted (terminal). Search projections, public projections, and analytics projections MUST remove every artifact. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "tenantId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "reason",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "deletedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}
