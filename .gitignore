@@ -46,6 +46,10 @@ secrets/
 **/src/lib/api/generated/
 **/src/generated/
 
+# E5.1 synthetic-tree bench datasets (reproducible from
+# `pnpm --filter @genealogy/web bench:treeRenderer`).
+**/bench/datasets/
+
 # Security CI artefacts. Reproducible via `pnpm security`.
 security/artifacts/
 *.sarif

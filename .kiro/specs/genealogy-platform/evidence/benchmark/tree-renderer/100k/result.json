@@ -1,0 +1,132 @@
+[tree-renderer-bench] 100K SVG_VIRTUALIZED …
+[tree-renderer-bench] 100K CANVAS_HIERARCHY …
+[tree-renderer-bench] 100K HYBRID …
+[tree-renderer-bench] wrote /Users/ngocshb/IdeaProjects/scented5apathy-ship-it/gp/apps/web/bench/.kiro/specs/genealogy-platform/evidence/benchmark/tree-renderer/100k/report.md
+{
+  "policy": {
+    "policyId": "default-tree-renderer-bench/v1",
+    "interactionBudgetMs": 2500
+  },
+  "size": "100K",
+  "personCount": 100000,
+  "repeats": 3,
+  "options": [
+    {
+      "option": "SVG_VIRTUALIZED",
+      "size": "100K",
+      "nodes": 5,
+      "samples": 3,
+      "p50LayoutMs": 13.647334,
+      "p75LayoutMs": 15.1395,
+      "p95LayoutMs": 16.333232799999998,
+      "p50RenderMs": 0.110917,
+      "p75RenderMs": 0.1153545,
+      "p95RenderMs": 0.1189045,
+      "peakHeapMb": 29.547736,
+      "payloadBytes": 994,
+      "a11yScore": 0.8574999999999999,
+      "keyboardScore": 0.9099999999999999,
+      "meetsInteractionBudget": true,
+      "meetsMemoryBudget": true,
+      "meetsBundleBudget": true,
+      "rawSamples": [
+        {
+          "layoutMs": 16.631666,
+          "renderMs": 0.110917,
+          "heapMb": 29.310736,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 13.647334,
+          "renderMs": 0.119792,
+          "heapMb": 29.462888,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 13.009334,
+          "renderMs": 0.027875,
+          "heapMb": 29.547736,
+          "bytes": 994
+        }
+      ]
+    },
+    {
+      "option": "CANVAS_HIERARCHY",
+      "size": "100K",
+      "nodes": 5,
+      "samples": 3,
+      "p50LayoutMs": 13.503,
+      "p75LayoutMs": 13.524042,
+      "p95LayoutMs": 13.5408756,
+      "p50RenderMs": 0.051292,
+      "p75RenderMs": 0.06202099999999999,
+      "p95RenderMs": 0.07060419999999999,
+      "peakHeapMb": 53.871168,
+      "payloadBytes": 273,
+      "a11yScore": 0.535,
+      "keyboardScore": 0.54,
+      "meetsInteractionBudget": true,
+      "meetsMemoryBudget": true,
+      "meetsBundleBudget": true,
+      "rawSamples": [
+        {
+          "layoutMs": 13.545084,
+          "renderMs": 0.051292,
+          "heapMb": 53.668184,
+          "bytes": 273
+        },
+        {
+          "layoutMs": 13.503,
+          "renderMs": 0.07275,
+          "heapMb": 53.803728,
+          "bytes": 273
+        },
+        {
+          "layoutMs": 13.397917,
+          "renderMs": 0.020333,
+          "heapMb": 53.871168,
+          "bytes": 273
+        }
+      ]
+    },
+    {
+      "option": "HYBRID",
+      "size": "100K",
+      "nodes": 5,
+      "samples": 3,
+      "p50LayoutMs": 12.717875,
+      "p75LayoutMs": 13.027875,
+      "p95LayoutMs": 13.275875,
+      "p50RenderMs": 0.01875,
+      "p75RenderMs": 0.031875,
+      "p95RenderMs": 0.042374999999999996,
+      "peakHeapMb": 71.49276,
+      "payloadBytes": 994,
+      "a11yScore": 0.48500000000000004,
+      "keyboardScore": 0.49000000000000005,
+      "meetsInteractionBudget": true,
+      "meetsMemoryBudget": true,
+      "meetsBundleBudget": true,
+      "rawSamples": [
+        {
+          "layoutMs": 13.337875,
+          "renderMs": 0.045,
+          "heapMb": 71.290192,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 12.616875,
+          "renderMs": 0.01875,
+          "heapMb": 71.362312,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 12.717875,
+          "renderMs": 0.018333,
+          "heapMb": 71.49276,
+          "bytes": 994
+        }
+      ]
+    }
+  ]
+}

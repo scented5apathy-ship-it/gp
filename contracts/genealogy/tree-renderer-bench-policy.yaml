@@ -1,0 +1,81 @@
+# contracts/genealogy — Tree renderer benchmark policy (E5.1).
+#
+# Source of truth for the prototype benchmark that closes
+# ADR-E0.5-10 (tree layout / render engine). The benchmark
+# compares the three ADR-E0.5-10 candidate options
+# (SVG_VIRTUALIZED, CANVAS_HIERARCHY, HYBRID) on synthetic
+# 10K / 100K datasets per `scale-and-slo.md` §3, measures
+# layout + render time inside a Node `worker_threads` worker
+# (Web-Worker boundary proxy), records memory peak, serialized
+# payload size (bundle proxy), keyboard-cost score and
+# accessibility-cost score, and emits JSON + Markdown results.
+#
+# Mirrors `requirements.md` NFR2 (Tree view SHALL interact
+# within 2,5 seconds at p75 on good mobile network and load
+# progressively to at least 10 000 person/tree),
+# `design.md` §10.2 (Rendering engine phải hỗ trợ
+# virtualization/canvas hoặc SVG hybrid; lựa chọn thư viện là
+# ADR sau prototype benchmark; Layout chạy Web Worker khi phù
+# hợp; UI chỉ yêu cầu neighborhood theo viewport/depth và giữ
+# stable node identity), and ADR-E0.5-10 §Decision (DEFERRED
+# until this prototype benchmark produces a p75 interaction
+# time under 2,5 s on a 10 K-person synthetic tree on
+# mid-tier mobile).
+#
+# Mirror (byte-identical) lives under
+# `platform/helm/genealogy-platform/files/tree-renderer-bench-policy.yaml`.
+#
+# The matching executor is `apps/web/bench/tree-renderer-bench.mjs`
+# + the three option modules under
+# `apps/web/src/lib/tree-renderer/{svg-virtualized,canvas-hierarchy,hybrid}/`
+# (bench-only; not imported by the Next.js app until ADR-E0.5-10
+# is closed by Web lead + Performance lead).
+apiVersion: v1
+kind: TreeRendererBenchPolicy
+metadata:
+  name: default-tree-renderer-bench/v1
+  namespace: gp-platform
+spec:
+  policyId: default-tree-renderer-bench/v1
+  description: >-
+    Tree renderer benchmark defaults for E5.1. The benchmark
+    closes ADR-E0.5-10 by measuring each candidate option
+    against the thresholds below; the closing decision is
+    owned by Web lead + Performance lead per
+    `architecture-decisions.md` ADR-E0.5-10 §Owner.
+  # ADR-E0.5-10 §Options — must include all three candidates.
+  options:
+    - SVG_VIRTUALIZED
+    - CANVAS_HIERARCHY
+    - HYBRID
+  # scale-and-slo.md §3 — 10K is the gating dataset for ADR-E0.5-10.
+  # 100K validates the Y3 p99 worst-case per §2.2.
+  sizes:
+    - 1K
+    - 10K
+    - 100K
+  # NFR2 — Tree view SHALL tương tác lần đầu trong 2,5 giây ở p75.
+  interactionBudgetMs: 2500
+  # Mid-tier mobile peak heap. The Node bench measures RSS via
+  # process.resourceUsage() as a proxy; the real on-device budget
+  # is re-validated in E5.3 with Playwright.
+  memoryBudgetMb: 256
+  # Bench-mode JS payload. The real `next build` first-load budget
+  # (220 kB) is enforced by apps/web/test/perf-budget.test.ts (E1.5).
+  bundleBudgetKb: 180
+  # design.md §10.2 — Layout chạy Web Worker khi phù hợp.
+  layoutWorkerEnabled: true
+  # ADR-E0.5-10 §Options option 3: SVG for ≤ 5 K nodes, Canvas for > 5 K.
+  hybridThresholdNodes: 5000
+  # design.md §10.2 — UI giữ stable node identity.
+  stableNodeIdentityRequired: true
+  # design.md §10.2 — UI chỉ yêu cầu neighborhood theo viewport/depth.
+  neighborhoodOnlyRequired: true
+  # Weighted heuristic; ≥ 0.6 = acceptable. Real axe-core audit is E5.5.
+  a11yAcceptableScore: 0.6
+  keyboardAcceptableScore: 0.6
+  # scale-and-slo.md §3.3 — deterministic seed = sha256(size + locale).
+  seedLocale: vi-VN
+  # The bench only reads synthetic data so the audit class is
+  # operational, not consent.
+  auditClassOnBenchmark: operational

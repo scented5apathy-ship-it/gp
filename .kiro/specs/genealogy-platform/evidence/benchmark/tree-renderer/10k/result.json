@@ -1,0 +1,168 @@
+[tree-renderer-bench] 10K SVG_VIRTUALIZED …
+[tree-renderer-bench] 10K CANVAS_HIERARCHY …
+[tree-renderer-bench] 10K HYBRID …
+[tree-renderer-bench] wrote /Users/ngocshb/IdeaProjects/scented5apathy-ship-it/gp/apps/web/bench/.kiro/specs/genealogy-platform/evidence/benchmark/tree-renderer/10k/report.md
+{
+  "policy": {
+    "policyId": "default-tree-renderer-bench/v1",
+    "interactionBudgetMs": 2500
+  },
+  "size": "10K",
+  "personCount": 10000,
+  "repeats": 5,
+  "options": [
+    {
+      "option": "SVG_VIRTUALIZED",
+      "size": "10K",
+      "nodes": 5,
+      "samples": 5,
+      "p50LayoutMs": 13.385458,
+      "p75LayoutMs": 13.953167,
+      "p95LayoutMs": 15.262367,
+      "p50RenderMs": 0.025833,
+      "p75RenderMs": 0.123542,
+      "p95RenderMs": 0.1281084,
+      "peakHeapMb": 8.084448,
+      "payloadBytes": 994,
+      "a11yScore": 0.8574999999999999,
+      "keyboardScore": 0.9099999999999999,
+      "meetsInteractionBudget": true,
+      "meetsMemoryBudget": true,
+      "meetsBundleBudget": true,
+      "rawSamples": [
+        {
+          "layoutMs": 15.589667,
+          "renderMs": 0.12925,
+          "heapMb": 7.642288,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 13.385458,
+          "renderMs": 0.123542,
+          "heapMb": 7.79444,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 12.833167,
+          "renderMs": 0.025833,
+          "heapMb": 7.879288,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 13.953167,
+          "renderMs": 0.023083,
+          "heapMb": 7.950864,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 13.086667,
+          "renderMs": 0.015959,
+          "heapMb": 8.084448,
+          "bytes": 994
+        }
+      ]
+    },
+    {
+      "option": "CANVAS_HIERARCHY",
+      "size": "10K",
+      "nodes": 5,
+      "samples": 5,
+      "p50LayoutMs": 12.643958,
+      "p75LayoutMs": 12.860916,
+      "p95LayoutMs": 13.222850399999999,
+      "p50RenderMs": 0.018417,
+      "p75RenderMs": 0.046584,
+      "p95RenderMs": 0.0665504,
+      "peakHeapMb": 10.075432,
+      "payloadBytes": 273,
+      "a11yScore": 0.535,
+      "keyboardScore": 0.54,
+      "meetsInteractionBudget": true,
+      "meetsMemoryBudget": true,
+      "meetsBundleBudget": true,
+      "rawSamples": [
+        {
+          "layoutMs": 12.643958,
+          "renderMs": 0.046584,
+          "heapMb": 9.73104,
+          "bytes": 273
+        },
+        {
+          "layoutMs": 12.337125,
+          "renderMs": 0.071542,
+          "heapMb": 9.811096,
+          "bytes": 273
+        },
+        {
+          "layoutMs": 12.522416,
+          "renderMs": 0.018417,
+          "heapMb": 9.878136,
+          "bytes": 273
+        },
+        {
+          "layoutMs": 12.860916,
+          "renderMs": 0.013292,
+          "heapMb": 10.0036,
+          "bytes": 273
+        },
+        {
+          "layoutMs": 13.313334,
+          "renderMs": 0.011125,
+          "heapMb": 10.075432,
+          "bytes": 273
+        }
+      ]
+    },
+    {
+      "option": "HYBRID",
+      "size": "10K",
+      "nodes": 5,
+      "samples": 5,
+      "p50LayoutMs": 12.267875,
+      "p75LayoutMs": 12.461958,
+      "p95LayoutMs": 12.646058,
+      "p50RenderMs": 0.020917,
+      "p75RenderMs": 0.023625,
+      "p95RenderMs": 0.041891399999999995,
+      "peakHeapMb": 13.214952,
+      "payloadBytes": 994,
+      "a11yScore": 0.48500000000000004,
+      "keyboardScore": 0.49000000000000005,
+      "meetsInteractionBudget": true,
+      "meetsMemoryBudget": true,
+      "meetsBundleBudget": true,
+      "rawSamples": [
+        {
+          "layoutMs": 12.461958,
+          "renderMs": 0.046458,
+          "heapMb": 12.929792,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 12.137625,
+          "renderMs": 0.019084,
+          "heapMb": 13.002136,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 12.267875,
+          "renderMs": 0.020917,
+          "heapMb": 13.07312,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 12.692083,
+          "renderMs": 0.023625,
+          "heapMb": 13.143944,
+          "bytes": 994
+        },
+        {
+          "layoutMs": 12.150625,
+          "renderMs": 0.018125,
+          "heapMb": 13.214952,
+          "bytes": 994
+        }
+      ]
+    }
+  ]
+}

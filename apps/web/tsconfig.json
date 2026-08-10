@@ -16,6 +16,8 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "src/lib/api/generated/**/*.ts",
+    "components/**/*.ts",
+    "components/**/*.tsx",
     ".next/types/**/*.ts"
   ],
   "exclude": ["node_modules", ".next", "dist", "coverage"]

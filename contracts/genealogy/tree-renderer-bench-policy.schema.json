@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genealogy-platform.local/contracts/tree-renderer-bench-policy/v1",
+  "title": "TreeRendererBenchPolicy",
+  "description": "Config-as-code thresholds and closed-set definitions for the tree renderer benchmark harness (E5.1). Source of truth for the prototype benchmark that closes ADR-E0.5-10. Mirrors requirements.md NFR2 (tree-view p75 < 2.5 s on 10 K person mid-tier mobile), design.md §10.2 (virtualization/canvas/SVG hybrid, layout in Web Worker, stable node identity, neighborhood fetch) and scale-and-slo.md §3 (10 K/100 K synthetic dataset).",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "v1" },
+    "kind": { "const": "TreeRendererBenchPolicy" },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "namespace"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "namespace": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "policyId",
+        "options",
+        "sizes",
+        "interactionBudgetMs",
+        "memoryBudgetMb",
+        "bundleBudgetKb",
+        "layoutWorkerEnabled",
+        "hybridThresholdNodes",
+        "stableNodeIdentityRequired",
+        "neighborhoodOnlyRequired",
+        "a11yAcceptableScore",
+        "keyboardAcceptableScore",
+        "seedLocale",
+        "auditClassOnBenchmark"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "policyId": {
+          "type": "string",
+          "pattern": "^default-tree-renderer-bench/v1$",
+          "description": "Stable identifier for the policy; must equal default-tree-renderer-bench/v1."
+        },
+        "description": { "type": "string", "maxLength": 4096 },
+        "options": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["SVG_VIRTUALIZED", "CANVAS_HIERARCHY", "HYBRID"]
+          },
+          "description": "Closed-set of renderer options compared by the bench. Must include all three ADR-E0.5-10 candidates."
+        },
+        "sizes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["1K", "10K", "100K", "250K"]
+          },
+          "description": "Synthetic dataset sizes exercised by the bench. 10K is required by ADR-E0.5-10; 100K validates the Y3 p99 worst-case budget."
+        },
+        "interactionBudgetMs": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 10000,
+          "description": "p75 time-to-interactive budget for the chosen option on the 10K dataset, mid-tier mobile. Must equal 2500 (NFR2).",
+          "const": 2500
+        },
+        "memoryBudgetMb": {
+          "type": "number",
+          "minimum": 16,
+          "maximum": 4096,
+          "description": "Peak heap budget per renderer on the 10K dataset, mid-tier mobile (proxy: Node RSS during bench run)."
+        },
+        "bundleBudgetKb": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 2048,
+          "description": "Maximum serialized runtime byte size of the chosen option's bench-mode JS payload. Proxy for first-load JS budget; real bundle enforced in E5.3."
+        },
+        "layoutWorkerEnabled": {
+          "type": "boolean",
+          "const": true,
+          "description": "Layout MUST run inside a Web Worker per design.md §10.2. The Node bench simulates the worker boundary via node:worker_threads with postMessage round-trip timing."
+        },
+        "hybridThresholdNodes": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 100000,
+          "description": "Node count where HYBRID switches from SVG to Canvas. ADR-E0.5-10 default is 5000; the contract pins the numeric value here so the linter can validate it."
+        },
+        "stableNodeIdentityRequired": {
+          "type": "boolean",
+          "const": true,
+          "description": "Nodes MUST keep stable identity across re-renders (personId-based keys, not array index) so ABAC redaction and accessibility bindings survive viewport changes (design.md §10.2)."
+        },
+        "neighborhoodOnlyRequired": {
+          "type": "boolean",
+          "const": true,
+          "description": "Browser MUST NOT load the full tree; only the viewport neighborhood is fetched per depth/direction. Bench measures layout over the fetched neighborhood."
+        },
+        "a11yAcceptableScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum accessibility-cost heuristic score (1.0 = best). Weighted by: semantic alternative present, screen-reader ARIA cost, focus management cost, reduced-motion respect."
+        },
+        "keyboardAcceptableScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum keyboard-navigation heuristic score (1.0 = best). Weighted by: arrow-key traversal cost, skip-link cost, focus trap cost, roving tabindex cost."
+        },
+        "seedLocale": {
+          "type": "string",
+          "enum": ["en-US", "vi-VN", "fr-FR", "ja-JP", "zh-Hans"],
+          "description": "Locale used to derive the deterministic seed per scale-and-slo.md §3.3 (sha256(size + locale))."
+        },
+        "auditClassOnBenchmark": {
+          "type": "string",
+          "enum": ["operational", "consent", "security"],
+          "description": "Audit class emitted by the benchmark harness. The bench only reads synthetic data so the class is operational; switching to consent requires a new policy."
+        }
+      }
+    }
+  }
+}

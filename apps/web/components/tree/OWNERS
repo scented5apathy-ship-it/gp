@@ -1,0 +1,9 @@
+# Tree placeholder per ADR-E0.5-10 §Consequences. The real
+# renderer is `DEFERRED` until the prototype benchmark closes
+# (E5.1 produces the bench; E5.3 ships the real renderer).
+#
+# primary:   @genealogy/web
+# secondary: @genealogy/platform
+# on-call:   web-oncall@genealogy.local
+
+@genealogy/web @genealogy/platform
