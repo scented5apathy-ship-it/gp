@@ -261,7 +261,7 @@ _Requirements: NFR1–NFR8_
     - DoD: `pnpm lint:openapi` PASS + mở rộng `TenantServiceApplicationIT`
       với happy-path + cross-tenant negative; OpenAPI contract stable.
 
-  - [ ] E3.2e gRPC stub + runbook + evidence + Plan/Quota DRAFT note
+  - [x] E3.2e gRPC stub + runbook + evidence + Plan/Quota DRAFT note
 
     - `TenantGrpcService` chỉ là Spring `@Component` với TODO note; KHÔNG
       wire `com.google.protobuf` plugin (đợi E4.x fix enum collisions

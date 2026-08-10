@@ -4,17 +4,20 @@
  * `contracts/openapi/public-api/v1/tenant.yaml`. E1.4 wires the
  * shared Spring Boot template (REST + gRPC + jOOQ + Flyway +
  * OpenTelemetry + audit + trusted context + OpenFeature +
- * Testcontainers fixtures) so the rest of E3.x can land the
- * tenant aggregate, membership and OpenFGA mapping without
- * re-doing the platform wiring.
+ * Testcontainers fixtures); E3.2a–E3.2e land the tenant
+ * aggregate, membership, Keycloak subject mirror, REST surface,
+ * outbox publisher, runbook and alert rules.
  *
  * <p>NOTE: the `com.google.protobuf` Gradle plugin is staged for
  * the E4.x epic, which will fix the duplicate-enum-value
  * collisions in `tenant_service.proto` and `person_service.proto`
  * (E1.3 ships the contracts but cannot generate the Java stubs
  * until the collisions are resolved). The gRPC server is bound
- * in E1.4 and the integration test covers the REST surface; the
- * `TenantService` gRPC implementation lands in E3.2.
+ * in E1.4; E3.2e ships a Spring `@Component` stub
+ * (`com.genealogy.platform.services.tenant.grpc.TenantGrpcService`)
+ * that logs the bound port on startup; the real
+ * `TenantServiceImplBase` implementation lands in E4.x. Per
+ * E3.2e DoD the REST surface is the contract of record in E3.2.
  */
 plugins {
     java
@@ -99,9 +102,12 @@ tasks.withType<Copy>().configureEach {
 
 // The shared `contracts/protobuf/**` tree is the source of truth
 // per E1.3 but the protoc compiler is not yet wired here (see
-// the file header). E4 will add `com.google.protobuf` back once
-// the cross-package enum collisions are resolved; the contracts
-// are still validated by the E1.3 `ContractInvariantsTest`.
+// the file header). E4.x will add `com.google.protobuf` back
+// once the cross-package enum collisions are resolved; the
+// contracts are still validated by the E1.3
+// `ContractInvariantsTest`, and the gRPC port stays bound by
+// `spring-boot-starter-grpc` so the E3.2e stub bean can log
+// the listening port.
 
 dependencies {
     // E1.4 template — every platform concern is on this starter's
@@ -127,8 +133,11 @@ dependencies {
 
     // gRPC server side is wired by `spring-boot-starter-grpc`
     // (transitive from the platform starter) so the gRPC port is
-    // bound on startup; the `TenantService` implementation lands
-    // in E3.2 once the protobuf stubs are generated.
+    // bound on startup; the E3.2e stub
+    // (`com.genealogy.platform.services.tenant.grpc.TenantGrpcService`)
+    // logs the bound port and the real `TenantServiceImplBase`
+    // implementation lands in E4.x once the protobuf stubs are
+    // generated.
     implementation(libs.protobuf.java)
     implementation(libs.grpc.protobuf)
     implementation(libs.grpc.stub)

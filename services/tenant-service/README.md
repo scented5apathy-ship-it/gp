@@ -68,7 +68,7 @@ tenant aggregate, membership and OpenFGA mapping land in E3.2.
 | `TenantServiceApplication.java` | minimal `@SpringBootApplication` | unchanged |
 | `web/TenantInfoController.java` | `/api/v1/info` smoke endpoint | unchanged |
 | `web/TenantController.java` | `POST /api/v1/tenants` skeleton | E3.2 fills the aggregate |
-| `grpc/TenantGrpcServicePlaceholder.java` | gRPC port bound, no service | E3.2 implements `TenantServiceImplBase` |
+| `grpc/TenantGrpcService.java` | gRPC port bound (E3.2e stub) | E4.x implements `TenantServiceImplBase` once protobuf plugin wired |
 | `db/migration/V1__baseline_schema.sql` | creates `tenant_service` schema | E3.2 adds tenant + membership tables |
 
 ## Protobuf codegen

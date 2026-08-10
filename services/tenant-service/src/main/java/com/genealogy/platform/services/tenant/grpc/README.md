@@ -11,7 +11,12 @@ epics (E3.x).
 
 Contents:
 
-- `TenantGrpcServicePlaceholder.java`
+- `TenantGrpcService.java` — Spring `@Component` stub that logs
+  the bound gRPC port on startup (E3.2e). Real
+  `TenantServiceImplBase` implementation lands in E4.x once the
+  protobuf plugin is wired + cross-package enum collisions in
+  `tenant_service.proto` / `person_service.proto` are resolved
+  (see `services/tenant-service/build.gradle.kts` header).
 
 Boundary rules enforced by CI (`AGENTS.md` §2):
 
