@@ -1,0 +1,42 @@
+---
+# ABAC decision cache configuration (E3.4).
+#
+# Per ADR-E0.5-06 ("cache invalidation mandatory on every Write,
+# TTL-only forbidden") the ABAC decision cache is NEVER a
+# TTL-only cache. The TTL on `spec.maxAge` is the upper bound for
+# emergency-only staleness; every entry MUST carry an explicit
+# `invalidate` path that the role / policy / consent write flows
+# call after every successful mutation.
+apiVersion: v1
+kind: AbacCacheConfig
+metadata:
+  name: default-abac-cache
+  namespace: gp-platform
+spec:
+  maxAgeSeconds: 5
+  maxEntries: 4096
+  invalidationOnWrite: required
+  ttlOnlyForbidden: true
+  invalidators:
+    - name: membership.revoke
+      resourceType: membership
+    - name: membership.activate
+      resourceType: membership
+    - name: membership.invite
+      resourceType: membership
+    - name: tenant.update
+      resourceType: tenant
+    - name: tenant.change_plan
+      resourceType: tenant
+    - name: tenant.suspend
+      scope: tenant # wipes every cached decision for the tenant
+    - name: tenant.restore
+      resourceType: tenant
+    - name: tenant.soft_delete
+      scope: tenant
+    - name: entitlement.change
+      resourceType: tenant
+    - name: consent.revoked
+      resourceType: dna
+    - name: consent.expired
+      resourceType: dna

@@ -1,34 +1,72 @@
-# libs/platform-security
+# libs/platform-security — ABAC overlay (E3.4)
 
-Cross-cutting Spring Boot starter for the authentication and
-authorization glue shared by every Java service.
+Cross-cutting library that owns the **ABAC overlay** evaluated on
+every privileged mutation in the Java services. The overlay sits
+on top of the OpenFGA relationship check (E3.3) — OpenFGA decides
+relationships, ABAC decides contextual deny and obligations
+(redact / watermark / audit). Per `design.md` §6.2 the two are
+non-overlapping: OpenFGA does not know about living status,
+DNA consent or jurisdiction; ABAC does not encode the
+relationship graph.
 
-Per `design.md` §6, §12 and `ownership-catalog.md` §3 the platform
-delegates credential storage to Keycloak, relationship decisions to
-OpenFGA, ABAC overlays to the calling service and mTLS to Istio. This
-starter is the consistent entry point that wires those components
-together so individual services do not reinvent them.
+## Contents
 
-Concretely the starter ships:
+- `abac/` — ABAC overlay:
+  - `AbacPolicyEngine` interface (the seam every service depends on).
+  - `DefaultAbacPolicyEngine` — the reference implementation
+    (mirrors `contracts/abac/policy.yaml`).
+  - `AbacDecision` / `AbacObligation` / `ReasonCode` — value types.
+  - `AbacRequest` — the read-only request view.
+  - `AbacDecisionCache` — short-lived cache with explicit
+    invalidation (ADR-E0.5-06 forbids TTL-only).
+  - `OpenFgaAbacGuard` — the OpenFGA + ABAC combinator that
+    closes the Semgrep `no-openfga-allow-without-abac` rule.
+- `redaction/` — `PiiRedactor` (mirrors `contracts/abac/redaction.yaml`).
+- `domain/` — closed-set types: `PrivacyClass`,
+  `LivingStatus`, `ConsentRecord`, `Jurisdiction`.
 
-- `OidcTokenValidator` — validates access token issuer, audience and
-  JWKS once at the edge; BFFs and services trust the resolved
-  `TenantContext` carried via gRPC metadata (never via raw JWT).
-- `OpenFgaClient` — typed façade with cache, circuit breaker and
-  batched `check` for hot reads. Cache invalidation is wired to the
-  `gp.platform.v1.PolicyChanged` event.
-- `AbacEvaluator` — interface every service implements to overlay
-  living/minor status, DNA consent, residency and contextual deny
-  on top of an OpenFGA `allow`.
-- `SignedUrlSigner` — short-lived HMAC / asymmetric signed URLs for
-  media downloads, GEDCOM exports and audit bundles; keys are pulled
-  from Vault / cloud KMS, never committed.
-- `RedactionFilter` — Logback filter that scrubs PII, DNA and tokens
-  from structured logs and OTel attributes before emission.
+## Wire-up
 
-This directory is intentionally empty in the E1.1 scaffold: the
-Gradle module + `package-info.java` for the
-`com.genealogy.platform.libs` package already exist; implementation
-lands in later epics.
+Add to your service `build.gradle.kts`:
+
+```kotlin
+implementation(project(":libs:platform-security"))
+```
+
+Wire the beans:
+
+```kotlin
+@Bean
+fun abacPolicyEngine(clock: Clock): AbacPolicyEngine =
+    DefaultAbacPolicyEngine(clock, ...)
+
+@Bean
+fun abacDecisionCache(): AbacDecisionCache = AbacDecisionCache()
+
+@Bean
+fun abacEnforcer(engine: AbacPolicyEngine, cache: AbacDecisionCache): TenantAbacEnforcer =
+    TenantAbacEnforcer(engine, cache)
+```
+
+Per-service `TenantAbacEnforcer` lives in the service module
+(it carries the service-specific `Actions` enum).
+
+## Tests
+
+```bash
+./gradlew :libs:platform-security:test
+```
+
+29 / 29 PASS. The tests cover: deny-first rule order,
+consent revocation flow, living / minor redaction, jurisdictional
+block on GENETIC_RAW, cache TTL + invalidation,
+OpenFGA-deny short-circuit, cache invalidation on tenant revoke.
+
+## Related contracts
+
+- `contracts/abac/policy.yaml` — default policy contract.
+- `contracts/abac/cache.yaml` — cache + invalidators.
+- `contracts/abac/redaction.yaml` — field redaction list.
+- `platform/helm/genealogy-platform/files/abac-*.yaml` — chart mirror.
 
 Owner: platform-secondary. Reviewers: Security, Privacy.

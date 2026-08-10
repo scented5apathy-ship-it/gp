@@ -1,9 +1,13 @@
-# platform-security — trusted-context, audit hook, Vault client,
-# tenant-context propagation. Cross-cutting library; security team
-# is the secondary owner because changes affect every service.
-#
-# primary:   @genealogy/platform
-# secondary: @genealogy/security
-# on-call:   platform-oncall@genealogy.local
+# platform-security — ABAC overlay (E3.4)
 
-@genealogy/platform @genealogy/security
+Cross-cutting library that owns the ABAC overlay evaluated on
+every privileged mutation in the Java services. The overlay
+sits on top of the OpenFGA relationship check (E3.3); the
+two are non-overlapping per `design.md` §6.2.
+
+| Primary | Secondary | On-call |
+| --- | --- | --- |
+| `@genealogy/platform` | `@genealogy/security` | `platform-oncall` |
+
+See `README.md` and `runbook/abac.md` for the contract and
+operational guide.

@@ -1,0 +1,72 @@
+---
+# ABAC overlay default policy (E3.4).
+#
+# Source of truth for the in-service ABAC engine rules. The
+# matching Java implementation lives in
+# `libs/platform-security/src/main/java/com/genealogy/platform/libs/security/abac/DefaultAbacPolicyEngine.java`
+# and is exercised by the unit tests in the same package. Any
+# change to this file MUST land together with:
+#
+#   1. A matching change to `DefaultAbacPolicyEngine` + tests.
+#   2. An updated `platform/helm/genealogy-platform/files/abac-policy.yaml`
+#      mirror (byte-identical).
+#   3. A `compatibility.test.mjs` update if the contract changes.
+#
+# Per `agent-execution.md` §4.4 config-as-code is the contract;
+# the Java engine is the executor.
+apiVersion: v1
+kind: AbacPolicy
+metadata:
+  name: default-abac/v1
+  namespace: gp-platform
+spec:
+  engineId: default-abac/v1
+  description: >-
+    ABAC overlay evaluated on every privileged mutation. Mirrors
+    `design.md` §6.2 + `privacy-and-legal-gate.md` §5 / §7 / §DNA
+    and `requirements.md` R4 / R13 / R16.
+  livingRedactFields:
+    - birthDate
+    - deathDate
+    - currentResidence
+    - phone
+    - email
+    - occupation
+    - biography
+  minorRedactFields:
+    - birthDate
+    - currentResidence
+    - phone
+    - email
+    - school
+    - guardians
+    - biography
+  consentRequiredClasses:
+    - GENETIC_RAW
+    - GENETIC_DERIVED
+    - SENSITIVE
+  reasonCodes:
+    - id: living_redacted
+      description: Living person field redacted on public projection (privacy gate §7 P-01).
+    - id: minor_guardian_required
+      description: Subject is a minor on public projection (privacy gate §7 P-02).
+    - id: privacy_class_restricted
+      description: Resource privacy class forbids the requested action without consent.
+    - id: consent_missing
+      description: No active consent record for the requested purpose / action.
+    - id: consent_revoked
+      description: Consent was revoked; downstream processing must stop (privacy gate §D-06).
+    - id: jurisdiction_blocked
+      description: Jurisdiction disallows the requested processing (e.g. DNA export).
+    - id: contextual_deny
+      description: "Contextual rule denies: support window expired, soft-deleted, suspended."
+    - id: obligation_redact
+      description: ABAC allowed; obligation requires field redaction before serialization.
+    - id: obligation_watermark
+      description: ABAC allowed; obligation requires watermark on the response payload.
+    - id: obligation_audit
+      description: ABAC allowed; obligation requires an audit entry before/after the action.
+    - id: openfga_deny
+      description: OpenFGA relationship check returned deny.
+    - id: openfga_abac_missing
+      description: OpenFGA allow returned without an ABAC overlay call (Semgrep violation).

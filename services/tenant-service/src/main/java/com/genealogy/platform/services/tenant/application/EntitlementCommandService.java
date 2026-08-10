@@ -1,5 +1,6 @@
 package com.genealogy.platform.services.tenant.application;
 
+import com.genealogy.platform.libs.security.abac.Jurisdiction;
 import com.genealogy.platform.services.tenant.application.audit.TenantAuditPublisher;
 import com.genealogy.platform.services.tenant.application.outbox.EventPayloads;
 import com.genealogy.platform.services.tenant.application.outbox.OutboxEvent;
@@ -9,6 +10,7 @@ import com.genealogy.platform.services.tenant.application.persistence.TenantRepo
 import com.genealogy.platform.services.tenant.application.rls.TenantRlsTxInterceptor;
 import com.genealogy.platform.services.tenant.domain.entitlement.Entitlement;
 import com.genealogy.platform.services.tenant.domain.ids.TenantId;
+import com.genealogy.platform.services.tenant.domain.tenant.Tenant;
 import com.genealogy.platform.services.tenant.spring.context.OutboxCorrelationContext;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -33,6 +35,7 @@ public class EntitlementCommandService {
     private final OutboxWriter outboxWriter;
     private final TenantAuditPublisher audit;
     private final TenantRlsTxInterceptor rls;
+    private final TenantAbacEnforcer abac;
     private final java.time.Clock clock;
 
     public EntitlementCommandService(
@@ -41,6 +44,7 @@ public class EntitlementCommandService {
             OutboxWriter outboxWriter,
             TenantAuditPublisher audit,
             TenantRlsTxInterceptor rls,
+            TenantAbacEnforcer abac,
             java.time.Clock clock) {
         this.entitlementRepository =
                 Objects.requireNonNull(entitlementRepository, "entitlementRepository");
@@ -48,6 +52,7 @@ public class EntitlementCommandService {
         this.outboxWriter = Objects.requireNonNull(outboxWriter, "outboxWriter");
         this.audit = Objects.requireNonNull(audit, "audit");
         this.rls = Objects.requireNonNull(rls, "rls");
+        this.abac = Objects.requireNonNull(abac, "abac");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -56,9 +61,25 @@ public class EntitlementCommandService {
         rls.bind();
         // Validate the tenant exists so the foreign-key CHECK fires
         // before the entitlement row update.
-        tenantRepository.findById(cmd.tenantId()).orElseThrow(
+        Tenant tenant = tenantRepository.findById(cmd.tenantId()).orElseThrow(
                 () -> new TenantCommandService.TenantNotFoundException(
                         "tenant " + cmd.tenantId() + " not found"));
+
+        // E3.4 — ABAC overlay on entitlement mutation. The default
+        // engine denies suspended / soft-deleted tenants (privacy
+        // gate §6.4 T-07) and any actor not authorised by the
+        // tenant membership.
+        abac.requireAllow(
+                abac.tenantRequest(
+                        tenant.id().getValue(),
+                        com.genealogy.platform.spring.context.TrustedTenantContext.current()
+                                .getActorId(),
+                        "admin",
+                        tenant.id().getValue(),
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.SUSPENDED,
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.DELETED,
+                        Jurisdiction.ROW),
+                TenantAbacEnforcer.Actions.ENTITLEMENT_CHANGE);
 
         Entitlement current = entitlementRepository.findByTenantId(cmd.tenantId())
                 .orElseThrow(() -> new EntitlementNotFoundException(

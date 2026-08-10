@@ -293,7 +293,7 @@ _Requirements: NFR1–NFR8_
   - Version authorization model; có migration tuple và compatibility tests.
   - Đồng bộ tuple bằng idempotent workflow/event; xử lý revoke ưu tiên cao.
 
-- [ ] E3.4 Triển khai ABAC domain layer
+- [x] E3.4 Triển khai ABAC domain layer
 
   - Kiểm tra living/minor, privacy class, consent purpose, jurisdiction và contextual deny.
   - Kết hợp OpenFGA allow với ABAC obligations như redact, watermark và audit.

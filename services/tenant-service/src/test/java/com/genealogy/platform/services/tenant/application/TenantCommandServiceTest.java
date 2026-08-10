@@ -8,6 +8,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.genealogy.platform.libs.security.abac.AbacDecision;
+import com.genealogy.platform.libs.security.abac.AbacDecisionCache;
+import com.genealogy.platform.libs.security.abac.AbacObligation;
+import com.genealogy.platform.libs.security.abac.AbacPolicyEngine;
+import com.genealogy.platform.libs.security.abac.AbacRequest;
 import com.genealogy.platform.services.tenant.application.audit.TenantAuditPublisher;
 import com.genealogy.platform.services.tenant.application.outbox.OutboxEvent;
 import com.genealogy.platform.services.tenant.application.outbox.OutboxWriter;
@@ -25,6 +30,7 @@ import com.genealogy.platform.services.tenant.domain.tenant.TenantDisplayName;
 import com.genealogy.platform.services.tenant.domain.tenant.TenantPlan;
 import com.genealogy.platform.services.tenant.domain.tenant.TenantStatus;
 import com.genealogy.platform.services.tenant.domain.tenant.Timezone;
+import com.genealogy.platform.spring.context.TrustedTenantContext;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -71,8 +77,38 @@ class TenantCommandServiceTest {
         outboxWriter = mock(OutboxWriter.class);
         audit = mock(TenantAuditPublisher.class);
         rls = mock(TenantRlsTxInterceptor.class);
+        // E3.4 — tests use a permissive ABAC policy so the existing
+        // happy-path assertions stay green. The deny branch is
+        // covered by TenantAbacEnforcerTest.
+        AbacPolicyEngine allowAll = new AbacPolicyEngine() {
+            @Override
+            public AbacDecision evaluate(AbacRequest request) {
+                return AbacDecision.allow("test-allow", AbacObligation.none());
+            }
+
+            @Override
+            public String engineId() {
+                return "test/allow-all";
+            }
+        };
+        TenantAbacEnforcer abac = new TenantAbacEnforcer(allowAll,
+                new AbacDecisionCache());
         service = new TenantCommandService(tenantRepo, entitlementRepo,
-                outboxWriter, ids, audit, rls, CLOCK);
+                outboxWriter, ids, audit, rls, abac, CLOCK);
+        // E3.5 ships the real trusted context; for unit tests we
+        // seed it with a synthetic actor so the ABAC enforcer sees
+        // a non-null subjectId on the mutation paths.
+        TrustedTenantContext.set(TrustedTenantContext.of(
+                "tenant-aaaa-1111",
+                ACTOR,
+                "admin",
+                "corr-test",
+                "trace-test"));
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        TrustedTenantContext.clear();
     }
 
     @Nested

@@ -1,0 +1,54 @@
+---
+# ABAC redaction list (E3.4).
+#
+# Source of truth for the field-level redactor
+# (`libs/platform-security/.../redaction/PiiRedactor.java`) and
+# the runtime Telemetry redaction filter wired in `platform-telemetry`.
+# The lists split into:
+#   - `deny`: keys whose value is dropped entirely before logging;
+#   - `mask`: keys whose value is replaced by `[REDACTED:<key>]`;
+#   - `scrub`: regex patterns applied to free-text values
+#     regardless of key (email / SSN / token).
+#
+# Per `privacy-and-legal-gate.md` §11 the lists mirror the
+# forbidden payload classes; expanding the lists requires DPO
+# sign-off. CI fails on any reduction.
+apiVersion: v1
+kind: AbacRedactionList
+metadata:
+  name: default-redaction-list
+  namespace: gp-platform
+spec:
+  denyKeys:
+    - rawDna
+    - raw_dna
+    - dnaRaw
+    - genotype
+    - sequence
+    - kitPayload
+    - rawBytes
+    - biography
+    - freeText
+    - notes
+  maskKeys:
+    - email
+    - phone
+    - address
+    - currentResidence
+    - school
+    - guardians
+    - name
+    - firstName
+    - lastName
+    - birthDate
+    - deathDate
+  scrubPatterns:
+    - name: email
+      regex: '[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'
+      replacement: "[REDACTED:email]"
+    - name: ssn
+      regex: '\b\d{3}-\d{2}-\d{4}\b'
+      replacement: "[REDACTED:ssn]"
+    - name: token
+      regex: '(?i)(bearer\s+[A-Za-z0-9._\-]+|eyJ[A-Za-z0-9._\-]+)'
+      replacement: "[REDACTED:token]"

@@ -7,6 +7,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.genealogy.platform.libs.security.abac.AbacDecision;
+import com.genealogy.platform.libs.security.abac.AbacDecisionCache;
+import com.genealogy.platform.libs.security.abac.AbacObligation;
+import com.genealogy.platform.libs.security.abac.AbacPolicyEngine;
+import com.genealogy.platform.libs.security.abac.AbacRequest;
 import com.genealogy.platform.services.tenant.application.audit.TenantAuditPublisher;
 import com.genealogy.platform.services.tenant.application.outbox.OutboxEvent;
 import com.genealogy.platform.services.tenant.application.outbox.OutboxWriter;
@@ -23,6 +28,7 @@ import com.genealogy.platform.services.tenant.domain.tenant.Tenant;
 import com.genealogy.platform.services.tenant.domain.tenant.TenantDisplayName;
 import com.genealogy.platform.services.tenant.domain.tenant.TenantPlan;
 import com.genealogy.platform.services.tenant.domain.tenant.Timezone;
+import com.genealogy.platform.spring.context.TrustedTenantContext;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -57,8 +63,34 @@ class EntitlementCommandServiceTest {
         outboxWriter = mock(OutboxWriter.class);
         audit = mock(TenantAuditPublisher.class);
         TenantRlsTxInterceptor rls = mock(TenantRlsTxInterceptor.class);
+        // E3.4 — permissive ABAC for happy-path coverage; the deny
+        // branch is in TenantAbacEnforcerTest.
+        AbacPolicyEngine allowAll = new AbacPolicyEngine() {
+            @Override
+            public AbacDecision evaluate(AbacRequest request) {
+                return AbacDecision.allow("test-allow", AbacObligation.none());
+            }
+
+            @Override
+            public String engineId() {
+                return "test/allow-all";
+            }
+        };
+        TenantAbacEnforcer abac = new TenantAbacEnforcer(allowAll,
+                new AbacDecisionCache());
         service = new EntitlementCommandService(entitlementRepo, tenantRepo,
-                outboxWriter, audit, rls, CLOCK);
+                outboxWriter, audit, rls, abac, CLOCK);
+        TrustedTenantContext.set(TrustedTenantContext.of(
+                "tenant-aaaa-1111",
+                ACTOR,
+                "admin",
+                "corr-test",
+                "trace-test"));
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        TrustedTenantContext.clear();
     }
 
     @Test

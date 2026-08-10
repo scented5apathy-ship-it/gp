@@ -1,5 +1,6 @@
 package com.genealogy.platform.services.tenant.application;
 
+import com.genealogy.platform.libs.security.abac.Jurisdiction;
 import com.genealogy.platform.services.tenant.application.audit.TenantAuditPublisher;
 import com.genealogy.platform.services.tenant.application.outbox.EventPayloads;
 import com.genealogy.platform.services.tenant.application.outbox.OutboxEvent;
@@ -48,6 +49,7 @@ public class TenantCommandService {
     private final IdGenerator idGenerator;
     private final TenantAuditPublisher audit;
     private final TenantRlsTxInterceptor rls;
+    private final TenantAbacEnforcer abac;
     private final java.time.Clock clock;
 
     public TenantCommandService(
@@ -57,6 +59,7 @@ public class TenantCommandService {
             IdGenerator idGenerator,
             TenantAuditPublisher audit,
             TenantRlsTxInterceptor rls,
+            TenantAbacEnforcer abac,
             java.time.Clock clock) {
         this.tenantRepository = Objects.requireNonNull(tenantRepository, "tenantRepository");
         this.entitlementRepository =
@@ -65,6 +68,7 @@ public class TenantCommandService {
         this.idGenerator = Objects.requireNonNull(idGenerator, "idGenerator");
         this.audit = Objects.requireNonNull(audit, "audit");
         this.rls = Objects.requireNonNull(rls, "rls");
+        this.abac = Objects.requireNonNull(abac, "abac");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -91,11 +95,23 @@ public class TenantCommandService {
     public Results.TenantView update(Commands.UpdateTenant cmd) {
         rls.bind();
         Tenant tenant = loadOrThrow(cmd.tenantId());
+        abac.requireAllow(
+                abac.tenantRequest(
+                        tenant.id().getValue(),
+                        com.genealogy.platform.spring.context.TrustedTenantContext.current()
+                                .getActorId(),
+                        "admin",
+                        tenant.id().getValue(),
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.SUSPENDED,
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.DELETED,
+                        Jurisdiction.ROW),
+                TenantAbacEnforcer.Actions.TENANT_UPDATE);
         ensureVersion(tenant, cmd.expectedVersion());
         tenant.rename(cmd.displayName(), clock);
         tenantRepository.update(tenant);
         audit.publish("tenant.update", tenant.id(), tenant.slug().value(),
                 Map.of("version", Long.toString(tenant.version())));
+        abac.invalidateOnChange(tenant.id().getValue(), "tenant", tenant.id().getValue());
         return toView(tenant);
     }
 
@@ -103,12 +119,24 @@ public class TenantCommandService {
     public Results.TenantView changePlan(Commands.ChangePlan cmd) {
         rls.bind();
         Tenant tenant = loadOrThrow(cmd.tenantId());
+        abac.requireAllow(
+                abac.tenantRequest(
+                        tenant.id().getValue(),
+                        com.genealogy.platform.spring.context.TrustedTenantContext.current()
+                                .getActorId(),
+                        "admin",
+                        tenant.id().getValue(),
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.SUSPENDED,
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.DELETED,
+                        Jurisdiction.ROW),
+                TenantAbacEnforcer.Actions.TENANT_CHANGE_PLAN);
         ensureVersion(tenant, cmd.expectedVersion());
         tenant.changePlan(cmd.newPlan(), clock);
         tenantRepository.update(tenant);
         audit.publish("tenant.change_plan", tenant.id(), tenant.slug().value(),
                 Map.of("plan", cmd.newPlan().name(), "version",
                         Long.toString(tenant.version())));
+        abac.invalidateOnChange(tenant.id().getValue(), "tenant", tenant.id().getValue());
         return toView(tenant);
     }
 
@@ -116,11 +144,25 @@ public class TenantCommandService {
     public Results.TenantView suspend(Commands.SuspendTenant cmd) {
         rls.bind();
         Tenant tenant = loadOrThrow(cmd.tenantId());
+        abac.requireAllow(
+                abac.tenantRequest(
+                        tenant.id().getValue(),
+                        com.genealogy.platform.spring.context.TrustedTenantContext.current()
+                                .getActorId(),
+                        "admin",
+                        tenant.id().getValue(),
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.SUSPENDED,
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.DELETED,
+                        Jurisdiction.ROW),
+                TenantAbacEnforcer.Actions.TENANT_SUSPEND);
         ensureVersion(tenant, cmd.expectedVersion());
         tenant.suspend(clock);
         tenantRepository.update(tenant);
         audit.publish("tenant.suspend", tenant.id(), tenant.slug().value(),
                 Map.of("version", Long.toString(tenant.version())));
+        // Suspending a tenant must invalidate EVERY cached ABAC
+        // decision scoped to that tenant (privacy gate §6.4 T-07).
+        abac.invalidateTenant(tenant.id().getValue());
         return toView(tenant);
     }
 
@@ -128,11 +170,23 @@ public class TenantCommandService {
     public Results.TenantView restore(Commands.RestoreTenant cmd) {
         rls.bind();
         Tenant tenant = loadOrThrow(cmd.tenantId());
+        abac.requireAllow(
+                abac.tenantRequest(
+                        tenant.id().getValue(),
+                        com.genealogy.platform.spring.context.TrustedTenantContext.current()
+                                .getActorId(),
+                        "admin",
+                        tenant.id().getValue(),
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.SUSPENDED,
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.DELETED,
+                        Jurisdiction.ROW),
+                TenantAbacEnforcer.Actions.TENANT_RESTORE);
         ensureVersion(tenant, cmd.expectedVersion());
         tenant.restore(clock);
         tenantRepository.update(tenant);
         audit.publish("tenant.restore", tenant.id(), tenant.slug().value(),
                 Map.of("version", Long.toString(tenant.version())));
+        abac.invalidateOnChange(tenant.id().getValue(), "tenant", tenant.id().getValue());
         return toView(tenant);
     }
 
@@ -140,11 +194,25 @@ public class TenantCommandService {
     public Results.TenantView softDelete(Commands.SoftDeleteTenant cmd) {
         rls.bind();
         Tenant tenant = loadOrThrow(cmd.tenantId());
+        abac.requireAllow(
+                abac.tenantRequest(
+                        tenant.id().getValue(),
+                        com.genealogy.platform.spring.context.TrustedTenantContext.current()
+                                .getActorId(),
+                        "admin",
+                        tenant.id().getValue(),
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.SUSPENDED,
+                        tenant.status() == com.genealogy.platform.services.tenant.domain.tenant.TenantStatus.DELETED,
+                        Jurisdiction.ROW),
+                TenantAbacEnforcer.Actions.TENANT_SOFT_DELETE);
         ensureVersion(tenant, cmd.expectedVersion());
         tenant.softDelete(clock);
         tenantRepository.update(tenant);
         audit.publish("tenant.soft_delete", tenant.id(), tenant.slug().value(),
                 Map.of("version", Long.toString(tenant.version())));
+        // Soft-deleting a tenant must invalidate EVERY cached ABAC
+        // decision scoped to that tenant (privacy gate §6.4 T-07).
+        abac.invalidateTenant(tenant.id().getValue());
         return toView(tenant);
     }
 

@@ -1,6 +1,10 @@
 package com.genealogy.platform.services.tenant.application.config;
 
+import com.genealogy.platform.libs.security.abac.AbacDecisionCache;
+import com.genealogy.platform.libs.security.abac.AbacPolicyEngine;
+import com.genealogy.platform.libs.security.abac.DefaultAbacPolicyEngine;
 import com.genealogy.platform.services.tenant.application.TokenHasher;
+import com.genealogy.platform.services.tenant.application.TenantAbacEnforcer;
 import com.genealogy.platform.services.tenant.application.audit.TenantAuditPublisher;
 import com.genealogy.platform.services.tenant.application.keycloak.InMemoryKeycloakSubjectMirror;
 import com.genealogy.platform.services.tenant.application.keycloak.KeycloakSubjectMirror;
@@ -101,5 +105,43 @@ public class ApplicationConfig {
     @Bean
     public EntitlementRepository entitlementRepository(JdbcTemplate jdbc, Clock clock) {
         return new EntitlementRepository(jdbc, clock);
+    }
+
+    /**
+     * E3.4 — ABAC overlay engine. The default implementation
+     * mirrors {@code design.md} §6.2 + privacy-and-legal-gate.md
+     * §5 / §7 / §DNA. Unit tests override this bean with a stub
+     * that returns deny / allow as needed for the scenario.
+     */
+    @Bean
+    public AbacPolicyEngine abacPolicyEngine(Clock clock) {
+        return new DefaultAbacPolicyEngine(clock,
+                DefaultAbacPolicyEngine.DEFAULT_LIVING_REDACT_FIELDS,
+                DefaultAbacPolicyEngine.DEFAULT_MINOR_REDACT_FIELDS);
+    }
+
+    /**
+     * E3.4 — ABAC decision cache. The default 5-second max-age
+     * matches the OpenFGA eventual-consistency window (ADR-E0.5-06
+     * §"Cache invalidation mandatory on every Write"). The cache
+     * is never the source of truth; every mutation flow invalidates
+     * via {@link TenantAbacEnforcer#invalidateOnChange(String,
+     * String, String)}.
+     */
+    @Bean
+    public AbacDecisionCache abacDecisionCache() {
+        return new AbacDecisionCache();
+    }
+
+    /**
+     * E3.4 — ABAC overlay enforcer. Every privileged mutation in
+     * the tenant service goes through this enforcer before the
+     * aggregate is mutated.
+     */
+    @Bean
+    public TenantAbacEnforcer tenantAbacEnforcer(
+            AbacPolicyEngine abacPolicyEngine,
+            AbacDecisionCache abacDecisionCache) {
+        return new TenantAbacEnforcer(abacPolicyEngine, abacDecisionCache);
     }
 }

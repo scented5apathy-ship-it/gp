@@ -7,12 +7,18 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.genealogy.platform.libs.security.abac.AbacDecision;
+import com.genealogy.platform.libs.security.abac.AbacDecisionCache;
+import com.genealogy.platform.libs.security.abac.AbacObligation;
+import com.genealogy.platform.libs.security.abac.AbacPolicyEngine;
+import com.genealogy.platform.libs.security.abac.AbacRequest;
 import com.genealogy.platform.services.tenant.application.audit.TenantAuditPublisher;
 import com.genealogy.platform.services.tenant.application.keycloak.InMemoryKeycloakSubjectMirror;
 import com.genealogy.platform.services.tenant.application.outbox.OutboxEvent;
 import com.genealogy.platform.services.tenant.application.outbox.OutboxWriter;
 import com.genealogy.platform.services.tenant.application.persistence.InvitationRepository;
 import com.genealogy.platform.services.tenant.application.persistence.MembershipRepository;
+import com.genealogy.platform.services.tenant.application.persistence.TenantRepository;
 import com.genealogy.platform.services.tenant.application.rls.TenantRlsTxInterceptor;
 import com.genealogy.platform.services.tenant.domain.ids.IdGenerator;
 import com.genealogy.platform.services.tenant.domain.ids.InvitationId;
@@ -25,6 +31,7 @@ import com.genealogy.platform.services.tenant.domain.invitation.TokenHash;
 import com.genealogy.platform.services.tenant.domain.membership.Membership;
 import com.genealogy.platform.services.tenant.domain.membership.MembershipRole;
 import com.genealogy.platform.services.tenant.domain.membership.MembershipStatus;
+import com.genealogy.platform.spring.context.TrustedTenantContext;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -56,21 +63,61 @@ class MembershipCommandServiceTest {
 
     private MembershipRepository membershipRepo;
     private InvitationRepository invitationRepo;
+    private TenantRepository tenantRepo;
     private InMemoryKeycloakSubjectMirror mirror;
     private OutboxWriter outboxWriter;
     private TenantAuditPublisher audit;
+    private TenantAbacEnforcer abacEnforcer;
     private MembershipCommandService service;
 
     @BeforeEach
     void setUp() {
         membershipRepo = mock(MembershipRepository.class);
         invitationRepo = mock(InvitationRepository.class);
+        tenantRepo = mock(TenantRepository.class);
+        // Default: every tenant is present and not soft-deleted, so
+        // the ABAC enforcer sees a healthy snapshot and the revoke
+        // path can proceed.
+        when(tenantRepo.findById(any())).thenReturn(Optional.empty());
         mirror = new InMemoryKeycloakSubjectMirror(ids);
         outboxWriter = mock(OutboxWriter.class);
         audit = mock(TenantAuditPublisher.class);
         TenantRlsTxInterceptor rls = mock(TenantRlsTxInterceptor.class);
+
+        // E3.4 — tests run with a permissive ABAC policy so the
+        // existing happy-path assertions stay green. The
+        // DenyAbacEnforcerTest below exercises the deny branch.
+        AbacPolicyEngine allowAll = new AbacPolicyEngine() {
+            @Override
+            public AbacDecision evaluate(AbacRequest request) {
+                return AbacDecision.allow("test-allow", AbacObligation.none());
+            }
+
+            @Override
+            public String engineId() {
+                return "test/allow-all";
+            }
+        };
+        abacEnforcer = new TenantAbacEnforcer(allowAll, new AbacDecisionCache());
+
         service = new MembershipCommandService(membershipRepo, invitationRepo,
-                mirror, outboxWriter, ids, new TokenHasher.Sha256(), audit, rls, CLOCK);
+                tenantRepo, mirror, outboxWriter, ids, new TokenHasher.Sha256(),
+                audit, rls, abacEnforcer, CLOCK);
+
+        // E3.5 ships the real trusted context; for unit tests we
+        // seed it with a synthetic actor so the ABAC enforcer sees
+        // a non-null subjectId on the membership mutation path.
+        TrustedTenantContext.set(TrustedTenantContext.of(
+                "tenant-aaaa-1111",
+                "kc-actor-aaaa-1111",
+                "admin",
+                "corr-test",
+                "trace-test"));
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        TrustedTenantContext.clear();
     }
 
     @Nested

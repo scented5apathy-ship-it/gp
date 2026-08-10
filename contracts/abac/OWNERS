@@ -1,0 +1,7 @@
+# contracts/abac — ABAC overlay contracts (E3.4)
+
+| Primary | Secondary | On-call |
+| --- | --- | --- |
+| `@genealogy/platform` | `@genealogy/security` | `platform-oncall` |
+
+See `README.md` for the contract and validation steps.
