@@ -1,0 +1,178 @@
+# contracts/genealogy — Relationship graph and invariants contract
+# (E4.4).
+#
+# Source of truth for the family relationship aggregate and its
+# invariants. Mirrors `requirements.md` R3 (multi-tenant access),
+# R4 (person profile + relationship), R4.4 (certainty +
+# provenance), R8 (collaboration), R10 (living / privacy on
+# memorials), R18 (accessibility), and `design.md` §5.2 (the
+# conceptual `RELATIONSHIP + participant/role` model — the
+# platform prefers explicit participants instead of denormalised
+# `father_id` / `mother_id` columns) and §5.3 (temporal validity
+# expressed as a normalized interval + original expression +
+# certainty).
+#
+# The Java executor lives under
+# `services/genealogy-service/src/main/java/com/genealogy/platform/
+# services/genealogy/domain/` (relationship records + the
+# `RelationshipInvariants` self-check service). The Flyway
+# migration that lands the persistence contract is
+# `services/genealogy-service/src/main/resources/db/migration/
+# V5__relationship.sql`. The chart mirror (byte-identical) lives
+# at `platform/helm/genealogy-platform/files/relationship-graph-
+# policy.yaml` and is enforced by
+# `scripts/lint-relationship-config.mjs`.
+#
+# The aggregate stays compatible with the rest of the platform:
+# Person (E4.2) is referenced by opaque id; Date / Place (E4.3)
+# is reused verbatim when a relationship needs a date / place.
+# Authority ids on Place are still provider-neutral (E4.3).
+apiVersion: v1
+kind: RelationshipGraphPolicy
+metadata:
+  name: default-relationship/v1
+  namespace: gp-platform
+spec:
+  policyId: default-relationship/v1
+  description: >-
+    Relationship graph defaults. Mirrors `requirements.md` R3 /
+    R4 / R4.4 / R8 / R10 / R18 and `design.md` §5.2 +
+    §5.3 + §6.2 (ABAC obligations). The platform never relies on
+    denormalised parent columns; every family link is a
+    `Relationship` aggregate with one or more `ParticipantRef`
+    rows carrying an explicit `role` and a `temporalValidity`
+    window. Self-link / cycles are rejected at the domain layer;
+    chronological conflict with another relationship on the same
+    participant is surfaced as a soft warning only and never as
+    a hard deny (per the Epic DoD "cảnh báo chronological
+    conflict").
+  # R4.4 — closed-set of relationship kinds. Mirrors the task
+  # line "Biological / adoptive / foster / guardian / step /
+  # partner / custom". CUSTOM is included so international /
+  # cultural lineage terms (e.g. `nghĩa phụ`, `godparent`,
+  # `milk-kinship`) can be carried verbatim under a free-form
+  # label without polluting the closed-set semantics.
+  relationshipKinds:
+    - BIOLOGICAL_PARENT
+    - ADOPTIVE_PARENT
+    - FOSTER_PARENT
+    - STEP_PARENT
+    - SURROGATE_PARENT
+    - GUARDIAN
+    - GODPARENT
+    - PARTNER
+    - SIBLING
+    - HALF_SIBLING
+    - STEP_SIBLING
+    - CUSTOM
+  # R4.4 — partner sub-kinds. The KIND `PARTNER` is too broad
+  # for the platform's certainty + cultural semantics, so the
+  # contract narrows partner relations via `partnerSubKinds`
+  # (married, civil union, unmarried, divorced, widowed, annulled,
+  # unknown). PARTNER must always carry a sub-kind; OTHER
+  # sub-kinds MAY omit it.
+  partnerSubKinds:
+    - MARRIED
+    - CIVIL_UNION
+    - COMMON_LAW
+    - UNMARRIED
+    - DIVORCED
+    - WIDOWED
+    - ANNULLED
+    - UNKNOWN
+  # R4.4 — participant role closed-set. `PARENT`, `CHILD`,
+  # `SIBLING`, `PARTNER`, `SUBJECT`. The role is determined by
+  # the kind: e.g. a BIOLOGICAL_PARENT relationship MUST have at
+  # least one PARENT and one CHILD; a PARTNER relationship MUST
+  # have at least two PARTNER roles.
+  participantRoles:
+    - PARENT
+    - CHILD
+    - SIBLING
+    - PARTNER
+    - SUBJECT
+    - GUARDIAN
+    - WARD
+  # R4.4 — certainty closed-set mirrors
+  # `date-place-policy.yaml::spec.certainties` and
+  # `person-policy.yaml::spec.*`. The Java enum is shared.
+  certainties:
+    - HYPOTHESIS
+    - ASSERTED
+    - VERIFIED
+    - DISPUTED
+  # R4.4 — provenance status closed-set. The platform tracks a
+  # separate `provenance` axis (different from certainty) so a
+  # source can be ASSERTED (user said so) but PROVENANCE=IMPORTED
+  # (came from a GEDCOM) — important for the merge / dispute
+  # workflow (E4.6).
+  provenanceStatuses:
+    - USER_ENTERED
+    - IMPORTED
+    - VERIFIED_BY_SOURCE
+    - CORRECTION
+  # R10 — living-link obligation. When at least one participant
+  # is a living person, the relationship default visibility
+  # MUST be downgraded to PRIVATE until a privacy officer
+  # overrides it. The renderer / search projection reads this
+  # flag.
+  livingLinkRedactsByDefault: true
+  # R4.1 — cap on number of participants per aggregate. The
+  # platform supports poly-parental families (3+ parents) and
+  # polygamous unions; the cap exists so the renderer / search
+  # projection never receives an unbounded blob.
+  maxParticipantsPerRelationship: 8
+  # R4.4 — cap on number of relationships per tree. The renderer
+  # never has to materialise an unbounded graph. Anything
+  # exceeding the cap is rejected at the command service layer
+  # (E4.7) and the caller is told to split.
+  maxRelationshipsPerTree: 200000
+  # R10 / NFR4 — recurring memorial hooks. A relationship that
+  # involves a deceased subject MAY carry a date (E4.3) used for
+  # recurring memorials. The renderer reads this flag to decide
+  # whether to emit a memorial event on the anniversary.
+  memorialRecurrenceEnabled: true
+  # R4.4 / NFR4 — audit hooks. Each relationship aggregate
+  # mutation emits an audit event with a closed-set action.
+  # Audit class = `consent` because relationship changes shift
+  # the privacy surface (R10 / living-link redaction).
+  auditClassOnCreate: consent
+  auditActionOnCreate: relationship.created
+  auditClassOnUpdate: consent
+  auditActionOnUpdate: relationship.updated
+  auditClassOnEnd: consent
+  auditActionOnEnd: relationship.ended
+  auditClassOnDispute: consent
+  auditActionOnDispute: relationship.disputed
+  # R4.4 / NFR4 — chronological conflict policy. The invariant
+  # service MUST NOT hard-deny an overlap; it MUST emit a
+  # warning (closed-set reason code) so the operator can review.
+  # Hard-denying would lock out legitimate biology (twins with
+  # overlapping `BETWEEN` windows).
+  chronologicalConflictPolicy: warn-only
+  # R4.4 — cycle / self-link policy. Self-link and any cycle
+  # (a chain A→B→…→A) is rejected at the domain layer because
+  # the renderer / search projection cannot recover from a
+  # malformed graph. This is a hard deny.
+  selfLinkPolicy: deny
+  cyclePolicy: deny
+  # R4.4 — unknown participant policy. The platform supports a
+  # synthetic `UNKNOWN` subject (a placeholder person row) so
+  # families with a missing parent can still attach a date /
+  # place / certainty. The unknown subject is identified by an
+  # opaque id; it MUST NOT collide with a real Person.
+  unknownParticipantLabel: UNKNOWN
+  # R10 / NFR1 — dispute window. When two relationships on the
+  # same participant carry mutually-exclusive kinds (e.g.
+  # BIOLOGICAL_PARENT + ADOPTIVE_PARENT with overlapping
+  # validity), the platform keeps both rows in DISPUTED state
+  # until an editor resolves them. The renderer MUST show
+  # DISPUTED rows as a soft notice, never silently pick one.
+  disputedAlternativeVisibility: soft-notice
+  # R10 — partner overlap. Multiple overlapping PARTNER
+  # relationships on the same subject are allowed (cultural
+  # polygamy, sequential relationships); the platform keeps
+  # them side-by-side and the renderer annotates them with
+  # `validFrom` / `validUntil` so the user can read the
+  # timeline.
+  partnerOverlapPolicy: allow-with-validity
