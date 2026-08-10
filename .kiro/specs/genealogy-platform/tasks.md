@@ -342,7 +342,7 @@ _Requirements: R1, R2, R3, R13, R16, NFR1, NFR4, NFR8_
   - Lưu UTC, IANA timezone, calendar ID và normalized interval.
   - Place có hierarchy, historical names, coordinates và provider-neutral authority reference.
 
-- [ ] E4.4 Relationship graph và invariants
+- [x] E4.4 Relationship graph và invariants
 
   - Biological/adoptive/foster/guardian/step/partner/custom, certainty và temporal validity.
   - Hỗ trợ nhiều phụ huynh/phối ngẫu, unknown participant và disputed alternatives.
