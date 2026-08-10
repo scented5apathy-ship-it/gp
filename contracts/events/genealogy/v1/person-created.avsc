@@ -2,7 +2,7 @@
   "type": "record",
   "name": "PersonCreated",
   "namespace": "com.genealogy.platform.events.genealogy.v1",
-  "doc": "Emitted when a new person aggregate is created in a tree. Compatibility policy = BACKWARD per ADR-E0.5-08. Forbidden payload fields per design.md §7.3: dnaRaw, rawGenotype, dna, kit, rawDna, raw_dna.",
+  "doc": "Emitted when a new person aggregate is created in a tree. Carries the closed-set livingStatus / privacyLevel and opaque ids only. The full name / identifier / biography payload stays on the aggregate table; events carry opaque references so the platform never replays raw PII through Kafka. Compatibility policy = BACKWARD per ADR-E0.5-08.",
   "fields": [
     {
       "name": "personId",
@@ -14,7 +14,13 @@
     },
     {
       "name": "primaryName",
-      "type": "string"
+      "type": "string",
+      "doc": "Display label (preferred name) at creation time. Use case-folded matching downstream. NOT a free-form PII dump."
+    },
+    {
+      "name": "nameCount",
+      "type": "int",
+      "doc": "Number of name rows (birth / preferred / alias / etc.) attached to the person at creation."
     },
     {
       "name": "livingStatus",
@@ -23,6 +29,19 @@
         "name": "LivingStatus",
         "symbols": ["LIVING", "DECEASED", "UNKNOWN", "INFERRED_LIVING"]
       }
+    },
+    {
+      "name": "privacyLevel",
+      "type": {
+        "type": "enum",
+        "name": "PrivacyLevel",
+        "symbols": ["PRIVATE", "TREE_DEFAULT", "UNLISTED", "PUBLIC"]
+      }
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque subject id (Keycloak sub) of the actor that created the aggregate. Never the email / username."
     },
     {
       "name": "createdAt",

@@ -2,7 +2,7 @@
   "type": "record",
   "name": "PersonUpdated",
   "namespace": "com.genealogy.platform.events.genealogy.v1",
-  "doc": "Emitted when a person aggregate is updated. Carries the changed fields only; consumers should treat absent fields as 'unchanged'. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "doc": "Emitted when a person aggregate is updated. Carries the changed field paths only; consumers should treat absent fields as 'unchanged'. The event carries the new aggregate version and the opaque actor id; raw DNA / biography / access tokens / PII never appear. Compatibility policy = BACKWARD per ADR-E0.5-08.",
   "fields": [
     {
       "name": "personId",
@@ -18,12 +18,27 @@
       "doc": "Aggregate version after applying the update."
     },
     {
+      "name": "previousVersion",
+      "type": "long",
+      "doc": "Aggregate version before applying the update. Consumers can detect dropped / compacted updates."
+    },
+    {
       "name": "changedFields",
       "type": {
         "type": "array",
         "items": "string"
       },
-      "doc": "List of dotted field paths that changed in this event."
+      "doc": "List of dotted field paths that changed in this event. Closed-set values: livingStatus, privacyLevel, names[], identifiers[], pronouns[], biography, genderDescription, verifiedUserId."
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque subject id (Keycloak sub) of the actor that applied the update."
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "doc": "Free-form reason supplied by the actor; the platform caps at 256 chars and forbids raw DNA / access token literals."
     },
     {
       "name": "updatedAt",

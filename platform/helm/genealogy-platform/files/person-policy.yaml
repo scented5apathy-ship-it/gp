@@ -1,0 +1,135 @@
+# contracts/genealogy — Person aggregate contract (E4.2).
+#
+# Source of truth for the person aggregate. Mirrors
+# `requirements.md` R4 (person profile + privacy) and `design.md`
+# §5.2 (the conceptual genealogy model) + §6.2 (ABAC obligations).
+#
+# Per `agent-execution.md` §4.4 the YAML contract is the source
+# of truth; the Java executor lives in
+# `services/genealogy-service/src/main/java/com/genealogy/platform/
+# services/genealogy/domain/`. The Avro schemas under
+# `contracts/events/genealogy/v1/person-*.avsc` describe the wire
+# format of every event the person-service emits.
+#
+# Mirror (byte-identical) lives under
+# `platform/helm/genealogy-platform/files/person-policy.yaml` and is
+# enforced by `scripts/lint-person-config.mjs`.
+apiVersion: v1
+kind: PersonPolicy
+metadata:
+  name: default-person/v1
+  namespace: gp-platform
+spec:
+  policyId: default-person/v1
+  description: >-
+    Person aggregate defaults. Mirrors `requirements.md` R4
+    (multiple names / scripts / alias / pronoun / living status /
+    biography / identifiers / privacy level / version / actor /
+    timestamp / diff) and `design.md` §5.2 (person is a historical
+    subject, decoupled from User).
+  # R4.1 — every person MAY carry multiple names. The set is a
+  # closed-set so the renderer / search projection can route on
+  # the kind deterministically.
+  nameKinds:
+    - BIRTH
+    - PREFERRED
+    - MARRIED
+    - RELIGIOUS
+    - PROFESSIONAL
+    - ALIAS
+    - NICKNAME
+  # R4.1 — script tag set is the closed-set ISO 15924 list used
+  # by the renderer. The Java executor stores the script tag as a
+  # string but the contract pins the closed set.
+  nameScripts:
+    - Latn
+    - Cyrl
+    - Hans
+    - Hant
+    - Jpan
+    - Kana
+    - Hang
+    - Arab
+    - Hebr
+    - Thai
+    - Latn-VN
+    - Latn-FR
+  # R4.1 — pronouns are a closed-set (R18.4 / WCAG-friendly).
+  pronouns:
+    - HE_HIM
+    - SHE_HER
+    - THEY_THEM
+    - ZE_ZIR
+    - XE_XEM
+    - SELF_DESCRIBED
+    - NOT_SPECIFIED
+  # R4.1 + R18.1 — gender descriptive field is a closed-set that
+  # the renderer never coerces into a binary. The platform
+  # never assumes a binary mapping.
+  genderDescriptions:
+    - FEMALE
+    - MALE
+    - NONBINARY
+    - UNDISCLOSED
+    - SELF_DESCRIBED
+  # R4.1 / R13 — living status is a closed-set. The Java enum
+  # matches these symbols exactly.
+  livingStatuses:
+    - LIVING
+    - DECEASED
+    - UNKNOWN
+    - INFERRED_LIVING
+  # R4.4 — privacy level per field. Visibility defaults to PRIVATE;
+  # PUBLIC projection must apply its own redaction before serving.
+  privacyLevels:
+    - PRIVATE
+    - TREE_DEFAULT
+    - UNLISTED
+    - PUBLIC
+  # R4.1 — identifier kinds (external). The platform stores the
+  # raw value but NEVER publishes it on the event bus; the event
+  # carries only opaque internal references.
+  identifierKinds:
+    - WIKIDATA_QID
+    - FAMILYSEARCH_ID
+    - ANCESTRY_ID
+    - FINDAGRAVE_ID
+    - GENI_ID
+    - LOCAL_SLUG
+    - GEDCOM_XREF
+  # R4.1 — biography / notes cap (R10.2 — abuse protection).
+  maxBiographyChars: 8192
+  maxNamesPerPerson: 16
+  maxIdentifiersPerPerson: 16
+  maxPronounsPerPerson: 4
+  # R4.6 / NFR4 — every change MUST carry version + actor +
+  # reason + diff. The audit event is `audit-class=consent` per
+  # `contracts/audit/policy.yaml` (privacy-class changes go under
+  # consent because they alter the data-subject visibility surface).
+  auditClassOnChange: consent
+  auditActionOnChange: person.updated
+  auditClassOnCreate: consent
+  auditActionOnCreate: person.created
+  auditClassOnPrivacyChange: consent
+  auditActionOnPrivacyChange: person.privacyChanged
+  auditClassOnLivingStatusChange: consent
+  auditActionOnLivingStatusChange: person.livingStatusChanged
+  auditClassOnSoftDelete: consent
+  auditActionOnSoftDelete: person.deleted
+  # R4.4 — User↔Person linking MUST NOT be implicit. The
+  # `verifiedUserId` is null until a verification workflow binds
+  # a Keycloak subject to the person (E4.x). Until then the
+  # aggregate is purely historical.
+  userLinkRequiresVerification: true
+  # R4.6 — history retention. Append-only history rows survive
+  # the soft-delete of the aggregate; they are required for the
+  # audit ledger (E3.6) and for reversal (E4.6 merge history).
+  historyRetentionSeconds: 63072000
+  # R4.6 — soft-delete behaviour. `DELETED` is terminal; the
+  # person still occupies its slot for audit purposes but the
+  # search / public projections drop it.
+  softDeleteTerminalState: DELETED
+  lifecycleStates:
+    - ACTIVE
+    - MERGED
+    - DELETED

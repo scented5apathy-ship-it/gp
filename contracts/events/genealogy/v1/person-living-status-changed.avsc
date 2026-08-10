@@ -1,0 +1,49 @@
+{
+  "type": "record",
+  "name": "PersonLivingStatusChanged",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a person aggregate's livingStatus changes. Consumers MUST re-evaluate privacy obligations and redaction when LIVING / INFERRED_LIVING is set. Carries the from / to living status and the opaque actor. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "personId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "aggregateVersion",
+      "type": "long"
+    },
+    {
+      "name": "from",
+      "type": {
+        "type": "enum",
+        "name": "LivingStatus",
+        "symbols": ["LIVING", "DECEASED", "UNKNOWN", "INFERRED_LIVING"]
+      }
+    },
+    {
+      "name": "to",
+      "type": {
+        "type": "enum",
+        "name": "LivingStatus",
+        "symbols": ["LIVING", "DECEASED", "UNKNOWN", "INFERRED_LIVING"]
+      }
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "reason",
+      "type": "string"
+    },
+    {
+      "name": "changedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

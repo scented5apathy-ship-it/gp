@@ -1,0 +1,49 @@
+{
+  "type": "record",
+  "name": "PersonPrivacyChanged",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a person aggregate's privacyLevel is changed. Privacy changes go through the consent audit-class per `contracts/genealogy/person-policy.yaml`. Carries the from / to privacy levels and the opaque actor. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "personId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "aggregateVersion",
+      "type": "long"
+    },
+    {
+      "name": "from",
+      "type": {
+        "type": "enum",
+        "name": "PrivacyLevel",
+        "symbols": ["PRIVATE", "TREE_DEFAULT", "UNLISTED", "PUBLIC"]
+      }
+    },
+    {
+      "name": "to",
+      "type": {
+        "type": "enum",
+        "name": "PrivacyLevel",
+        "symbols": ["PRIVATE", "TREE_DEFAULT", "UNLISTED", "PUBLIC"]
+      }
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "reason",
+      "type": "string"
+    },
+    {
+      "name": "changedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}
