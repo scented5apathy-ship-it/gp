@@ -1,0 +1,130 @@
+---
+# Trusted tenant context contract (E3.5).
+#
+# Source of truth for the BFF → gRPC → service trusted context
+# pipeline. The matching Java interceptors live in
+# `libs/platform-spring-boot-starter/src/main/java/com/genealogy/platform/spring/grpc/`
+# and the matching BFF reconciliation logic in
+# `apps/web-bff/src/main/java/com/genealogy/platform/webbff/reconcile/`.
+#
+# Per `agent-execution.md` §4.4 + `design.md` §6.1 + §7.2 and
+# `privacy-and-legal-gate.md` TM-02 ("Tenant context modified in
+# transit → Istio mTLS + BFF-signed context metadata + service
+# re-validation"), this file is the contract; Java + TypeScript
+# are the executors.
+#
+# Per ADR-E0.5-06 the BFF MUST reconcile the tenant selection
+# against the Keycloak subject's ACTIVE memberships before
+# propagating the context. Per ADR-E0.5-01 the service-side
+# gRPC interceptor MUST reject any `Context` field that the
+# client supplied directly.
+#
+# Any change to this file MUST land together with:
+#   1. A matching change to the gRPC interceptor + tests.
+#   2. A matching change to the BFF reconciler + tests.
+#   3. An updated `platform/helm/genealogy-platform/files/trusted-context-policy.yaml`
+#      mirror (byte-identical).
+apiVersion: v1
+kind: TrustedContextPolicy
+metadata:
+  name: trusted-context/v1
+  namespace: gp-platform
+spec:
+  policyId: trusted-context/v1
+  description: >-
+    Trusted tenant context propagation contract — BFF tenant
+    reconciliation + gRPC metadata convention + service-side
+    rejection of client-supplied tenant_id / actor_id / actor_role.
+    Mirrors `design.md` §6.1 / §7.2 + `privacy-and-legal-gate.md`
+    TM-02 / T-01.
+  # Source of the trusted tenant identity per surface. Closed set —
+  # additions require an ADR (the catalogue is the audit contract).
+  sources:
+    rest:
+      tenantId:
+        # The X-Tenant-Id header is the trusted source — it must be
+        # reconciled against the Keycloak subject's memberships
+        # before the service consumes it.
+        from: X-Tenant-Id
+        reconcileWith: membership
+        refuseIfMismatch: true
+      actorId:
+        # Always the validated JWT subject; the body / query is
+        # never accepted.
+        from: jwt.sub
+        refuseIfClientSet: true
+      actorRole:
+        # Server-derived from the membership row matching the
+        # X-Tenant-Id header; clients cannot promote themselves.
+        from: membership.role
+        refuseIfClientSet: true
+    grpc:
+      tenantId:
+        # Server-derived from Keycloak JWT claim `groups` +
+        # the X-Tenant-Selection gRPC metadata issued by the BFF.
+        # The proto `Context.tenant_id` field MUST be empty on
+        # inbound requests; the interceptor overwrites it.
+        from: bffMetadata.x-tenant-id
+        rejectIfContextFieldSet: true
+      actorId:
+        from: jwt.sub
+        rejectIfContextFieldSet: true
+      actorRole:
+        from: bffMetadata.x-actor-role
+        rejectIfContextFieldSet: true
+      correlationId:
+        from: grpcMetadata.x-correlation-id
+        generateIfAbsent: true
+  # Fields the service MUST refuse when supplied by the client
+  # outside the sanctioned surfaces. Closed set.
+  refuseClientSupplied:
+    rest:
+      - request.body.tenantId
+      - request.body.tenant_id
+      - request.query.tenantId
+      - request.query.tenant_id
+      - request.params.tenantId
+      - request.params.tenant_id
+      - request.body.role
+      - request.body.actor_role
+      - request.body.subject
+      - request.body.actor_id
+    grpc:
+      - message.context.tenant_id
+      - message.context.actor_id
+      - message.context.actor_role
+  # mTLS / SPIFFE posture for the BFF → service call.
+  mtls:
+    enabled: true
+    mode: STRICT
+    # The expected SAN/URI of the BFF service account; the
+    # interceptor rejects any inbound call whose peer SPIFFE id
+    # does not match. "gp-bff/sa/<bff-service-account>" is the
+    # E2.5 charter; the runtime check is below.
+    expectedPeerPattern: '^spiffe://cluster\.local/ns/gp-bff/sa/.+$'
+  # BFF reconciliation contract — the tenant selection must match
+  # an ACTIVE membership of the JWT subject. SUSPENDED / REVOKED
+  # / INVITED memberships do NOT authorise a tenant selection.
+  reconciliation:
+    membershipStatusRequired: ACTIVE
+    mismatchResponse:
+      restStatus: 404
+      grpcCode: NOT_FOUND
+      # 404 (not 403) per E3.2d DoD — avoids leaking the existence
+      # of the foreign tenant.
+      leakAvoidance: avoid-tenant-existence-leak
+  # Headers carried from REST → gRPC metadata by the BFF client
+  # interceptor. Closed set.
+  forwardedHeaders:
+    - X-Tenant-Id
+    - X-Correlation-Id
+    - X-Idempotency-Key
+    - User-Agent
+  # gRPC metadata keys (lowercase per gRPC convention).
+  grpcMetadataKeys:
+    tenantId: x-tenant-id
+    actorId: x-actor-id
+    actorRole: x-actor-role
+    correlationId: x-correlation-id
+    idempotencyKey: x-idempotency-key
+    userAgent: x-user-agent

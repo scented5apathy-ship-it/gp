@@ -30,6 +30,9 @@
 /contracts/openapi/            @genealogy/web @genealogy/platform
 /contracts/protobuf/           @genealogy/platform
 /contracts/events/             @genealogy/platform
+/contracts/abac/               @genealogy/platform @genealogy/security
+/contracts/openfga/            @genealogy/platform @genealogy/security
+/contracts/trusted-context/    @genealogy/platform @genealogy/security
 
 /platform/                     @genealogy/platform
 /config/teams.yaml             @genealogy/platform
