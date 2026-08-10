@@ -379,7 +379,7 @@ _Requirements: R3, R4, R5, R7, R8, R10, R18, NFR1, NFR4, NFR7_
 
 ### Subtasks
 
-- [ ] E5.1 Benchmark tree renderer
+- [x] E5.1 Benchmark tree renderer
 
   - So sánh candidate với 10K/100K nodes, mobile memory, keyboard, print và bundle size.
   - Prototype SVG/canvas/hybrid và layout trong Web Worker.
