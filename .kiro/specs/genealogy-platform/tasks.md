@@ -299,7 +299,7 @@ _Requirements: NFR1–NFR8_
   - Kết hợp OpenFGA allow với ABAC obligations như redact, watermark và audit.
   - Cache quyết định ngắn hạn và invalidation khi role/policy/consent đổi.
 
-- [ ] E3.5 Trusted tenant context
+- [x] E3.5 Trusted tenant context
 
   - BFF đối chiếu tenant selection với membership; truyền context qua gRPC trong Istio mTLS.
   - Service tự xác minh identity/context và luôn thêm tenant predicate.
