@@ -354,7 +354,7 @@ _Requirements: R1, R2, R3, R13, R16, NFR1, NFR4, NFR8_
   - Claim có hypothesis/asserted/verified/disputed, confidence và source references.
   - Không coi imported claim là verified mặc định.
 
-- [ ] E4.6 Merge và history
+- [x] E4.6 Merge và history
 
   - Candidate scoring, comparison, preview, merge command và source preservation.
   - Bảo toàn redirect/reference; hỗ trợ reversal theo domain rules.
