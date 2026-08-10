@@ -196,7 +196,13 @@ _Requirements: NFR1–NFR8_
   - Cấu hình verification, recovery, MFA, federation, key rotation và logout/revoke.
   - Hạn chế custom extension; mọi thay đổi flow có regression tests.
 
-- [ ] E3.2 Triển khai tenant-service
+- [x] E3.2 Triển khai tenant-service
+
+  **Epic status: DONE** — 5/5 subtask `[x]` (a–e commits `de42dab`,
+  `9de466f`, `2e0b6d1`, `23fb60b`, `07c7096`); epic evidence
+  `evidence/E3.2.md` + 5 subtask evidence; integration tests
+  CI-only (Docker Desktop socket auth in sandbox); local
+  Kiểm thử/DoD gates all PASS.
 
   - Model Tenant, Membership, Invitation, Entitlement, plan/quota và lifecycle bằng jOOQ/Flyway.
   - Đồng bộ Keycloak subject, nhưng giữ Person và User tách biệt.

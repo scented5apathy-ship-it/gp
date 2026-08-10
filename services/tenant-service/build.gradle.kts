@@ -42,7 +42,7 @@ java {
             java.srcDirs("src/integrationTest/java")
             resources.srcDirs("src/integrationTest/resources")
             compileClasspath += sourceSets["main"].output + configurations["testRuntimeClasspath"]
-            runtimeClasspath += output + sourceSets["test"].output + configurations["testRuntimeClasspath"]
+            runtimeClasspath += sourceSets["main"].output + output + sourceSets["test"].output + configurations["testRuntimeClasspath"]
         }
     }
 }
