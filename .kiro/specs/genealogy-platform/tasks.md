@@ -305,7 +305,7 @@ _Requirements: NFR1–NFR8_
   - Service tự xác minh identity/context và luôn thêm tenant predicate.
   - Từ chối `tenant_id`, role hoặc subject do client tự khai báo.
 
-- [ ] E3.6 Audit foundation
+- [x] E3.6 Audit foundation
   - Triển khai append-only audit entries, integrity evidence, retention và export.
   - Audit login, role/tuple, policy, support access, download và consent.
   - Không ghi token, raw DNA hoặc sensitive payload.
