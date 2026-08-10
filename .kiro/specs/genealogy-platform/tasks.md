@@ -250,7 +250,7 @@ _Requirements: NFR1–NFR8_
     - DoD: unit + IT happy-path create-tenant → invite-member → activate-membership
       → revoke-membership; outbox row xuất hiện cho mỗi mutation.
 
-  - [ ] E3.2d REST controllers honoring OpenAPI contract
+  - [x] E3.2d REST controllers honoring OpenAPI contract
 
     - `TenantController` chuẩn RFC 9457 (problem+json), `Idempotency-Key`,
       `If-Match`, ETag, cursor pagination cho list, `X-Correlation-Id`.

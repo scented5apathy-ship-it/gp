@@ -13,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -106,6 +107,34 @@ public class TenantRepository {
         }
     }
 
+    /**
+     * Page of tenants the runtime can see. RLS narrows the result set
+     * to {@code app.tenant_id}; the {@code pageSize + 1} trick returns
+     * one extra row so the caller can derive {@code nextCursor}.
+     *
+     * <p>Cursor encoding: base64-encoded {@code "<createdAtMillis>|<id>"}
+     * so the next page resumes from the row after the cursor in a
+     * stable order. The cursor is opaque to the caller.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public List<Tenant> findPage(int pageSize, String cursor) {
+        int limit = Math.max(1, pageSize) + 1;
+        if (cursor == null || cursor.isBlank()) {
+            return jdbc.query(
+                    "SELECT " + COLUMNS + " FROM tenant_service.tenants "
+                            + "ORDER BY created_at ASC, id ASC LIMIT ?",
+                    MAPPER,
+                    limit);
+        }
+        Cursor c = Cursor.decode(cursor);
+        return jdbc.query(
+                "SELECT " + COLUMNS + " FROM tenant_service.tenants "
+                        + "WHERE (created_at, id) > (?, ?) "
+                        + "ORDER BY created_at ASC, id ASC LIMIT ?",
+                MAPPER,
+                Timestamp.from(c.createdAt), c.id, limit);
+    }
+
     private static final RowMapper<Tenant> MAPPER = (rs, rowNum) -> rehydrate(rs);
 
     private static Tenant rehydrate(ResultSet rs) throws SQLException {
@@ -146,6 +175,36 @@ public class TenantRepository {
     public static class OptimisticConcurrencyException extends RuntimeException {
         public OptimisticConcurrencyException(String message) {
             super(message);
+        }
+    }
+
+    /**
+     * Opaque cursor decoded back into the tuple used to resume a
+     * tenant list. Internal helper; production code never sees the
+     * tuple.
+     */
+    public record Cursor(java.time.Instant createdAt, String id) {
+
+        public static String encode(java.time.Instant createdAt, String id) {
+            String raw = createdAt.toEpochMilli() + "|" + id;
+            return java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+
+        public static Cursor decode(String encoded) {
+            try {
+                String raw = new String(java.util.Base64.getUrlDecoder()
+                        .decode(encoded), java.nio.charset.StandardCharsets.UTF_8);
+                int sep = raw.indexOf('|');
+                if (sep <= 0) {
+                    throw new IllegalArgumentException("malformed cursor");
+                }
+                long millis = Long.parseLong(raw.substring(0, sep));
+                String id = raw.substring(sep + 1);
+                return new Cursor(java.time.Instant.ofEpochMilli(millis), id);
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("invalid cursor: " + e.getMessage(), e);
+            }
         }
     }
 }
