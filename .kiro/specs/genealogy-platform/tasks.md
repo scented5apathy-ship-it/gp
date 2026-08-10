@@ -348,7 +348,7 @@ _Requirements: R1, R2, R3, R13, R16, NFR1, NFR4, NFR8_
   - Hỗ trợ nhiều phụ huynh/phối ngẫu, unknown participant và disputed alternatives.
   - Chặn self-link/cycle bất hợp lệ; cảnh báo chronological conflict.
 
-- [ ] E4.5 Event, claim và provenance
+- [x] E4.5 Event, claim và provenance
 
   - Event nhiều participant/role, recurring memorial, date/place và privacy.
   - Claim có hypothesis/asserted/verified/disputed, confidence và source references.
