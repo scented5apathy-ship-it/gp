@@ -1,0 +1,148 @@
+# contracts/genealogy — Date / Calendar / Place contracts (E4.3).
+#
+# Source of truth for the temporal + geospatial sub-system that
+# Person (E4.2), Relationship (E4.4) and Event (E4.5) reuse.
+#
+# Mirrors `requirements.md` R4.1 (date / place on person profile),
+# R4.4 (provenance + certainty), R10 (memory / recurring memorial
+# honoring living-person privacy), and `design.md` §5.3 (temporal,
+# certainty, calendar).
+#
+# The Java executor lives under
+# `services/genealogy-service/src/main/java/com/genealogy/platform/
+# services/genealogy/domain/` (date + calendar + place records).
+# The Flyway migration that lands the persistence contract is
+# `services/genealogy-service/src/main/resources/db/migration/
+# V4__date_place.sql`. The chart mirror (byte-identical) lives at
+# `platform/helm/genealogy-platform/files/date-place-policy.yaml`
+# and is enforced by `scripts/lint-dateplace-config.mjs`.
+apiVersion: v1
+kind: DatePlacePolicy
+metadata:
+  name: default-date-place/v1
+  namespace: gp-platform
+spec:
+  policyId: default-date-place/v1
+  description: >-
+    Date / Calendar / Place defaults. Mirrors `requirements.md`
+    R4.1 (multi-name + date + place on person), R4.4 (provenance
+    + certainty qualifiers), R10 (recurring memorial honoring
+    living status), and `design.md` §5.3 (temporal, certainty,
+    calendar). The contract is provider-neutral: it pins closed
+    sets for qualifier, calendar, certainty, coordinate datum,
+    authority kind, and place kind, while keeping the raw
+    provider id as an opaque reference.
+  # R4.1 / R4.4 — qualifier closed-set. The renderer must never
+  # infer certainty from a missing qualifier; UNKNOWN is explicit.
+  dateQualifiers:
+    - EXACT
+    - ABOUT
+    - BEFORE
+    - AFTER
+    - BETWEEN
+    - UNKNOWN
+  # R4.1 — calendar closed-set. Default is GREGORIAN; non-
+  # Gregorian calendars are first-class so a Vietnamese
+  # lunisolar memorial date or a Japanese imperial year can be
+  # preserved verbatim.
+  calendars:
+    - GREGORIAN
+    - JAPANESE
+    - VIETNAMESE_LUNISOLAR
+    - KOREAN
+    - CHINESE_LUNISOLAR
+    - ISLAMIC_CIVIL
+    - HEBREW
+    - FRENCH_REPUBLICAN
+  # R4.4 / NFR4 — certainty / confidence closed-set. The values
+  # mirror `design.md` §5.3 (HYPOTHESIS / ASSERTED / VERIFIED /
+  # DISPUTED) and `requirements.md` R4.4.
+  certainties:
+    - HYPOTHESIS
+    - ASSERTED
+    - VERIFIED
+    - DISPUTED
+  # R4.1 / `design.md` §5.3 — UTC is the only canonical
+  # instant; the IANA timezone and calendar are kept alongside
+  # the original expression so the renderer can rebuild the
+  # original input verbatim.
+  storageTimezone: UTC
+  # R4.1 / NFR1 — coordinate datum closed-set. WGS84 is the
+  # default; historical mapping (Vincenty inverse on older
+  # datums) is out of scope for this contract.
+  coordinateDatums:
+    - WGS84
+  # R4.1 — place kind closed-set. The renderer routes on the
+  # kind to render the correct hierarchy depth.
+  placeKinds:
+    - COUNTRY
+    - REGION
+    - LOCALITY
+    - STREET
+    - BUILDING
+    - CEMETERY
+    - RELIGIOUS_SITE
+    - HOSPITAL
+    - UNKNOWN
+  # R4.1 / NFR4 — authority kind closed-set. The provider-neutral
+  # authority id is opaque (`authorityId`); the kind tells the
+  # resolver which provider's data plane to hit. The contract
+  # keeps the link provider-neutral on purpose so swapping
+  # Wikidata ↔ GeoNames ↔ a national gazetteer is a config-only
+  # change.
+  authorityKinds:
+    - WIKIDATA
+    - GEONAMES
+    - NATIONAL_GAZETTEER
+    - LOCAL
+  # R3.1 / R4.1 — locale / IANA timezone closed-set. These mirror
+  # `tree-policy.yaml::spec.supportedLocales` /
+  # `supportedTimezones` so the BFF can pick a renderable
+  # locale / timezone when a date / place was entered without
+  # one.
+  locales:
+    - en-US
+    - vi-VN
+    - fr-FR
+    - ja-JP
+    - zh-Hans
+  timezones:
+    - UTC
+    - Asia/Ho_Chi_Minh
+    - Asia/Tokyo
+    - Europe/Paris
+    - America/New_York
+  # R4.1 — original expression cap. The renderer MUST be able
+  # to round-trip the original input verbatim (R10 / NFR4).
+  maxOriginalExpressionChars: 512
+  # R4.1 — place name cap (renderable). Each place MAY carry
+  # many historical / transliterated names; the contract pins
+  # the cap so the renderer never receives an unbounded blob.
+  maxNamesPerPlace: 32
+  # R4.1 — hierarchy depth cap. Deeper hierarchies are
+  # truncated; the renderer MUST surface the truncation so the
+  # user knows the place has more ancestors.
+  maxHierarchyDepth: 8
+  # R4.1 — coordinate precision cap. The platform stores
+  # coordinates as DECIMAL(9,6) (≈ 0.11 m at the equator).
+  coordinatePrecision: 6
+  # R4.4 / NFR4 — audit hooks. Date / place updates emit
+  # `audit-class=consent` events with a dedicated action
+  # because changes may shift the redaction surface (R10.
+  # living memorial dates).
+  auditClassOnDateChange: consent
+  auditActionOnDateChange: date.updated
+  auditClassOnPlaceChange: consent
+  auditActionOnPlaceChange: place.updated
+  auditClassOnPlaceAttach: consent
+  auditActionOnPlaceAttach: place.attached
+  # R4.4 / NFR1 — when a date falls on a living person, the
+  # default visibility downgrade is enforced. UNLISTED tokens
+  # still redact memorial dates of living persons per
+  # `design.md` §6.3.
+  livingPersonRedactsByDefault: true
+  # R10 — recurring memorial rules. When the qualifier is
+  # EXACT and the calendar is Gregorian, the renderer MAY
+  # produce a recurring memorial; for non-Gregorian calendars
+  # the original calendar's leap rules drive recurrence.
+  recurringMemorialEnabled: true
