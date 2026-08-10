@@ -398,7 +398,7 @@ if (!existsSync(LOCAL_DIR)) {
     if (!/image:\s*temporalio\/auto-setup:1\.26\.2/.test(profile)) {
       fail("platform/local/profile.yaml must pin Temporal 1.26 (ADR-E0.5-01)");
     }
-    if (!/image:\s*openfga\/openfga:1\.10/.test(profile)) {
+    if (!/image:\s*openfga\/openfga:v?1\./.test(profile)) {
       fail("platform/local/profile.yaml must pin OpenFGA 1.x (ADR-E0.5-01)");
     }
     if (!/image:\s*valkey\/valkey:7\.2-alpine/.test(profile)) {

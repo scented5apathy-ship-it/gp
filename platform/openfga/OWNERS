@@ -1,0 +1,5 @@
+primary: platform
+secondary:
+  - "@genealogy/identity"
+oncall: identity-primary
+component: openfga

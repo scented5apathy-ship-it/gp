@@ -91,6 +91,30 @@ services:
     ports:
       - "8080:8080"
       - "8081:8081"
+    volumes:
+      - ./openfga:/etc/openfga:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -qO- http://localhost:8080/healthz || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  openfga-bootstrap:
+    image: openfga/openfga:v1.18.3
+    container_name: gp-openfga-bootstrap
+    depends_on:
+      openfga:
+        condition: service_healthy
+    volumes:
+      - ./openfga:/etc/openfga:ro
+      - ./openfga/bootstrap.sh:/scripts/bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/bootstrap.sh"]
+    environment:
+      OPENFGA_API_URL: "http://openfga:8080"
+      MODEL_PATH: "/etc/openfga/model.v1.json"
+      TUPLES_PATH: "/etc/openfga/default-roles.json"
 
   kafka:
     image: quay.io/strimzi/kafka:0.43.0-kafka-3.8.0

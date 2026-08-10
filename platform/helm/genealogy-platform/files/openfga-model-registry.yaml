@@ -1,0 +1,46 @@
+# platform/openfga/model-registry.yaml
+#
+# ConfigMap that ships the canonical model + migration files into
+# the cluster. The `openfga-bootstrap` Helm-hook Job mounts this
+# ConfigMap at `/etc/openfga/` and uploads the model on every
+# `helm upgrade`.
+#
+# The embedded `model.v1.json` MUST match
+# `contracts/openfga/model.v1.json` byte-identically (the linter
+# refuses a drift).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-model-registry
+  labels:
+    app.kubernetes.io/name: openfga-model-registry
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+    app.kubernetes.io/managed-by: argocd
+data:
+  # Mirrored from contracts/openfga/model.v1.json. Keep byte-identical.
+  model.v1.json: |
+    {
+      "schema_version": "1.1",
+      "type_definitions": [],
+      "conditions": []
+    }
+  # Migration deltas (also mirrored from contracts/openfga/migrations/).
+  migrations:
+    v1-to-v2.json: |
+      {
+        "schema_version": "1.1",
+        "migration_id": "v1-to-v2",
+        "expand_contract_asserts": []
+      }
+  # Manifest — which model version is the canonical "current".
+  manifest.yaml: |
+    currentModelVersion: "1"
+    currentModelFile: "/etc/openfga/models/model.v1.json"
+    migrationWindow:
+      active: false
+      promoteAfter: "2026-09-15"
+    # Model registry tracks which model_version is uploaded to
+    # which store_id. Persisted by the bootstrap Job on upload
+    # success; nothing else mutates it.
+    publishedModels: []

@@ -1,0 +1,31 @@
+{
+  "version": "1",
+  "description": "Default role tuples emitted by the openfga-bootstrap Helm-hook Job on a fresh store. Tuple syntax: object#relation@subject. Opaque IDs only — no email, no display name, no DNA.",
+  "default_role_tuples": [
+    {
+      "tuple": "tenant:t_admin#owner@user:u_admin",
+      "reason": "E3.2 — platform bootstrap account is OWNER of every new tenant (until first real user claims OWNER via invite redeem)."
+    },
+    {
+      "tuple": "tenant:t_admin#auditor@user:u_platform_auditor",
+      "reason": "R16 §R16.2 — platform auditor (read-only audit) is granted at the tenant boundary; ABAC overlay enforces redaction."
+    },
+    {
+      "tuple": "tenant:t_admin#support@user:u_platform_support",
+      "reason": "R16 §R16.3 — JIT support tuple is time-bounded; the bootstrap Job re-issues it on every helm upgrade (idempotent) and the sync workflow revokes on issue close."
+    },
+    {
+      "tuple": "tenant:t_admin#billing@user:u_platform_billing",
+      "reason": "Quota / plan enforcement (E11.4) — billing service holds a tuple at the tenant boundary; ABAC overlay restricts to billing metadata only."
+    }
+  ],
+  "revoke_first_priority": {
+    "enabled": true,
+    "rationale": "E3.5 — on member-revoke or role downgrade the sync workflow DELETEs the affected tuples BEFORE inserting the new role tuples. Without this, a stale tuple can keep the user authorized for the duration of the eventual-consistency window.",
+    "order": [
+      "DELETE old_role_tuples_for_subject",
+      "WAIT cache_invalidation_ack",
+      "INSERT new_role_tuples_for_subject"
+    ]
+  }
+}

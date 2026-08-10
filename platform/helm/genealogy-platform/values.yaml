@@ -387,9 +387,68 @@ components:
         pingJustification: ""
   openfga:
     enabled: true
+    # Per `tasks.md` E3.3 + ADR-E0.5-06 + ADR-E0.5-01 the
+    # platform runs the upstream `openfga/openfga:1.x` image
+    # with the store-strategy + model-registry + bootstrap-tuples
+    # + audit-hook + sync-workflow source-of-truth ConfigMaps.
+    # The deep linter (`scripts/lint-openfga-config.mjs`)
+    # enforces:
+    #   - storeTopology = 'store-per-tenant' + shared model;
+    #   - readConsistency.p95Milliseconds ≤ 500;
+    #   - cache.invalidationOnWrite = 'required'
+    #     (TTL-only caching forbidden);
+    #   - audit.mode = 'required' (every Write emits a hook);
+    #   - bootstrap.modelVersion matches the
+    #     `contracts/openfga/model.v<version>.json` file;
+    #   - migration.policy = 'expand-contract';
+    #   - no literal token / password / DSN in any YAML file.
+    topology: store-per-tenant
     replicas: 2
-    # Store/model lifecycle is an E3.2 task; the chart installs the
-    # CRDs + controller only.
+    # Image pin — ADR-E0.5-01 baseline (OpenFGA 1.x).
+    # Local profile pins 1.10; the chart pin is the latest
+    # release line Renovate bumps. Sync workflow reads the
+    # model-registry ConfigMap and uploads on every `helm
+    # upgrade`.
+    image:
+      repository: openfga/openfga
+      tag: "v1.18.3"
+      pullPolicy: IfNotPresent
+    # Bootstrap Job image — uploads model + default-role tuples
+    # to each per-tenant store on `helm upgrade`. Same pin as
+    # the OpenFGA server (1.18) so the SDK matches.
+    bootstrapImage:
+      repository: openfga/openfga
+      tag: "v1.18.3"
+    # Datastore — Postgres for SaaS / on-prem, in-memory for dev.
+    # DSN injected from ESO-managed Secret at runtime; never
+    # inlined.
+    datastore:
+      engine: postgres
+      postgres:
+        host: postgres.gp-data.svc.cluster.local
+        port: "5432"
+        name: genea_openfga
+        username: openfga
+        passwordSecretName: openfga-db-password
+        passwordSecretKey: password
+    # Resource requests/limits — OpenFGA 1.x baseline.
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "1Gi"
+    # Network — admin (8080) + check (8081); both inside the
+    # `gp-data` namespace over Istio mTLS. No public ingress.
+    network:
+      adminPort: 8080
+      checkPort: 8081
+      mtls: required
+    # Storage class — gp-data-encrypted (StorageClass
+    # `encrypted: "true"` per baseline).
+    storageClass: gp-data-encrypted
+    storageSize: 10Gi
   kafka:
     enabled: true
     # Strimzi-managed; see E2.3 for topic/ACL/quota policy.

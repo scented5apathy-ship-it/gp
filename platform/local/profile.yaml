@@ -50,7 +50,7 @@ keycloak:
 
 # OpenFGA — relationship model + initial store.
 openfga:
-  image: openfga/openfga:1.10
+  image: openfga/openfga:v1.18.3
   port: 8080
   grpcPort: 8081
   datastore:

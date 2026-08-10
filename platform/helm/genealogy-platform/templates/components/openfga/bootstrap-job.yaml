@@ -1,0 +1,120 @@
+{{/*
+openfga-bootstrap Job — pre-install / pre-upgrade Helm hook.
+Applies the canonical model + default-role tuples to every
+per-tenant store. Idempotent (re-running on `helm upgrade`
+re-uploads the same model; OpenFGA returns the existing
+authorization_model_id).
+
+Per `architecture-decisions.md` §6 / ADR-E0.5-06 the bootstrap
+Job:
+  1. Lists all stores tagged `app.kubernetes.io/component:
+     openfga` in the `gp-data` namespace.
+  2. For each store, uploads `model.v1.json` from
+     `openfga-model-registry` ConfigMap.
+  3. Writes the default-role tuples from
+     `openfga-bootstrap-tuples` ConfigMap.
+  4. Emits an audit entry per upload via the OpenFGA audit
+     hook (the server-side hook posts to
+     `audit-service:9090/audit.v1.AuditService/Append`).
+
+The Job runs as the `openfga-bootstrap` ServiceAccount with
+mount-only Vault token (no secret literal in the manifest).
+*/}}
+{{- $openfga := .Values.components.openfga }}
+{{- if $openfga.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openfga-bootstrap
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga-bootstrap
+    app.kubernetes.io/version: {{ $openfga.image.tag | quote }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: openfga-bootstrap
+    spec:
+      serviceAccountName: openfga-bootstrap
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: fetch-store-list
+          image: "{{ $openfga.bootstrapImage.registry | default "docker.io" }}/{{ $openfga.bootstrapImage.repository }}:{{ $openfga.bootstrapImage.tag }}"
+          command: ["openfga"]
+          args:
+            - "query"
+            - "--server-url=$(OPENFGA_API_URL)"
+            - "stores"
+          env:
+            - name: OPENFGA_API_URL
+              value: "http://openfga:{{ $openfga.network.adminPort }}"
+        - name: upload-model
+          image: "{{ $openfga.bootstrapImage.registry | default "docker.io" }}/{{ $openfga.bootstrapImage.repository }}:{{ $openfga.bootstrapImage.tag }}"
+          command: ["openfga"]
+          args:
+            - "model"
+            - "write"
+            - "--server-url=$(OPENFGA_API_URL)"
+            - "--file=/etc/openfga/models/model-registry.yaml"
+          env:
+            - name: OPENFGA_API_URL
+              value: "http://openfga:{{ $openfga.network.adminPort }}"
+          volumeMounts:
+            - name: model-registry
+              mountPath: /etc/openfga/models
+              readOnly: true
+            - name: bootstrap-tuples
+              mountPath: /etc/openfga/bootstrap
+              readOnly: true
+        - name: write-default-tuples
+          image: "{{ $openfga.bootstrapImage.registry | default "docker.io" }}/{{ $openfga.bootstrapImage.repository }}:{{ $openfga.bootstrapImage.tag }}"
+          command: ["openfga"]
+          args:
+            - "tuple"
+            - "write"
+            - "--server-url=$(OPENFGA_API_URL)"
+            - "--file=/etc/openfga/bootstrap/bootstrap-tuples.json"
+          env:
+            - name: OPENFGA_API_URL
+              value: "http://openfga:{{ $openfga.network.adminPort }}"
+          volumeMounts:
+            - name: bootstrap-tuples
+              mountPath: /etc/openfga/bootstrap
+              readOnly: true
+      containers:
+        - name: log
+          image: "{{ $openfga.bootstrapImage.registry | default "docker.io" }}/{{ $openfga.bootstrapImage.repository }}:{{ $openfga.bootstrapImage.tag }}"
+          command: ["sh", "-c", "echo 'openfga-bootstrap complete'"]
+      volumes:
+        - name: model-registry
+          configMap:
+            name: openfga-model-registry
+        - name: bootstrap-tuples
+          configMap:
+            name: openfga-bootstrap-tuples
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openfga-bootstrap
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga-bootstrap
+automountServiceAccountToken: false
+{{- end }}

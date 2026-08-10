@@ -1,0 +1,133 @@
+{{/*
+OpenFGA StatefulSet — upstream `openfga/openfga:1.x`
+(ADR-E0.5-01 baseline). Production runs clustered mode
+(2 replicas + Postgres datastore + Istio mTLS). Dev runs
+standalone with in-memory datastore (see `values-dev.yaml`).
+
+The Pod mounts the 5 source-of-truth ConfigMaps from
+`platform/openfga/` mirrored into `files/openfga-*.yaml`:
+  - openfga-store-strategy
+  - openfga-model-registry
+  - openfga-bootstrap-tuples
+  - openfga-audit-hook
+  - openfga-sync-workflow
+
+The startup probe waits for the OpenFGA admin `:8080/stores`
+endpoint before signaling healthy.
+*/}}
+{{- $openfga := .Values.components.openfga }}
+{{- if $openfga.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: openfga
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+    app.kubernetes.io/version: {{ $openfga.image.tag | quote }}
+    gp.genealogy/contract-only: "true"
+spec:
+  serviceName: openfga-internal
+  replicas: {{ $openfga.replicas }}
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: openfga
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: openfga
+        app.kubernetes.io/version: {{ $openfga.image.tag | quote }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ $openfga.network.adminPort | quote }}
+    spec:
+      serviceAccountName: openfga
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: openfga
+          image: "{{ $openfga.image.registry | default "docker.io" }}/{{ $openfga.image.repository }}:{{ $openfga.image.tag }}"
+          imagePullPolicy: {{ $openfga.image.pullPolicy | default "IfNotPresent" }}
+          args:
+            - "run"
+          ports:
+            - name: http
+              containerPort: {{ $openfga.network.adminPort }}
+            - name: grpc
+              containerPort: {{ $openfga.network.checkPort }}
+          env:
+            - name: OPENFGA_DATASTORE_ENGINE
+              value: {{ $openfga.datastore.engine | quote }}
+            - name: OPENFGA_DATASTORE_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $openfga.datastore.postgres.passwordSecretName }}
+                  key: {{ $openfga.datastore.postgres.passwordSecretKey }}
+            - name: OPENFGA_LOG_FORMAT
+              value: "json"
+            - name: OPENFGA_METRICS_ENABLED
+              value: "true"
+            - name: OPENFGA_METRICS_ADDR
+              value: ":9100"
+          {{- with $openfga.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: model-registry
+              mountPath: /etc/openfga/models
+              readOnly: true
+            - name: bootstrap-tuples
+              mountPath: /etc/openfga/bootstrap
+              readOnly: true
+            - name: audit-hook
+              mountPath: /etc/openfga/audit
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+      volumes:
+        - name: model-registry
+          configMap:
+            name: openfga-model-registry
+        - name: bootstrap-tuples
+          configMap:
+            name: openfga-bootstrap-tuples
+        - name: audit-hook
+          configMap:
+            name: openfga-audit-hook
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ $openfga.storageClass }}
+        resources:
+          requests:
+            storage: {{ $openfga.storageSize }}
+{{- end }}

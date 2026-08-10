@@ -1,0 +1,81 @@
+# platform/openfga/sync-workflow.yaml
+#
+# Temporal workflow `OpenfgaTupleSync` — the canonical way every
+# service keeps its OpenFGA tuples in lockstep with the source of
+# truth (tenant-service membership, invite redemption, role
+# downgrade, branch merge, etc.).
+#
+# Idempotency: every activity uses the `(tenant_id, subject_id,
+# relation)` triple as the dedup key; rerunning the workflow is a
+# no-op.
+#
+# Revoke-first priority: when a subject is demoted or removed, the
+# workflow DELETEs the affected tuples before it INSERTs the new
+# ones. This closes the eventual-consistency window during which a
+# stale tuple could keep the subject authorized
+# (privacy-and-legal-gate.md §Token replay across tenant after role
+# change).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-sync-workflow
+  labels:
+    app.kubernetes.io/name: openfga-sync-workflow
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+    app.kubernetes.io/managed-by: argocd
+data:
+  sync-workflow.yaml: |
+    workflowName: OpenfgaTupleSync
+    namespace: genea-default
+    taskQueue: genea-identity-openfga-sync
+    # Idempotency — activityId is keyed on the (tenant_id,
+    # subject_id, relation) triple so a Temporal retry coalesces.
+    idempotency:
+      enabled: true
+      key: "openfga:write:{tenant_id}:{subject_id}:{relation}"
+    # Retry policy — exponential backoff + jitter, max 5 attempts.
+    retry:
+      initialInterval: "1s"
+      maxInterval: "30s"
+      backoffCoefficient: 2.0
+      jitter: 0.2
+      maxAttempts: 5
+      # Non-retryable: invalid tuple syntax or unknown relation —
+      # these are bugs, not transient failures.
+      nonRetryable:
+        - InvalidTupleSyntax
+        - UnknownRelation
+        - UnauthorizedSubject
+    # Heartbeat — every activity heartbeats every 5 s; missed
+    # heartbeats trigger worker cancellation after 30 s.
+    heartbeat:
+      interval: "5s"
+      timeout: "30s"
+    # Order of operations — revoke-first when role changes.
+    order:
+      - name: resolveSubject
+        # Resolves the Keycloak subject to the opaque ID. ABAC
+        # overlay in this activity gates `tenant_match`.
+      - name: writeTuples
+        # Inserts (or no-ops on duplicate) the new tuples.
+      - name: cacheInvalidationAck
+        # Blocks until the calling service's Valkey cache key
+        # invalidation lands. Without this, a `Read` round-trip
+        # could return a stale allow before the new tuple lands
+        # (eventual-consistency window).
+      - name: writeAudit
+        # Single audit entry per workflow run; the entry carries
+        # `actor_subject` + the list of (object, relation) writes.
+    # Authorization — workflow identity is a dedicated Temporal
+    # namespace task-queue (`genea-identity-openfga-sync`); the
+    # worker holds a per-tenant store credential minted by Vault.
+    authorization:
+      workerIdentity: "openfga-sync-worker"
+      credentialSource: "vault:secret/openfga/store-credentials"
+    # ABAC overlay — every write path passes through
+    # `AbacPolicyEngine.evaluate(ctx)` before the OpenFGA `Write`
+    # call (Java side) / `PiiAbacGuard.evaluate(ctx)` (TS side).
+    # The Semgrep rule `no-openfga-allow-without-abac` enforces
+    # this at PR time.
+    abacOverlay: required

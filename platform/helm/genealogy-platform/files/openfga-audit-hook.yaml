@@ -1,0 +1,68 @@
+# platform/openfga/audit-hook.yaml
+#
+# Audit hook sink + payload filter. Every `Write` (or `Delete`) the
+# bootstrap Job, the sync workflow or the SDK issues emits an audit
+# entry over gRPC. The hook lives in the `audit-service`; the
+# OpenFGA server is the client.
+#
+# Per ADR-E0.5-06 §Security / privacy:
+#   - tuple content must not contain raw PII, DNA or token;
+#     only opaque IDs.
+#   - the audit hook payload MUST NOT include the
+#     `attributeTags: [pii, dna, secret]` content; the linter
+#     refuses an entry that includes them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-audit-hook
+  labels:
+    app.kubernetes.io/name: openfga-audit-hook
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+    app.kubernetes.io/managed-by: argocd
+data:
+  audit-hook.yaml: |
+    enabled: true
+    sink:
+      grpc: "audit-service:9090"
+      service: "audit.v1.AuditService"
+      rpc: "Append"
+      # Auth — service-to-service mTLS via Istio. No plaintext.
+      tls: required
+      timeout: "5s"
+      retry:
+        maxAttempts: 5
+        backoff: exponential
+        jitter: true
+    # What we record — opaque IDs only.
+    record:
+      tenantId: true
+      storeId: true
+      actorSubject: true
+      action: true           # write | delete | read
+      objectType: true
+      objectId: true
+      relation: true
+      conditionContext: true # ctx fields, never attributeTags content
+      timestamp: true
+    # What we strip — the linter asserts none of these appear.
+    redact:
+      - raw_dna
+      - raw_pii
+      - email
+      - display_name
+      - phone
+      - address
+      - token
+    # Tag triggers — when an `attributeTags: [pii|dna|secret]`
+    # tuple is written, the audit entry MUST escalate to `critical`
+    # severity so the SOC alert fires.
+    severityEscalation:
+      pii: high
+      dna: critical
+      secret: critical
+    # Read hooks are NOT emitted by default — too noisy.
+    # Operators can opt in by setting `readAudit.enabled: true`.
+    readAudit:
+      enabled: false
+      sampleRate: 0.01

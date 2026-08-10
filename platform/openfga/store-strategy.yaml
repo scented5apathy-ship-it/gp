@@ -1,0 +1,94 @@
+# platform/openfga/store-strategy.yaml
+#
+# ADR-E0.5-06 source-of-truth — store-per-tenant with shared model,
+# eventual consistency ≤ 500 ms p95, cache invalidation on every
+# tuple write, audit hook on every `Write`.
+#
+# Loaded by the `openfga-store-init` Helm-hook Job (see
+# `platform/helm/genealogy-platform/templates/components/openfga/`).
+# Per `agent-execution.md` §4.4 no secret, no PII, no DNA literal
+# lives in this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-store-strategy
+  labels:
+    app.kubernetes.io/name: openfga-store-strategy
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+    app.kubernetes.io/managed-by: argocd
+data:
+  store-strategy.yaml: |
+    # ADR-E0.5-06 — store-per-tenant + shared model.
+    storeTopology: store-per-tenant
+    sharedAuthorizationModel: true
+    # Tenant blast radius = one store; OpenFGA outage is contained
+    # per tenant via circuit breaker (see ownership-catalog.md §6).
+    storeIsolation: per-tenant
+    # Read consistency — eventual with target p95 ≤ 500 ms.
+    # Write path uses `Write` + `Read` round-trip to absorb
+    # eventual consistency (`design.md` §4.2).
+    readConsistency:
+      mode: eventual
+      p95Milliseconds: 500
+      maxStalenessSeconds: 5
+    # Cache invalidation — MANDATORY on tuple write (no TTL-only
+    # caching). The calling service invalidates its in-process
+    # Valkey cache key before the `Write` round-trip returns.
+    cache:
+      invalidationOnWrite: required
+      ttlOnly: forbidden
+      backstop:
+        type: valkey
+        keyPrefix: "openfga:check"
+        ttlSeconds: 30
+        # Backstop TTL is a safety net only; cache invalidation
+        # on every write is the source of truth.
+    # Audit hook — every Write emits an audit event over gRPC.
+    audit:
+      enabled: true
+      mode: required
+      sink: "audit-service:9090/audit.v1.AuditService/Append"
+      # Tuple content is opaque IDs only; the audit payload MUST
+      # NOT include `raw_dna`, `raw_pii`, email, display name,
+      # phone or address. The linter rejects any `Write` that
+      # includes a tagged attribute.
+      redaction:
+        fieldsForbidden:
+          - raw_dna
+          - raw_pii
+          - email
+          - display_name
+          - phone
+          - address
+          - token
+        attributeTags: [pii, dna, secret]
+    # Bootstrap — first `Write` against a fresh store triggers
+    # model upload + default role tuples (OWNER, AUDITOR).
+    bootstrap:
+      modelVersion: "1"
+      modelPath: "/etc/openfga/models/model.v1.json"
+      defaultRoleTuples: "/etc/openfga/bootstrap/default-roles.json"
+    # Migration — expand-contract; never destructive in-place.
+    migration:
+      policy: expand-contract
+      requireMigrationEntry: true
+      # A migration entry MUST live under
+      # `contracts/openfga/migrations/<vN>-to-<vN+1>.json` before
+      # the rollout ship date. The linter refuses to promote a
+      # model without a migration entry.
+      migrationsDirectory: "/etc/openfga/migrations"
+    # Storage backend — Postgres for SaaS / on-prem, memory for dev.
+    datastore:
+      engine: postgres
+      postgres:
+        dsnEnv: OPENFGA_DATASTORE_POSTGRES_DSN
+        # Migration tool: OpenFGA's `openfga migrate` (idempotent).
+        runMigrations: true
+    # Connection — Kong routes admin (8080) and check (8081) over
+    # Istio mTLS; no public ingress.
+    network:
+      adminPort: 8080
+      checkPort: 8081
+      mtls: required
+      ingressMode: none

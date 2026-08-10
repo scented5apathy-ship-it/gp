@@ -287,7 +287,7 @@ _Requirements: NFR1–NFR8_
       + `pnpm lint:events` + `./gradlew :services:tenant-service:test`
       PASS; không mở rộng scope ngoài 4 subtask trên.
 
-- [ ] E3.3 Thiết kế OpenFGA model
+- [x] E3.3 Thiết kế OpenFGA model
 
   - Mô hình user/group→tenant/tree/branch/resource và các role mặc định.
   - Version authorization model; có migration tuple và compatibility tests.

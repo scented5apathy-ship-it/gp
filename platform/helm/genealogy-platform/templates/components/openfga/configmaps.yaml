@@ -1,0 +1,90 @@
+{{- $openfga := .Values.components.openfga }}
+{{- if $openfga.enabled }}
+{{- $sources := list
+    (dict "name" "openfga-store-strategy"  "file" "openfga-store-strategy.yaml")
+    (dict "name" "openfga-model-registry"  "file" "openfga-model-registry.yaml")
+    (dict "name" "openfga-bootstrap-tuples" "file" "openfga-bootstrap-tuples.json")
+    (dict "name" "openfga-audit-hook"       "file" "openfga-audit-hook.yaml")
+    (dict "name" "openfga-sync-workflow"   "file" "openfga-sync-workflow.yaml")
+}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-store-strategy
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+data:
+  store-strategy.yaml: |-
+{{- range $sources }}
+{{- if eq .name "openfga-store-strategy" }}
+{{ .Files.Get (printf "files/%s" .file) | indent 4 }}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-model-registry
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+data:
+  model-registry.yaml: |-
+{{- range $sources }}
+{{- if eq .name "openfga-model-registry" }}
+{{ .Files.Get (printf "files/%s" .file) | indent 4 }}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-bootstrap-tuples
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+data:
+  bootstrap-tuples.json: |-
+{{- range $sources }}
+{{- if eq .name "openfga-bootstrap-tuples" }}
+{{ .Files.Get (printf "files/%s" .file) | indent 4 }}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-audit-hook
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+data:
+  audit-hook.yaml: |-
+{{- range $sources }}
+{{- if eq .name "openfga-audit-hook" }}
+{{ .Files.Get (printf "files/%s" .file) | indent 4 }}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-sync-workflow
+  namespace: gp-data
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: openfga
+data:
+  sync-workflow.yaml: |-
+{{- range $sources }}
+{{- if eq .name "openfga-sync-workflow" }}
+{{ .Files.Get (printf "files/%s" .file) | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

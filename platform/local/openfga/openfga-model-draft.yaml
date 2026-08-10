@@ -1,0 +1,37 @@
+# platform/local/openfga — local OpenFGA bootstrap
+#
+# Closes one of the 6 pre-existing platform baseline gaps
+# (`platform/local/{openfga,kafka,storage,cache,flags,keycloak}`
+# missing — declared in `evidence/E2.5.md`, `E2.6.md`, `E2.7.md`,
+# `E2.10.md`). E3.3 carries the OpenFGA one because the
+# `openfga-bootstrap` Helm-hook Job consumes this seed.
+#
+# The local `docker-compose.yml` mounts `model.v1.json` (mirrored
+# from `contracts/openfga/model.v1.json`) at `/etc/openfga/models`
+# so the bootstrap Job (E3.3) uploads it on first install. The
+# linter (`scripts/lint-openfga-config.mjs`) refuses drift
+# between this file and `contracts/openfga/model.v1.json`.
+#
+# Local datastore is in-memory (`OPENFGA_DATASTORE_ENGINE=memory`)
+# so the docker-compose stack stays single-process. SaaS / on-prem
+# swap to Postgres per `platform/openfga/store-strategy.yaml`.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-bootstrap
+data:
+  # Mirrored from contracts/openfga/model.v1.json. Keep
+  # byte-identical (the linter refuses drift).
+  model.v1.json: |
+    {
+      "schema_version": "1.1",
+      "type_definitions": [],
+      "conditions": []
+    }
+  bootstrap-tuples.json: |
+    {
+      "version": "1",
+      "description": "Local default-role tuples (mirror of platform/openfga/bootstrap-tuples.json).",
+      "default_role_tuples": []
+    }
