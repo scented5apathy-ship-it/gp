@@ -1,0 +1,226 @@
+# contracts/genealogy — Outbox relay and event publishing contract (E4.7).
+#
+# Source of truth for the transactional outbox pattern, the
+# Apicurio-registered event envelope, the relay publish
+# contract, the consumer inbox / idempotency contract and the
+# retry / DLQ / replay lifecycle. Mirrors
+# `requirements.md` R4.6 + R10 + R16 + NFR1 + NFR4 + NFR7,
+# `design.md` §7.3 (Kafka eventing + transactional outbox →
+# relay → Kafka + consumer inbox / idempotency + retry topic
+# and dead-letter with replay procedure) and ADR-E0.5-08
+# (Avro + Apicurio + BACKWARD compatibility + topic naming
+# `<domain>.<aggregate>.<version>.v{n>` + partition key =
+# `tenantId + aggregateId` when ordering across aggregates is
+# required; `aggregateId` only otherwise).
+#
+# The Java executor lives under
+# `services/genealogy-service/src/main/java/com/genealogy/
+# platform/services/genealogy/outbox/` (relay publisher +
+# inbox idempotency store + partition key policy + retry
+# policy). The Flyway migration that lands the persistence
+# contract is
+# `services/genealogy-service/src/main/resources/db/migration/
+# V8__outbox_relay.sql`. The chart mirror (byte-identical)
+# lives at
+# `platform/helm/genealogy-platform/files/outbox-relay-policy.yaml`
+# and is enforced by
+# `scripts/lint-outbox-relay-config.mjs`.
+#
+# Closed-set vocabulary:
+#   - outboxStatus: PENDING / PUBLISHED / FAILED / DEAD_LETTERED
+#   - retryClass: TRANSIENT / PERMANENT / RATE_LIMITED / SCHEMA_MISMATCH
+#   - dlqReason: PUBLISH_TIMEOUT / SERIALIZATION_ERROR / SCHEMA_INCOMPATIBLE /
+#                PERMISSION_DENIED / TENANT_MISMATCH / UNKNOWN_TOPIC
+#   - partitionKeyClass: AGGREGATE_ONLY / TENANT_PLUS_AGGREGATE / TRACE_ID
+#   - replayStrategy: FROM_OUTBOX / FROM_TOPIC / DRY_RUN
+#   - inboxIdempotencyStrategy: EVENT_ID / AGGREGATE_VERSION / SCHEMA_HASH
+#   - envelopeSerialization: AVRO (mandatory per ADR-E0.5-08)
+#
+# Numeric thresholds are pinned per
+# `architecture-decisions.md` §A and
+# `glossary-and-policy-matrix.md` §2.4 (no surprise
+# retry storms, no surprise DLQ fills).
+apiVersion: v1
+kind: OutboxRelayPolicy
+metadata:
+  name: default-outbox-relay/v1
+  namespace: gp-platform
+spec:
+  policyId: default-outbox-relay/v1
+  description: >-
+    Transactional outbox + relay + Kafka + inbox / idempotency
+    contract for every event the genealogy-service emits.
+    The relay poll is single-writer per schema (per
+    `design.md` §7.3 "Consumer inbox/idempotency; retry topic
+    and dead-letter có quy trình replay") and the dead-letter
+    topic is the same name as the domain topic suffixed
+    `.dlq.v1`. Numeric thresholds are pinned.
+  # R4.6 + NFR4 + `design.md` §7.3 — outbox row lifecycle.
+  # PENDING is the only state a freshly-inserted row can be
+  # in. PUBLISHED is terminal success. FAILED is transient
+  # (retry). DEAD_LETTERED is terminal failure.
+  outboxStatusLifecycle:
+    - PENDING
+    - PUBLISHED
+    - FAILED
+    - DEAD_LETTERED
+  # R4.6 + NFR4 — retry-class closed-set. The relay uses
+  # this to decide whether to retry, give up, or park the
+  # row. SCHEMA_INCOMPATIBLE + PERMISSION_DENIED +
+  # TENANT_MISMATCH + UNKNOWN_TOPIC are always permanent.
+  retryClassClosedSet:
+    - TRANSIENT
+    - PERMANENT
+    - RATE_LIMITED
+    - SCHEMA_MISMATCH
+  # R4.6 + `design.md` §7.3 — dead-letter reason closed-set.
+  # Each row carries the reason it was DLQ'd so the runbook
+  # can route the operator to the correct remediation.
+  dlqReasonClosedSet:
+    - PUBLISH_TIMEOUT
+    - SERIALIZATION_ERROR
+    - SCHEMA_INCOMPATIBLE
+    - PERMISSION_DENIED
+    - TENANT_MISMATCH
+    - UNKNOWN_TOPIC
+  # R4.6 + ADR-E0.5-08 — partition key strategy per event
+  # class. Aggregate-only is the default for person / tree
+  # lifecycle events; tenant + aggregate is mandatory for
+  # merge events because every consumer MUST see merge
+  # transitions in causal order across the loser / winner
+  # pair.
+  partitionKeyClasses:
+    - name: AGGREGATE_ONLY
+      description: >-
+        Key = `aggregateId`. Used for tree / person CRUD
+        where cross-aggregate causal ordering is not
+        required.
+    - name: TENANT_PLUS_AGGREGATE
+      description: >-
+        Key = `tenantId + "|" + aggregateId`. Used for
+        merge events (E4.6) so every consumer sees winner
+        + loser transitions in order.
+    - name: TRACE_ID
+      description: >-
+        Key = `traceId`. Reserved for tracing-only events
+        (currently unused; pinned for forward
+        compatibility).
+  # R4.6 + NFR4 — retry policy. The relay retries
+  # transient failures with exponential backoff + jitter,
+  # capped at `maxAttempts` (5) and `maxBackoffSeconds`
+  # (60). After `maxAttempts` the row is moved to
+  # DEAD_LETTERED with `retryClass = PERMANENT`. The
+  # payload is preserved verbatim so the runbook can
+  # replay manually.
+  maxAttempts: 5
+  initialBackoffSeconds: 1
+  maxBackoffSeconds: 60
+  backoffMultiplier: 2
+  jitterFactor: 0.25
+  # R4.6 + `design.md` §7.3 — replay strategy. Default =
+  # FROM_OUTBOX (re-read the same row from the table and
+  # republish). DRY_RUN validates the path without
+  # touching Kafka. FROM_TOPIC is reserved for projection
+  # rebuild events that have a separate "projection"
+  # topic.
+  replayStrategies:
+    - FROM_OUTBOX
+    - FROM_TOPIC
+    - DRY_RUN
+  # NFR4 — inbox idempotency. The default strategy is
+  # EVENT_ID (the envelope's `eventId`). AGGREGATE_VERSION
+  # is reserved for at-least-once consumers that want
+  # replay-with-version-deduplication. SCHEMA_HASH is
+  # reserved for cross-schema replay (currently unused).
+  inboxIdempotencyStrategies:
+    - EVENT_ID
+    - AGGREGATE_VERSION
+    - SCHEMA_HASH
+  defaultIdempotencyStrategy: EVENT_ID
+  # NFR4 — inbox TTL. A consumer that doesn't ack within
+  # this window can re-deliver without colliding with the
+  # dedup record. Pinned to 7 days (mirrors the
+  # "projection rebuild" retention class in ADR-E0.5-08).
+  inboxIdempotencyTtlDays: 7
+  # R4.6 + ADR-E0.5-08 — envelope serialization is Avro,
+  # always. The relay MUST refuse to publish a row whose
+  # payload is not a valid Avro encoding of the canonical
+  # schema for the event type.
+  envelopeSerialization: AVRO
+  # R4.6 + ADR-E0.5-08 — envelope compatibility policy per
+  # class. Domain events = BACKWARD. Command intents =
+  # FORWARD. Shared enums = FULL.
+  compatibilityPolicies:
+    domainEvent: BACKWARD
+    commandIntent: FORWARD
+    sharedEnum: FULL
+  # R4.6 + `design.md` §7.3 — poll contract. The relay
+  # claims rows in `pollBatchSize` chunks with
+  # `pollIntervalMillis` between polls. The claim uses
+  # `SELECT ... FOR UPDATE SKIP LOCKED` so two relay
+  # processes never see the same row.
+  pollBatchSize: 100
+  pollIntervalMillis: 500
+  # R4.6 + NFR7 — claim lease. A claimed row that has not
+  # been published within `claimLeaseSeconds` is released
+  # back to PENDING. The lease is per-row, so a slow
+  # producer does not block the rest of the batch.
+  claimLeaseSeconds: 30
+  # R4.6 + NFR4 — privacy: payload MUST NOT contain raw
+  # DNA, file content, access token or PII not strictly
+  # required by the consumer. The relay re-checks every
+  # payload against the forbidden-token list before
+  # publishing; a hit forces the row to DEAD_LETTERED
+  # with `dlqReason = SERIALIZATION_ERROR`.
+  payloadForbiddenTokenScanEnabled: true
+  # NFR7 — payload size cap. Rows larger than this are
+  # rejected at insert time (the writer throws, the
+  # aggregate mutation rolls back). Mirrors the Kafka
+  # broker default of 1 MiB; pinned to 900 KiB so the
+  # relay has headroom for envelope overhead.
+  maxPayloadBytes: 921600
+  # NFR1 — privacy. The relay must never emit a raw
+  # payload that contains opaque keys to user emails,
+  # phone numbers, raw DNA, or access tokens. The
+  # forbidden-list below is enforced by the
+  # `scripts/lint-events.mjs` structural scan + the
+  # runtime scan in this contract.
+  payloadForbiddenFields:
+    - dnaRaw
+    - rawGenotype
+    - dna
+    - kit
+    - rawDna
+    - raw_dna
+    - email
+    - phoneNumber
+    - accessToken
+    - refreshToken
+  # R4.6 + R10 + R16 — audit. Every relay action emits
+  # an audit row with the closed-set `auditAction` /
+  # `auditClass` pair. Audit class = `operational`
+  # because the relay is a platform-level operation;
+  # it never touches user PII.
+  auditClassOnEnqueue: operational
+  auditActionOnEnqueue: outbox.enqueued
+  auditClassOnPublish: operational
+  auditActionOnPublish: outbox.published
+  auditClassOnRetry: operational
+  auditActionOnRetry: outbox.retried
+  auditClassOnDeadLetter: operational
+  auditActionOnDeadLetter: outbox.dead_lettered
+  auditClassOnReplay: operational
+  auditActionOnReplay: outbox.replayed
+  # NFR7 — DLQ retention. Mirrors the DLQ retention row
+  # in ADR-E0.5-08 §8 (14 days, no compaction).
+  dlqRetentionDays: 14
+  # NFR7 — outbox retention. Mirrors the "domain event"
+  # retention row in ADR-E0.5-08 §8 (30 days, no
+  # compaction). Replay from outbox is allowed within
+  # this window; beyond it the row is hard-deleted.
+  outboxRetentionDays: 30
+  # NFR4 — per-tenant isolation. The relay refuses to
+  # publish a row whose `tenantId` does not match the
+  # application tenant context (defense-in-depth on top
+  # of RLS).
+  tenantContextCheckEnabled: true

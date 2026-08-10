@@ -1,0 +1,65 @@
+{
+  "type": "record",
+  "name": "PersonMergeRejected",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a person-merge candidate is rejected by a reviewer (terminal state = REJECTED in E4.6). Carries winner + loser opaque ids, the score, the provenance and the reviewer reason. The merge record stays on the audit trail but no aggregate is mutated. No PII / DNA / biography / identifier values are emitted; opaque references only. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "mergeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque id of the merge record."
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "winnerPersonId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "loserPersonId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "mergeKind",
+      "type": {
+        "type": "enum",
+        "name": "MergeKind",
+        "symbols": ["DUPLICATE_PERSON_MERGE"]
+      }
+    },
+    {
+      "name": "score",
+      "type": "double",
+      "doc": "Weighted overall score that was offered to the reviewer (in [0, 1])."
+    },
+    {
+      "name": "provenance",
+      "type": {
+        "type": "enum",
+        "name": "MergeProvenance",
+        "symbols": ["USER_REVIEW", "AUTOMATED_SCORER", "IMPORTED", "CORRECTION"]
+      }
+    },
+    {
+      "name": "reviewerUserId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque subject id of the reviewer that rejected the candidate (Keycloak sub)."
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "doc": "Reviewer-supplied rejection reason (mandatory for REJECTED, capped at 2048 chars)."
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "rejectedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

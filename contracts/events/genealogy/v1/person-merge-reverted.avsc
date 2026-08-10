@@ -1,0 +1,59 @@
+{
+  "type": "record",
+  "name": "PersonMergeReverted",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a previously MERGED person-merge is reverted (E4.6 reversal inside the revertWindowDays). Carries winner + loser opaque ids so downstream projections can re-key loser references back. No PII / DNA / biography / identifier values are emitted; opaque references only. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "mergeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque id of the original merge record."
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "winnerPersonId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque id of the previous winner; on revert this is now the loser."
+    },
+    {
+      "name": "loserPersonId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque id of the previous loser; on revert this becomes active again (lifecycle = ACTIVE)."
+    },
+    {
+      "name": "mergeKind",
+      "type": {
+        "type": "enum",
+        "name": "MergeKind",
+        "symbols": ["DUPLICATE_PERSON_MERGE"]
+      }
+    },
+    {
+      "name": "snapshotHashVerified",
+      "type": "boolean",
+      "doc": "True iff the pre-merge snapshot hash matched the current loser snapshot on revert (glossary §2.4 #2)."
+    },
+    {
+      "name": "reviewerUserId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque subject id of the operator that issued the revert (Keycloak sub)."
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "doc": "Reviewer-supplied reason (mandatory for REVERTED, capped at 2048 chars)."
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "revertedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

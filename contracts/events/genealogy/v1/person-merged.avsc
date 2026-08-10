@@ -1,0 +1,103 @@
+{
+  "type": "record",
+  "name": "PersonMerged",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Emitted when a person-merge transitions to MERGED (E4.6 / E4.7). Carries winner + loser opaque ids, the merge kind, the score, the provenance and the canonical revert command (so a consumer that wants to re-key downstream projections can do so deterministically). No PII / DNA / biography / identifier values are emitted; opaque references only. Compatibility policy = BACKWARD per ADR-E0.5-08.",
+  "fields": [
+    {
+      "name": "mergeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque id of the merge record (E4.6 MergeRecord.mergeId)."
+    },
+    {
+      "name": "treeId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "winnerPersonId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque id of the absorbing person."
+    },
+    {
+      "name": "loserPersonId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque id of the tombstoned person (lifecycle = MERGED)."
+    },
+    {
+      "name": "mergeKind",
+      "type": {
+        "type": "enum",
+        "name": "MergeKind",
+        "symbols": ["DUPLICATE_PERSON_MERGE"]
+      },
+      "doc": "Closed-set merge kind. E4.6 lands DUPLICATE_PERSON_MERGE only (RELATIONSHIP_MERGE / EVENT_MERGE / CLAIM_MERGE are deferred)."
+    },
+    {
+      "name": "score",
+      "type": {
+        "type": "record",
+        "name": "MergeScore",
+        "fields": [
+          {
+            "name": "overall",
+            "type": "double",
+            "doc": "Weighted overall score in [0, 1]."
+          },
+          {
+            "name": "nameEquality",
+            "type": "double"
+          },
+          {
+            "name": "dateProximity",
+            "type": "double"
+          },
+          {
+            "name": "placeProximity",
+            "type": "double"
+          },
+          {
+            "name": "identifierMatch",
+            "type": "double"
+          }
+        ]
+      }
+    },
+    {
+      "name": "provenance",
+      "type": {
+        "type": "enum",
+        "name": "MergeProvenance",
+        "symbols": ["USER_REVIEW", "AUTOMATED_SCORER", "IMPORTED", "CORRECTION"]
+      }
+    },
+    {
+      "name": "reviewerUserId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId",
+      "doc": "Opaque subject id of the reviewer (Keycloak sub). Required for MERGED."
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "doc": "Reviewer-supplied reason (mandatory for MERGED, capped at 2048 chars per contracts/genealogy/person-merge-policy.yaml)."
+    },
+    {
+      "name": "snapshotHash",
+      "type": "string",
+      "doc": "Pre-merge content hash of the loser (glossary §2.4 #2). Lets consumers prove the loser snapshot is intact."
+    },
+    {
+      "name": "rekeyedReferenceCount",
+      "type": "long",
+      "doc": "Number of references re-keyed from loser to winner in the same transaction (R4.5 + glossary §2.4)."
+    },
+    {
+      "name": "actorId",
+      "type": "com.genealogy.platform.events.shared.v1.OpaqueId"
+    },
+    {
+      "name": "mergedAt",
+      "type": "string",
+      "logicalType": "timestamp-millis"
+    }
+  ]
+}

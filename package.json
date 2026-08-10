@@ -54,6 +54,7 @@
     "lint:relationship": "node scripts/lint-relationship-config.mjs",
     "lint:eventClaim": "node scripts/lint-event-claim-config.mjs",
     "lint:personMerge": "node scripts/lint-person-merge-config.mjs",
+    "lint:outboxRelay": "node scripts/lint-outbox-relay-config.mjs",
     "check:audit": "pnpm lint:audit && node --test scripts/__tests__/lint-audit-config.test.mjs",
     "check:tree": "pnpm lint:tree && node --test scripts/__tests__/lint-tree-config.test.mjs",
     "check:person": "pnpm lint:person && node --test scripts/__tests__/lint-person-config.test.mjs",
@@ -61,6 +62,7 @@
     "check:relationship": "pnpm lint:relationship && node --test scripts/__tests__/lint-relationship-config.test.mjs",
     "check:eventClaim": "pnpm lint:eventClaim && node --test scripts/__tests__/lint-event-claim-config.test.mjs",
     "check:personMerge": "pnpm lint:personMerge && node --test scripts/__tests__/lint-person-merge-config.test.mjs",
+    "check:outboxRelay": "pnpm lint:outboxRelay && node --test scripts/__tests__/lint-outbox-relay-config.test.mjs",
     "check:trustedContext": "pnpm lint:trustedContext && node --test scripts/__tests__/lint-trusted-context.test.mjs",
     "lint:ownership": "node scripts/check-ownership-coverage.mjs",
     "lint:generated": "node scripts/check-generated-code.mjs",
@@ -82,7 +84,7 @@
     "check:boundary": "node scripts/check-monorepo-boundaries.mjs",
     "check:ownership": "node scripts/check-ownership-coverage.mjs",
     "check:generated": "node scripts/check-generated-code.mjs",
-    "check:platform": "pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:temporal && pnpm lint:istio && pnpm lint:vault && pnpm lint:s3 && pnpm check:s3:compat && pnpm lint:flagsmith && pnpm lint:argo && pnpm lint:grafana && pnpm lint:keycloak && pnpm lint:openfga && pnpm lint:abac && pnpm lint:audit && pnpm lint:trustedContext && pnpm lint:tree && pnpm lint:person && pnpm lint:dateplace && pnpm lint:relationship && pnpm lint:eventClaim && pnpm lint:personMerge && node scripts/check-platform-baseline.mjs",
+    "check:platform": "pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:temporal && pnpm lint:istio && pnpm lint:vault && pnpm lint:s3 && pnpm check:s3:compat && pnpm lint:flagsmith && pnpm lint:argo && pnpm lint:grafana && pnpm lint:keycloak && pnpm lint:openfga && pnpm lint:abac && pnpm lint:audit && pnpm lint:trustedContext && pnpm lint:tree && pnpm lint:person && pnpm lint:dateplace && pnpm lint:relationship && pnpm lint:eventClaim && pnpm lint:personMerge && pnpm lint:outboxRelay && node scripts/check-platform-baseline.mjs",
     "check:platform:baseline": "node scripts/check-platform-baseline.mjs",
     "check:kong": "pnpm lint:kong && node scripts/check-platform-baseline.mjs",
     "check:kafka": "pnpm lint:kafka && node scripts/check-platform-baseline.mjs",
@@ -110,7 +112,7 @@
     "check:all": "pnpm check:boundary && pnpm check:lockfile && pnpm check:gradle:lock && pnpm check:ownership && pnpm check:generated && pnpm lint:eslint && pnpm lint:yaml && pnpm lint:openapi && pnpm lint:protobuf && pnpm lint:events && pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:markdown && pnpm typecheck && pnpm test:unit && pnpm check:java:format && pnpm check:java && pnpm check:java:test && pnpm check:platform:baseline",
     "release": "turbo run build --filter=...{git origin/main...HEAD}",
     "ci:quality": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit && pnpm check:java && pnpm check:boundary",
-    "ci:full": "pnpm ci:quality && pnpm test:integration && pnpm test:contract && pnpm test:e2e && pnpm lint:ownership && pnpm lint:generated && pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:temporal && pnpm lint:istio && pnpm lint:vault && pnpm lint:s3 && pnpm check:s3:compat && pnpm lint:flagsmith && pnpm lint:argo && pnpm lint:grafana && pnpm lint:keycloak && pnpm lint:openfga && pnpm lint:abac && pnpm lint:audit && pnpm lint:trustedContext && pnpm lint:tree && pnpm lint:person && pnpm lint:dateplace && pnpm lint:relationship && pnpm lint:eventClaim && pnpm lint:personMerge && pnpm check:platform && pnpm check:platform:baseline && pnpm smoke:kong && pnpm smoke:apicurio && pnpm smoke:temporal && pnpm smoke:istio && pnpm smoke:vault && pnpm smoke:s3 && pnpm smoke:flagsmith && pnpm smoke:argo && pnpm smoke:grafana && pnpm smoke:keycloak && pnpm smoke:openfga"
+    "ci:full": "pnpm ci:quality && pnpm test:integration && pnpm test:contract && pnpm test:e2e && pnpm lint:ownership && pnpm lint:generated && pnpm lint:helm && pnpm lint:kong && pnpm lint:kafka && pnpm lint:temporal && pnpm lint:istio && pnpm lint:vault && pnpm lint:s3 && pnpm check:s3:compat && pnpm lint:flagsmith && pnpm lint:argo && pnpm lint:grafana && pnpm lint:keycloak && pnpm lint:openfga && pnpm lint:abac && pnpm lint:audit && pnpm lint:trustedContext && pnpm lint:tree && pnpm lint:person && pnpm lint:dateplace && pnpm lint:relationship && pnpm lint:eventClaim && pnpm lint:personMerge && pnpm lint:outboxRelay && pnpm check:platform && pnpm check:platform:baseline && pnpm smoke:kong && pnpm smoke:apicurio && pnpm smoke:temporal && pnpm smoke:istio && pnpm smoke:vault && pnpm smoke:s3 && pnpm smoke:flagsmith && pnpm smoke:argo && pnpm smoke:grafana && pnpm smoke:keycloak && pnpm smoke:openfga"
   },
   "devDependencies": {
     "@eslint/js": "9.13.0",
