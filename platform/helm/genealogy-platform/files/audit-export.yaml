@@ -1,0 +1,95 @@
+# Audit export contract (E3.6).
+#
+# Source of truth for the bundle that `audit-service` exposes to
+# DPO / auditors on demand. Per `ownership-catalog.md` §2.11 the
+# public audit export is reached via a Kong-signed URL and the
+# export bundle carries chain-of-custody evidence
+# (`scale-and-slo.md` §6).
+#
+# Any change to this file MUST land together with:
+#   1. An updated `platform/helm/genealogy-platform/files/audit-export.yaml`
+#      mirror (byte-identical, enforced by `scripts/lint-audit-config.mjs`).
+#   2. A matching change to
+#      `services/audit-service/.../export/ExportService.java` + tests.
+apiVersion: v1
+kind: AuditExport
+metadata:
+  name: default-audit-export/v1
+  namespace: gp-platform
+spec:
+  policyId: default-audit-export/v1
+  description: >-
+    Audit-export bundle contract: requested by DPO / auditor,
+    returned as signed URL + manifest with chain-of-custody
+    digest.
+  requestEnvelope:
+    fields:
+      - tenantId
+      - auditClasses
+      - fromInstant
+      - toInstant
+      - requestedBy
+      - reasonCode
+      - format
+    format:
+      - CSV
+      - JSONL
+      - PARQUET
+    maxTimeWindowDays: 366
+    requireLegalHoldOverride: false
+    requireTwoPersonRule: true
+  responseEnvelope:
+    manifest:
+      required: true
+      fields:
+        - bundleId
+        - tenantId
+        - generatedAt
+        - requestedBy
+        - approvedBy
+        - auditClassCounts
+        - integrityHash
+        - chainHead
+        - retentionSweepRunId
+        - exportSchemaVersion
+      schemaVersion: audit-export-bundle/v1
+    payload:
+      fields:
+        - eventId
+        - occurredAt
+        - tenantId
+        - actorPseudoId
+        - auditClass
+        - action
+        - resourceType
+        - resourceId
+        - reasonCode
+        - correlationId
+        - previousHash
+        - entryHash
+  signedUrl:
+    signer: kong
+    ttlSeconds: 900
+    requiresDpoRole: true
+    downloadLimit: 3
+    storageClass: S3_WORM
+  integrity:
+    algorithm: SHA-256
+    manifestFieldsSigned:
+      - bundleId
+      - generatedAt
+      - auditClassCounts
+      - chainHead
+    integrityHashField: integrityHash
+  redaction:
+    inheritFrom: contracts/audit/redaction.yaml
+    additionalMaskKeys:
+      - actorEmail
+      - actorName
+    alwaysTruncate:
+      - freeText
+      - notes
+  accessLog:
+    auditClass: support
+    action: support.export.requested
+    actionOnDownload: support.read.executed

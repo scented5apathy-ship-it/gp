@@ -1,0 +1,161 @@
+# Audit policy (E3.6).
+#
+# Source of truth for the audit-class taxonomy and the closed-set
+# of `auditClass` / `action` / `reasonCode` identifiers that every
+# service is allowed to publish. The matching Java executor lives
+# in `services/audit-service/.../domain/AuditClassRegistry.java` and
+# the platform-side guard is
+# `libs/platform-spring-boot-starter/.../audit/AuditEventValidator.java`.
+#
+# Any change to this file MUST land together with:
+#   1. A matching change to `AuditClassRegistry` + tests.
+#   2. An updated `platform/helm/genealogy-platform/files/audit-policy.yaml`
+#      mirror (byte-identical, enforced by `scripts/lint-audit-config.mjs`).
+#   3. An updated `ReasonCode` catalogue in
+#      `libs/platform-security/.../abac/ReasonCode.java` if a new
+#      reason is added (abac and audit share the registry per
+#      `glossary-and-policy-matrix.md` §10).
+#
+# Per `agent-execution.md` §4.4 config-as-code is the contract;
+# the Java registry is the executor.
+apiVersion: v1
+kind: AuditPolicy
+metadata:
+  name: default-audit/v1
+  namespace: gp-platform
+spec:
+  policyId: default-audit/v1
+  description: >-
+    Audit taxonomy for the Genealogy Platform. Mirrors
+    `requirements.md` R13.6 / R16 and `ownership-catalog.md`
+    §2.11. The catalogue of `auditClasses` + `actions` is closed;
+    adding a new identifier requires an ADR supersession.
+  auditClasses:
+    - id: auth
+      description: Authentication / session lifecycle (login, logout, MFA, session revoke).
+      owner: platform-secondary
+      minRetentionDays: 365
+      reference: privacy-and-legal-gate.md §6
+    - id: authorization
+      description: Role / tuple / membership / policy change (RBAC + OpenFGA + ABAC).
+      owner: identity
+      minRetentionDays: 365
+      reference: requirements.md R1.3
+    - id: policy
+      description: ABAC policy / decision / reason-code change (engine rebuild, reason registration).
+      owner: platform-secondary
+      minRetentionDays: 730
+      reference: glossary-and-policy-matrix.md §10
+    - id: support
+      description: JIT support / operator / admin session start, scope and end (E11.5 forward).
+      owner: platform-secondary
+      minRetentionDays: 730
+      reference: privacy-and-legal-gate.md §7 T-07
+    - id: download
+      description: Sensitive download / export / signed-URL issuance for PII / genetic / media.
+      owner: data-platform
+      minRetentionDays: 730
+      reference: privacy-and-legal-gate.md §7 P-04
+    - id: consent
+      description: Consent grant / revoke / expiry / DNA access / share receipt.
+      owner: identity
+      minRetentionDays: 1825
+      reference: requirements.md R13.6
+  actions:
+    # auth class
+    - id: auth.login.succeeded
+      auditClass: auth
+    - id: auth.login.failed
+      auditClass: auth
+    - id: auth.logout
+      auditClass: auth
+    - id: auth.session.revoked
+      auditClass: auth
+    - id: auth.mfa.challenged
+      auditClass: auth
+    - id: auth.mfa.succeeded
+      auditClass: auth
+    - id: auth.mfa.failed
+      auditClass: auth
+    # authorization class
+    - id: tenant.created
+      auditClass: authorization
+    - id: tenant.updated
+      auditClass: authorization
+    - id: tenant.plan_changed
+      auditClass: authorization
+    - id: tenant.suspended
+      auditClass: authorization
+    - id: tenant.restored
+      auditClass: authorization
+    - id: tenant.soft_deleted
+      auditClass: authorization
+    - id: membership.invited
+      auditClass: authorization
+    - id: membership.activated
+      auditClass: authorization
+    - id: membership.role_changed
+      auditClass: authorization
+    - id: membership.revoked
+      auditClass: authorization
+    - id: openfga.tuple_written
+      auditClass: authorization
+    - id: openfga.tuple_revoked
+      auditClass: authorization
+    # policy class
+    - id: abac.policy_reloaded
+      auditClass: policy
+    - id: abac.reason_registered
+      auditClass: policy
+    - id: abac.cache_invalidated
+      auditClass: policy
+    - id: trusted_context.policy_reloaded
+      auditClass: policy
+    - id: audit.policy_reloaded
+      auditClass: policy
+    # support class
+    - id: support.session.started
+      auditClass: support
+    - id: support.session.scope_granted
+      auditClass: support
+    - id: support.session.ended
+      auditClass: support
+    - id: support.read.executed
+      auditClass: support
+    - id: support.export.requested
+      auditClass: support
+    # download class
+    - id: download.signed_url_issued
+      auditClass: download
+    - id: download.asset.exported
+      auditClass: download
+    - id: download.export.bundle_signed
+      auditClass: download
+    - id: download.gedcom.exported
+      auditClass: download
+    - id: download.report.exported
+      auditClass: download
+    # consent class
+    - id: consent.granted
+      auditClass: consent
+    - id: consent.revoked
+      auditClass: consent
+    - id: consent.expired
+      auditClass: consent
+    - id: consent.access_logged
+      auditClass: consent
+    - id: consent.receipt_signed
+      auditClass: consent
+  integrity:
+    hashAlgorithm: SHA-256
+    chainField: previousHash
+    genesisHash: "0000000000000000000000000000000000000000000000000000000000000000"
+    verificationCadence: scheduled
+    verificationCadenceCron: "0 3 * * * *"
+    tamperEvidenceMarker: INTEGRITY_BREACH
+  redactionTriggerClasses:
+    - PII.QUASI_ID
+    - PII.SENSITIVE
+    - GENETIC.RAW
+    - GENETIC.DERIVED
+    - MEDIA.RAW

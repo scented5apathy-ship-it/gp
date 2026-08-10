@@ -1,0 +1,9 @@
+# Per-service / per-area OWNERS file — CODEOWNERS-compatible.
+# Generated from config/teams.yaml by tools/scripts/sync-team-map.ts.
+# DO NOT EDIT — change config/teams.yaml and re-run the sync.
+
+Audit taxonomy / retention / redaction / export contract source-of-truth.
+area: audit-contracts
+primary: identity
+secondary: "@genealogy/platform"
+oncall: identity

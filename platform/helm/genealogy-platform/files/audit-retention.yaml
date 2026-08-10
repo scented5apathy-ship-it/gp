@@ -1,0 +1,93 @@
+# Audit retention policy (E3.6).
+#
+# Source of truth for the retention windows applied by the
+# `audit-service` ledger. Mirrors `scale-and-slo.md` §6 (Audit log
+# = 1 year hot / 5 years warm / 7 years cold immutable) and the
+# per-class `minRetentionDays` in `policy.yaml`. The numerical
+# table is closed; changing a window requires an ADR.
+#
+# Any change to this file MUST land together with:
+#   1. An updated `platform/helm/genealogy-platform/files/audit-retention.yaml`
+#      mirror (byte-identical, enforced by `scripts/lint-audit-config.mjs`).
+#   2. A matching change to
+#      `services/audit-service/.../retention/RetentionPolicy.java` + tests.
+#
+# Legal-hold override: while `legal_hold.active == true` the
+# retention sweeper MUST NOT delete any entry; the runbook
+# documents the override + how to audit releases.
+apiVersion: v1
+kind: AuditRetention
+metadata:
+  name: default-audit-retention/v1
+  namespace: gp-platform
+spec:
+  policyId: default-audit-retention/v1
+  description: >-
+    Retention windows applied by `audit-service` retention sweeper.
+    Mirrors `scale-and-slo.md` §6.
+  defaultTiers:
+    - tier: hot
+      storage: kafka-audit-topic
+      storageClass: STRIMZI_KAFKA
+      days: 365
+      encryptionAtRest: REQUIRED
+      objectLockMode: GOVERNANCE
+    - tier: warm
+      storage: s3-worm-audit-warm
+      storageClass: S3_SSE_KMS
+      days: 1825
+      encryptionAtRest: REQUIRED
+      objectLockMode: COMPLIANCE
+    - tier: cold
+      storage: s3-worm-audit-cold
+      storageClass: S3_SSE_KMS
+      days: 2555
+      encryptionAtRest: REQUIRED
+      objectLockMode: COMPLIANCE
+  perClassTiers:
+    auth:
+      hotDays: 365
+      warmDays: 1825
+      coldDays: 2555
+    authorization:
+      hotDays: 365
+      warmDays: 1825
+      coldDays: 2555
+    policy:
+      hotDays: 730
+      warmDays: 1825
+      coldDays: 2555
+    support:
+      hotDays: 730
+      warmDays: 1825
+      coldDays: 2555
+    download:
+      hotDays: 730
+      warmDays: 1825
+      coldDays: 2555
+    consent:
+      hotDays: 1825
+      warmDays: 1825
+      coldDays: 2555
+  sweep:
+    cadenceCron: "0 2 * * * *"
+    batchSize: 1000
+    requireLegalHoldCheck: true
+    requireIntegrityCheck: true
+    onTamperDetected: ABORT_AND_ALERT
+    onMissingEvidence: EMIT_DELETION_EVIDENCE
+  deletionEvidence:
+    required: true
+    destination: audit.deletion_evidence
+    payloadFields:
+      - tenantId
+      - auditClass
+      - action
+      - resourceId
+      - sweepRunId
+      - sweptAt
+      - reasonCode
+  legalHold:
+    enforcement: HARD_BLOCK
+    overrideRequiresRole: DPO
+    auditClassOnOverride: support
