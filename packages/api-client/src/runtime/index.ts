@@ -22,6 +22,8 @@
  */
 import { ApiError } from "./problem";
 import type { Problem } from "./problem";
+import type { PersonPatch, PersonResponse, PersonUpdateResponse } from "./person";
+import { toPersonResponse, toPersonUpdateResponse } from "./person";
 import type {
   NeighborhoodResponse,
   RawHttpResponse,
@@ -62,6 +64,61 @@ export {
   assertDepth,
   assertMaxNodes,
 } from "./tree-projection";
+export type {
+  CallOptions as PersonCallOptions,
+  DateValue,
+  DateValueKind,
+  FetcherClient as PersonFetcherClient,
+  LivingStatus,
+  PersonBody,
+  PersonFetcher,
+  PersonIdentifier,
+  PersonIdentifierScheme,
+  PersonName,
+  PersonPatch,
+  PersonPermissionAction,
+  PersonPermissionField,
+  PersonPermissions,
+  PersonRawHttpResponse,
+  PersonResponse,
+  PersonTimeline,
+  PersonUpdateResponse,
+  PlaceAuthority,
+  PlaceCandidate,
+  PlaceLookupResult,
+  PrivacyLevel,
+  RedactionReasonCode,
+  TimelineEvent,
+  TimelineEventKind,
+} from "./person";
+export {
+  DATE_VALUE_KINDS,
+  LIVING_STATUSES,
+  PERSON_BIOGRAPHY_MAX,
+  PERSON_DISPLAY_NAME_MAX,
+  PERSON_IDENTIFIER_SCHEMES,
+  PERSON_MAX_IDENTIFIERS,
+  PERSON_MAX_NAMES,
+  PERSON_MAX_PLACE_CANDIDATES,
+  PERSON_MAX_TIMELINE_EVENTS,
+  PERSON_MAX_TIMELINE_YEARS,
+  PERSON_PERMISSION_ACTIONS,
+  PERSON_PERMISSION_FIELDS,
+  PERSON_QUERY_MAX,
+  PLACE_AUTHORITIES,
+  PLACE_QUERY_MAX,
+  PRIVACY_LEVELS,
+  REDACTION_REASON_CODES,
+  TIMELINE_EVENT_KINDS,
+  assertPersonClosedSet,
+  assertPlaceQuery,
+  assertTimelineRange,
+  createBffPersonFetcher,
+  isOpaquePersonId,
+  toPersonResponse,
+  toPersonUpdateResponse,
+  unwrapPersonResponse,
+} from "./person";
 
 export interface BffClientOptions {
   /** Origin of the BFF, e.g. `https://bff.genealogy-platform.com`. */
@@ -184,6 +241,138 @@ export class BffClient {
     await this.request("DELETE", "/api/v1/session", {
       ...options,
       idempotencyKey: options.idempotencyKey ?? generateCorrelationId(),
+    });
+  }
+
+  /**
+   * `GET /persons/{personId}?treeId=...` — read a single person
+   * aggregate (E5.4). Honours `If-None-Match` for 304
+   * short-circuit; the editor store treats a 304 as "cache hit".
+   * The 200 body always carries the server-applied redaction
+   * summary (R15 / glossary §2.2) — the renderer MUST NOT
+   * re-redact.
+   */
+  async getPerson(input: {
+    readonly treeId: string;
+    readonly personId: string;
+    readonly ifNoneMatch?: string;
+    readonly signal?: AbortSignal;
+  }): Promise<PersonResponse> {
+    const headers: Record<string, string> = {};
+    if (input.ifNoneMatch) headers["If-None-Match"] = input.ifNoneMatch;
+    const response = await this.rawRequest(
+      "GET",
+      `/api/v1/persons/${encodeURIComponent(input.personId)}`,
+      {
+        query: { treeId: input.treeId },
+        headers,
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+    );
+    return toPersonResponse({
+      status: response.status,
+      headers: response.headers,
+      parsed: response.parsed,
+    });
+  }
+
+  /**
+   * `PUT /persons/{personId}?treeId=...` — update a person
+   * aggregate with optimistic concurrency (E4.2). The caller
+   * MUST supply `If-Match` (the ETag it holds). The wrapper
+   * returns 200 with the new ETag, 409 when the read-model is
+   * stale (caller refetches), 412 when the client edit is on
+   * a stale version (caller reconciles).
+   */
+  async updatePerson(input: {
+    readonly treeId: string;
+    readonly personId: string;
+    readonly patch: PersonPatch;
+    readonly ifMatch: string;
+    readonly signal?: AbortSignal;
+  }): Promise<PersonUpdateResponse> {
+    const response = await this.rawRequest(
+      "PUT",
+      `/api/v1/persons/${encodeURIComponent(input.personId)}`,
+      {
+        query: { treeId: input.treeId },
+        headers: { "If-Match": input.ifMatch },
+        body: input.patch,
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+    );
+    return toPersonUpdateResponse({
+      status: response.status,
+      headers: response.headers,
+      parsed: response.parsed,
+    });
+  }
+
+  /**
+   * `GET /persons/{personId}/timeline` — bounded personal
+   * timeline (R7.3). The wrapper refuses to submit a request
+   * that exceeds `PERSON_MAX_TIMELINE_YEARS` so the BFF never
+   * has to.
+   */
+  async getPersonTimeline(input: {
+    readonly treeId: string;
+    readonly personId: string;
+    readonly fromYear?: number;
+    readonly toYear?: number;
+    readonly limit?: number;
+    readonly signal?: AbortSignal;
+  }): Promise<unknown> {
+    const query: Record<string, string | number | undefined> = { treeId: input.treeId };
+    if (input.fromYear !== undefined) query["fromYear"] = input.fromYear;
+    if (input.toYear !== undefined) query["toYear"] = input.toYear;
+    if (input.limit !== undefined) query["limit"] = input.limit;
+    return this.request("GET", `/api/v1/persons/${encodeURIComponent(input.personId)}/timeline`, {
+      query,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  }
+
+  /**
+   * `GET /persons/{personId}/permissions` — field/action
+   * permission matrix (R10). The UI hides controls it knows
+   * are forbidden but the BFF still enforces on submit
+   * (`design.md` §8.3 — server is the source of truth).
+   */
+  async getPersonPermissions(input: {
+    readonly treeId: string;
+    readonly personId: string;
+    readonly signal?: AbortSignal;
+  }): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/api/v1/persons/${encodeURIComponent(input.personId)}/permissions`,
+      {
+        query: { treeId: input.treeId },
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+    );
+  }
+
+  /**
+   * `GET /place-lookup` — adapter contract for ADR-E0.5-14
+   * (calendar / geocoding / place authority). The wrapper
+   * delegates to the configured `PlaceProvider` via the BFF;
+   * `degraded=true` means the provider is unavailable and the
+   * UI must fall back to manual entry (ADR-E0.5-14
+   * §Security/privacy).
+   */
+  async lookupPlace(input: {
+    readonly q: string;
+    readonly locale?: string;
+    readonly limit?: number;
+    readonly signal?: AbortSignal;
+  }): Promise<unknown> {
+    const query: Record<string, string | number | undefined> = { q: input.q };
+    if (input.locale !== undefined) query["locale"] = input.locale;
+    if (input.limit !== undefined) query["limit"] = input.limit;
+    return this.request("GET", "/api/v1/place-lookup", {
+      query,
+      ...(input.signal ? { signal: input.signal } : {}),
     });
   }
 

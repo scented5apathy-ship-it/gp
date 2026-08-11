@@ -16,6 +16,7 @@
  * and the `components` object below — the typecheck will catch a
  * missing entry.
  */
+import type { components as BffPerson } from "./generated/bff__v1__person";
 import type { components as BffSession } from "./generated/bff__v1__session";
 import type { components as CommonHeaders } from "./generated/common__headers";
 import type { components as CommonPagination } from "./generated/common__pagination";
@@ -27,6 +28,7 @@ import type { components as PublicApiTree } from "./generated/public-api__v1__tr
 
 export interface components {
   bff: BffSession;
+  bff_person: BffPerson;
   common_headers: CommonHeaders;
   common_pagination: CommonPagination;
   common_problem_details: CommonProblemDetails;
@@ -38,6 +40,7 @@ export interface components {
 
 export type Paths = {
   bff: import("./generated/bff__v1__session").paths;
+  bff_person: import("./generated/bff__v1__person").paths;
   common_headers: import("./generated/common__headers").paths;
   common_pagination: import("./generated/common__pagination").paths;
   common_problem_details: import("./generated/common__problem-details").paths;

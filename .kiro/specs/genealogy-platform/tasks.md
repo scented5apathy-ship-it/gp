@@ -284,8 +284,8 @@ _Requirements: NFR1–NFR8_
     - 5 evidence file: `evidence/E3.2a.md` … `evidence/E3.2e.md` với Status
       DONE từng phần; chỉ flip epic `[x]` khi cả 5 evidence DONE.
     - DoD: `pnpm check:boundary` + `pnpm lint:openapi` + `pnpm lint:protobuf`
-      + `pnpm lint:events` + `./gradlew :services:tenant-service:test`
-      PASS; không mở rộng scope ngoài 4 subtask trên.
+      - `pnpm lint:events` + `./gradlew :services:tenant-service:test`
+        PASS; không mở rộng scope ngoài 4 subtask trên.
 
 - [x] E3.3 Thiết kế OpenFGA model
 

@@ -1,0 +1,657 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — BFF Person API
+  version: 1.0.0
+  description: |
+    Server-side person read/write + timeline + permission surface
+    consumed by the Next.js PWA (`apps/web`) for E5.4
+    (profile / editor / timeline / map).
+
+    Constraints pinned by this contract:
+      * `personId` opaque, regex `^[A-Za-z0-9._:-]{1,128}$`.
+      * `treeId` opaque, same regex.
+      * Every write REQUIRES `If-Match`; BFF replies 412 on
+        stale version, 409 when the read-model is stale (per
+        `design.md` §8.1 sequence diagram).
+      * Every mutation MUST send `Idempotency-Key` (UUID v4) per
+        `contracts/openapi/common/headers.yaml`.
+      * `PersonBody` carries `redaction` exactly like the tree
+        projection (E5.2 / E5.3): redaction is applied INSIDE
+        `genealogy-service` before the BFF serialises; the UI
+        never re-redacts (glossary-and-policy-matrix.md §2.2).
+      * `PersonPermissions` returns the closed-set of allowed
+        field/actions (server is the source of truth — UI hides
+        controls it knows are forbidden but the BFF still
+        enforces; R10 / design.md §8.3).
+      * `PersonTimeline` returns events for ONE person within
+        `fromYear/toYear`; cap: `toYear-fromYear ≤ 500` so the
+        BFF never returns the full timeline history.
+      * `PlaceLookup` is the adapter contract for ADR-E0.5-14
+        (calendar / geocoding / place authority providers).
+        Default implementation uses open-data
+        (OpenStreetMap Nominatim + Wikidata); commercial
+        fallback adapter is out of scope here (no vendor lock).
+  x-contract-major: 1
+  contact:
+    name: Web
+    url: https://github.com/genealogy/platform
+  license:
+    name: Proprietary
+servers:
+  - url: https://bff.internal/api/v1
+    description: BFF internal
+tags:
+  - name: Person
+    description: Read/write the Person aggregate (E4.2) through the BFF.
+  - name: PersonTimeline
+    description: Personal/family timeline view (R7.3 / E5.4).
+  - name: PersonPermissions
+    description: Field/action permission matrix mirrored from BFF to UI (R10).
+  - name: PlaceLookup
+    description: Adapter contract for ADR-E0.5-14 place authority.
+paths:
+  /persons/{personId}:
+    parameters:
+      - name: personId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      - name: treeId
+        in: query
+        required: true
+        description: |
+          Tree context (the BFF validates that `personId` belongs
+          to this tree; the BFF never trusts a tenant/person
+          id supplied via query string for cross-tree access).
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+    get:
+      tags: [Person]
+      summary: Read a single person aggregate.
+      operationId: getPerson
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          description: ETag the client currently holds; BFF returns 304 on match.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Person body (server-redacted).
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+            X-Person-Version:
+              $ref: "#/components/headers/XPersonVersion"
+            X-Correlation-Id:
+              $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBody"
+        "304":
+          description: Not modified.
+        "404":
+          description: Person not found in this tree.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+    put:
+      tags: [Person]
+      summary: Update the person aggregate (optimistic concurrency).
+      operationId: updatePerson
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: ETag of the version being mutated; 412 on mismatch.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonPatch"
+      responses:
+        "200":
+          description: Updated person (with new ETag + version).
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+            X-Person-Version:
+              $ref: "#/components/headers/XPersonVersion"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBody"
+        "409":
+          description: Stale read-model (read-model version drift); client must refetch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "412":
+          description: ETag precondition failed (stale client edit); client must refetch + re-edit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /persons/{personId}/timeline:
+    parameters:
+      - name: personId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      - name: treeId
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+    get:
+      tags: [PersonTimeline]
+      summary: Read the personal timeline for a person (R7.3).
+      operationId: getPersonTimeline
+      parameters:
+        - name: fromYear
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9999
+        - name: toYear
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9999
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Timeline events for the person.
+          headers:
+            X-Correlation-Id:
+              $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTimeline"
+        "400":
+          description: Invalid query (range > 500 years, malformed date, etc.).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /persons/{personId}/permissions:
+    parameters:
+      - name: personId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      - name: treeId
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+    get:
+      tags: [PersonPermissions]
+      summary: Read the field/action permission matrix (R10).
+      operationId: getPersonPermissions
+      responses:
+        "200":
+          description: Permission matrix for the active subject.
+          headers:
+            X-Permissions-Version:
+              $ref: "#/components/headers/XPermissionsVersion"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonPermissions"
+  /place-lookup:
+    get:
+      tags: [PlaceLookup]
+      summary: Resolve a free-text place query via the configured `PlaceProvider`.
+      operationId: lookupPlace
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Free-text query (UTF-8, 2–128 chars).
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 128
+        - name: locale
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 16
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+      responses:
+        "200":
+          description: Place candidates from the configured adapter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaceLookupResult"
+        "400":
+          description: Invalid query (length, encoding, etc.).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "503":
+          description: |
+            Place provider unavailable. The UI degrades to manual
+            entry (ADR-E0.5-14 §Security/privacy: "Provider
+            outages degrade to local placeholder; never block
+            tree edit.").
+components:
+  headers:
+    XPersonVersion:
+      description: |
+        Monotonic per-person version; the client sends the
+        version it holds on `If-Match` for mutations and uses
+        `X-Person-Version` to detect read-model drift (409).
+      schema:
+        type: integer
+        minimum: 1
+    XPermissionsVersion:
+      description: |
+        Permission policy version (mirrors E3.4 ABAC cache key).
+        When the client observes a version bump it MUST refetch
+        the permission matrix before issuing another mutation.
+      schema:
+        type: string
+  schemas:
+    PersonBody:
+      type: object
+      required:
+        - personId
+        - treeId
+        - displayName
+        - livingStatus
+        - names
+        - version
+        - redaction
+      properties:
+        personId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        treeId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        version:
+          type: integer
+          minimum: 1
+        displayName:
+          type: string
+          description: |
+            Locale-aware display name. EMPTY when redaction
+            fired (`redaction.reasonCodes` contains
+            `living_redacted` / `minor_guardian_required`).
+          maxLength: 256
+        livingStatus:
+          $ref: "#/components/schemas/LivingStatus"
+        names:
+          type: array
+          description: Ordered list of name records (primary first).
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/PersonName"
+        identifiers:
+          type: array
+          description: External identifiers (only those not redacted).
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/PersonIdentifier"
+        birth:
+          $ref: "#/components/schemas/DateValue"
+        death:
+          $ref: "#/components/schemas/DateValue"
+        privacyLevel:
+          $ref: "#/components/schemas/PrivacyLevel"
+        biography:
+          type: string
+          maxLength: 8000
+        redaction:
+          $ref: "../../bff/v1/tree-projection.yaml#/components/schemas/RedactionSummary"
+    PersonPatch:
+      type: object
+      required:
+        - displayName
+        - names
+      additionalProperties: false
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 256
+        names:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/PersonName"
+        birth:
+          $ref: "#/components/schemas/DateValue"
+        death:
+          $ref: "#/components/schemas/DateValue"
+        biography:
+          type: string
+          maxLength: 8000
+        identifiers:
+          type: array
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/PersonIdentifier"
+    PersonName:
+      type: object
+      required:
+        - locale
+        - script
+        - parts
+      properties:
+        locale:
+          type: string
+          minLength: 2
+          maxLength: 16
+        script:
+          type: string
+          minLength: 2
+          maxLength: 16
+        parts:
+          type: object
+          required:
+            - given
+            - surname
+          properties:
+            given:
+              type: string
+              maxLength: 128
+            surname:
+              type: string
+              maxLength: 128
+            patronymic:
+              type: string
+              maxLength: 128
+            generationalSuffix:
+              type: string
+              maxLength: 32
+        isPrimary:
+          type: boolean
+    PersonIdentifier:
+      type: object
+      required:
+        - scheme
+        - value
+      properties:
+        scheme:
+          type: string
+          enum: [AFN, ARK, GRdbID, WikiTreeID, VRN, Custom]
+        value:
+          type: string
+          minLength: 1
+          maxLength: 256
+        verified:
+          type: boolean
+    DateValue:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum: [EXACT, ABOUT, RANGE, BEFORE, AFTER, UNKNOWN]
+        original:
+          type: string
+          description: Original locale string before normalisation (preserved verbatim).
+          maxLength: 128
+        normalized:
+          type: object
+          description: Normalised UTC timestamp + IANA timezone + calendar id.
+          properties:
+            timestamp:
+              type: string
+              format: date-time
+            timezone:
+              type: string
+            calendarId:
+              type: string
+        year:
+          type: integer
+          minimum: 1
+          maximum: 9999
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        day:
+          type: integer
+          minimum: 1
+          maximum: 31
+    LivingStatus:
+      type: string
+      enum: [LIVING, PRESUMED_LIVING, DECEASED, PRESUMED_DECEASED, UNKNOWN]
+    PrivacyLevel:
+      type: string
+      enum: [PUBLIC, UNLISTED, PRIVATE]
+    PersonTimeline:
+      type: object
+      required:
+        - personId
+        - events
+      properties:
+        personId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        fromYear:
+          type: integer
+          minimum: 1
+          maximum: 9999
+        toYear:
+          type: integer
+          minimum: 1
+          maximum: 9999
+        events:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/TimelineEvent"
+        redaction:
+          $ref: "../../bff/v1/tree-projection.yaml#/components/schemas/RedactionSummary"
+    TimelineEvent:
+      type: object
+      required:
+        - eventId
+        - kind
+        - date
+      properties:
+        eventId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        kind:
+          type: string
+          enum:
+            - BIRTH
+            - DEATH
+            - MARRIAGE
+            - DIVORCE
+            - RESIDENCE
+            - MIGRATION
+            - MILITARY
+            - EDUCATION
+            - RELIGION
+            - CUSTOM
+        title:
+          type: string
+          maxLength: 256
+        date:
+          $ref: "#/components/schemas/DateValue"
+        placeId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        placeLabel:
+          type: string
+          maxLength: 256
+        participantIds:
+          type: array
+          items:
+            type: string
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        privacyLevel:
+          $ref: "#/components/schemas/PrivacyLevel"
+        redacted:
+          type: boolean
+    PersonPermissions:
+      type: object
+      required:
+        - personId
+        - treeId
+        - fields
+        - actions
+      properties:
+        personId:
+          type: string
+        treeId:
+          type: string
+        fields:
+          type: array
+          description: |
+            Per-field allow-list. The UI hides fields not in
+            the list; the BFF still enforces on submit (R10 /
+            design.md §8.3 — server is the source of truth).
+          items:
+            type: object
+            required:
+              - field
+              - allowed
+            properties:
+              field:
+                type: string
+                enum:
+                  - displayName
+                  - names
+                  - identifiers
+                  - birth
+                  - death
+                  - biography
+                  - privacyLevel
+              allowed:
+                type: boolean
+        actions:
+          type: array
+          items:
+            type: object
+            required:
+              - action
+              - allowed
+            properties:
+              action:
+                type: string
+                enum:
+                  - person.view
+                  - person.edit
+                  - person.delete
+                  - person.merge
+                  - person.export
+                  - person.relink
+              allowed:
+                type: boolean
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            description: |
+              ABAC reason codes that explain why the matrix is
+              what it is (e.g. `living_redacted`,
+              `minor_guardian_required`,
+              `privacy_class_restricted`,
+              `visibility_unlisted_token_invalid`).
+    PlaceLookupResult:
+      type: object
+      required:
+        - provider
+        - candidates
+      properties:
+        provider:
+          type: string
+          description: Adapter id that produced the result (e.g. `osm-nominatim`, `wikidata`).
+        degraded:
+          type: boolean
+          description: |
+            `true` when the configured provider is unavailable
+            and the BFF returned an empty result; the UI
+            degrades to manual place entry (ADR-E0.5-14).
+        candidates:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/PlaceCandidate"
+    PlaceCandidate:
+      type: object
+      required:
+        - placeId
+        - label
+      properties:
+        placeId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        label:
+          type: string
+          maxLength: 256
+        providerPlaceId:
+          type: string
+          description: Opaque provider-native id (e.g. OSM `N123`).
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+        historicalNames:
+          type: array
+          items:
+            type: string
+          maxItems: 32
+        authorityRefs:
+          type: array
+          items:
+            type: object
+            properties:
+              authority:
+                type: string
+                enum: [osm, wikidata, geonames, custom]
+              ref:
+                type: string
