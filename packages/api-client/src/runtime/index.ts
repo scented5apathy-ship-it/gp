@@ -22,6 +22,46 @@
  */
 import { ApiError } from "./problem";
 import type { Problem } from "./problem";
+import type {
+  NeighborhoodResponse,
+  RawHttpResponse,
+  TreeProjectionBody,
+  TreeProjectionDeltaBody,
+  TreeProjectionDirection,
+  TreeProjectionLivingStatus,
+  TreeProjectionRelationshipKind,
+  TreeProjectionResponse,
+  TreeProjectionViewKind,
+} from "./tree-projection";
+export type {
+  NeighborhoodResponse,
+  RawHttpResponse,
+  TreeProjectionBody,
+  TreeProjectionDeltaBody,
+  TreeProjectionDirection,
+  TreeProjectionEdgeBody,
+  TreeProjectionLivingStatus,
+  TreeProjectionNodeBody,
+  TreeProjectionRedactionReasonCode,
+  TreeProjectionRelationshipKind,
+  TreeProjectionResponse,
+  TreeProjectionViewKind,
+} from "./tree-projection";
+export {
+  TREE_PROJECTION_DIRECTIONS,
+  TREE_PROJECTION_FRESHNESS_TTL_CEILING_SECONDS,
+  TREE_PROJECTION_FRESHNESS_TTL_SECONDS,
+  TREE_PROJECTION_LIVING_STATUSES,
+  TREE_PROJECTION_MAX_DEPTH,
+  TREE_PROJECTION_MAX_NEIGHBORHOOD_NODES,
+  TREE_PROJECTION_MAX_RELATIONSHIPS_PER_RESPONSE,
+  TREE_PROJECTION_REDACTION_REASON_CODES,
+  TREE_PROJECTION_RELATIONSHIP_KINDS,
+  TREE_PROJECTION_VIEW_KINDS,
+  assertClosedSet,
+  assertDepth,
+  assertMaxNodes,
+} from "./tree-projection";
 
 export interface BffClientOptions {
   /** Origin of the BFF, e.g. `https://bff.genealogy-platform.com`. */
@@ -63,6 +103,18 @@ function generateCorrelationId(): string {
     const v = c === "0" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+/**
+ * Parse an integer header. The BFF emits `X-Tree-Projection-Version`
+ * as a monotonic integer; the wrapper tolerates a missing header
+ * by returning `null` so the caller can decide whether to refetch.
+ */
+function readHeaderInt(headers: Readonly<Record<string, string>>, key: string): number | null {
+  const raw = headers[key.toLowerCase()];
+  if (raw === undefined || raw === "") return null;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) ? value : null;
 }
 
 function buildUrl(
@@ -133,6 +185,190 @@ export class BffClient {
       ...options,
       idempotencyKey: options.idempotencyKey ?? generateCorrelationId(),
     });
+  }
+
+  /**
+   * `GET /trees/{treeId}/projection/{viewKind}` — read a bounded
+   * server-side projection anchored at `rootPersonId`. The wrapper
+   * is the E5.3 surface consumed by `apps/web/src/components/tree/`;
+   * it honours `If-None-Match` (304 short-circuit), exposes the
+   * `ETag` and `X-Tree-Projection-Version` headers, and never asks
+   * the BFF for the full graph (R6.3).
+   *
+   * The 304 contract is the responsibility of the caller — the
+   * caller passes `ifNoneMatch` and the response wrapper surfaces
+   * `notModified: true` when the BFF replies with the 304 status.
+   * `preconditions: { ifMatch }` is propagated to `If-Match` for
+   * the same reason.
+   *
+   * The body shape is intentionally `unknown` here; the consumer
+   * (`ProjectionStore`) re-validates against the JSON Schemas in
+   * `contracts/openapi/bff/v1/tree-projection.yaml` and narrows
+   * the result before mounting it in the tree state machine.
+   */
+  async getTreeProjection(input: {
+    treeId: string;
+    viewKind: TreeProjectionViewKind;
+    rootPersonId: string;
+    direction?: TreeProjectionDirection;
+    depth?: number;
+    maxNodes?: number;
+    maxRelationships?: number;
+    filter?: {
+      relationshipKinds?: readonly TreeProjectionRelationshipKind[];
+      livingStatus?: readonly TreeProjectionLivingStatus[];
+    };
+    ifNoneMatch?: string;
+    ifMatch?: string;
+  }): Promise<TreeProjectionResponse> {
+    const query: Record<string, string | number | boolean | undefined> = {
+      rootPersonId: input.rootPersonId,
+    };
+    if (input.direction !== undefined) query["direction"] = input.direction;
+    if (input.depth !== undefined) query["depth"] = input.depth;
+    if (input.maxNodes !== undefined) query["maxNodes"] = input.maxNodes;
+    if (input.maxRelationships !== undefined) query["maxRelationships"] = input.maxRelationships;
+    if (input.filter?.relationshipKinds?.length) {
+      query["filter[relationshipKinds]"] = input.filter.relationshipKinds.join(",");
+    }
+    if (input.filter?.livingStatus?.length) {
+      query["filter[livingStatus]"] = input.filter.livingStatus.join(",");
+    }
+
+    const headers: Record<string, string> = {};
+    if (input.ifNoneMatch) headers["If-None-Match"] = input.ifNoneMatch;
+    if (input.ifMatch) headers["If-Match"] = input.ifMatch;
+
+    const url = `/api/v1/trees/${encodeURIComponent(input.treeId)}/projection/${encodeURIComponent(input.viewKind)}`;
+    const response = await this.rawRequest("GET", url, { query, headers });
+    return {
+      status: response.status,
+      etag: response.headers["etag"] ?? null,
+      projectionVersion: readHeaderInt(response.headers, "x-tree-projection-version"),
+      generatedAt: response.headers["x-tree-projection-generated-at"] ?? null,
+      body: response.parsed as TreeProjectionBody | undefined,
+      notModified: response.status === 304,
+    };
+  }
+
+  /**
+   * `POST /trees/{treeId}/projection/{viewKind}/neighborhood` —
+   * incremental viewport fetch (R6.3). The BFF returns a
+   * `TreeProjectionDelta` containing `addedNodes` + `addedEdges`
+   * to merge into the existing projection or, when the BFF
+   * disagrees on `baseVersion`, a `409` so the caller refetches
+   * the full snapshot.
+   *
+   * The caller is responsible for staying under the
+   * `spec.maxNeighborhoodNodes` (1000) and `spec.maxDepth` (12)
+   * hard caps; the wrapper refuses to submit a request that
+   * violates them so the BFF never has to.
+   */
+  async expandNeighborhood(input: {
+    treeId: string;
+    viewKind: TreeProjectionViewKind;
+    anchorPersonId: string;
+    direction: TreeProjectionDirection;
+    depth: number;
+    maxNodes: number;
+    viewport?: {
+      topLeftGeneration: number;
+      bottomRightGeneration: number;
+      siblingIndexRange?: readonly [number, number];
+    };
+    baseVersion: number;
+    ifMatch?: string;
+  }): Promise<NeighborhoodResponse> {
+    if (input.depth < 1 || input.depth > 12) {
+      throw new RangeError(
+        `BffClient.expandNeighborhood: depth must be in [1, 12], got ${input.depth}`,
+      );
+    }
+    if (input.maxNodes < 1 || input.maxNodes > 1000) {
+      throw new RangeError(
+        `BffClient.expandNeighborhood: maxNodes must be in [1, 1000], got ${input.maxNodes}`,
+      );
+    }
+    const headers: Record<string, string> = {};
+    if (input.ifMatch) headers["If-Match"] = input.ifMatch;
+    const url = `/api/v1/trees/${encodeURIComponent(input.treeId)}/projection/${encodeURIComponent(input.viewKind)}/neighborhood`;
+    const response = await this.rawRequest("POST", url, {
+      headers,
+      body: {
+        anchorPersonId: input.anchorPersonId,
+        direction: input.direction,
+        depth: input.depth,
+        maxNodes: input.maxNodes,
+        viewport: input.viewport,
+        baseVersion: input.baseVersion,
+      },
+    });
+    return {
+      status: response.status,
+      etag: response.headers["etag"] ?? null,
+      projectionVersion: readHeaderInt(response.headers, "x-tree-projection-version"),
+      body: response.parsed as TreeProjectionDeltaBody | undefined,
+      stale: response.status === 409,
+      preconditionFailed: response.status === 412,
+    };
+  }
+
+  /**
+   * Lower-level request helper that returns the raw HTTP envelope
+   * (status + headers + parsed body). Used by the typed wrappers
+   * above so they can read `ETag` / `X-Tree-Projection-Version`
+   * without the generic `request()` swallowing the headers.
+   */
+  private async rawRequest(
+    method: string,
+    path: string,
+    options: CallOptions & { query?: Record<string, string | number | boolean | undefined> },
+  ): Promise<RawHttpResponse> {
+    const url = buildUrl(this.baseUrl, path, options.query);
+    const headers: Record<string, string> = { ...this.defaultHeaders, ...options.headers };
+    const correlationId = headers["X-Correlation-Id"] ?? generateCorrelationId();
+    headers["X-Correlation-Id"] = correlationId;
+    if (method.toUpperCase() !== "GET" && method.toUpperCase() !== "HEAD") {
+      const key = options.idempotencyKey ?? generateCorrelationId();
+      if (!UUID_RE.test(key)) {
+        throw new Error(
+          `BffClient: Idempotency-Key must be a UUID v4 (draft-ietf-httpapi-idempotency-key). Got: ${key}`,
+        );
+      }
+      headers["Idempotency-Key"] = key;
+      if (options.body !== undefined && !headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
+      }
+    }
+    const init: RequestInit = { method, headers };
+    if (options.signal) init.signal = options.signal;
+    if (options.body !== undefined) init.body = JSON.stringify(options.body);
+
+    const response = await this.fetchImpl(url, init);
+    const lowerCaseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      lowerCaseHeaders[key.toLowerCase()] = value;
+    });
+    let parsed: unknown = undefined;
+    if (response.status !== 204 && response.headers.get("content-length") !== "0") {
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        try {
+          parsed = await response.json();
+        } catch {
+          parsed = undefined;
+        }
+      }
+    }
+    if (
+      !response.ok &&
+      response.status !== 304 &&
+      response.status !== 409 &&
+      response.status !== 412
+    ) {
+      throw new ApiError(response.status, parsed as Problem | undefined, correlationId);
+    }
+    return { status: response.status, headers: lowerCaseHeaders, parsed };
   }
 
   /**
