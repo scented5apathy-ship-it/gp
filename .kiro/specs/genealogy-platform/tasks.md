@@ -409,7 +409,7 @@ _Requirements: R3, R4, R5, R7, R8, R10, R18, NFR1, NFR4, NFR7_
   - ICU messages, RTL, pseudolocale, name/address ordering và reduced motion.
   - Chạy axe tự động và manual critical-flow audit.
 
-- [ ] E5.6 Print/export view
+- [x] E5.6 Print/export view
   - Privacy preview, deterministic layout, page break và watermark obligations.
   - Giao report generation dài cho Temporal/Gotenberg, không block request.
   - Signed download URL có hạn và audit.
