@@ -1,0 +1,96 @@
+---
+# Tree projection cache configuration (E5.2).
+#
+# Source of truth for the Valkey-backed cache class used by
+# `services/genealogy-service` to hold the E5.2 tree projection
+# read model. Mirrors
+# `contracts/genealogy/tree-projection-policy.yaml` and the cache
+# class declared in `platform/helm/genealogy-platform/files/storage/valkey-config.yaml`.
+#
+# Per ADR-E0.5-06 ("cache invalidation mandatory on every Write,
+# TTL-only forbidden") the tree-projection cache is NEVER TTL-only.
+# The `freshnessTtlSeconds` (300s) is the upper bound for emergency
+# staleness; every cache entry MUST carry an explicit `invalidate`
+# path that the events listed in
+# `tree-projection-policy.yaml::spec.invalidators` trigger.
+apiVersion: v1
+kind: TreeProjectionCacheConfig
+metadata:
+  name: default-tree-projection-cache
+  namespace: gp-platform
+spec:
+  freshnessTtlSeconds: 300
+  freshnessTtlSecondsCeiling: 1800
+  invalidationOnWrite: required
+  ttlOnlyForbidden: true
+  maxEntriesPerTenant: 8192
+  maxBytesPerEntry: 1048576
+  # ACL scope — pinned so the deep linter rejects any service
+  # account that grants `KEYS *` or `@admin` to the projection
+  # cache. Pattern matches the Valkey ACL line in
+  # `storage/valkey-config.yaml::requiredUsers[genealogy-service]`.
+  aclKeyPattern: "gp:{tenant_pseudo_id}:genealogy:projection:*"
+  forbiddenKeySubstrings:
+    - raw_dna
+    - password
+    - apiKey
+    - token
+    - private_key
+    - ssn
+    - credit_card
+  # Every cache entry MUST carry the projection version + the
+  # ETag; the read path rejects entries whose `version` is older
+  # than the in-memory projection version (defence in depth against
+  # missing invalidations).
+  requireVersionOnEntry: true
+  requireEtagOnEntry: true
+  # Invalidation surface — the projection is rebuilt after every
+  # event listed below. The Java executor subscribes to the
+  # `genealogy.*` Kafka topics and forwards the matching eventType
+  # to `TreeProjectionCache::invalidate(...)`. Mirror in
+  # `tree-projection-policy.yaml::spec.invalidators`.
+  invalidators:
+    - name: person.upserted
+      topic: gp.genealogy.v1.person
+      eventType: person.upserted.v1
+    - name: person.deleted
+      topic: gp.genealogy.v1.person
+      eventType: person.deleted.v1
+    - name: person.living_status_changed
+      topic: gp.genealogy.v1.person
+      eventType: person.living_status_changed.v1
+    - name: person.privacy_changed
+      topic: gp.genealogy.v1.person
+      eventType: person.privacy_changed.v1
+    - name: relationship.upserted
+      topic: gp.genealogy.v1.relationship
+      eventType: relationship.upserted.v1
+    - name: relationship.deleted
+      topic: gp.genealogy.v1.relationship
+      eventType: relationship.deleted.v1
+    - name: tree.visibility_changed
+      topic: gp.genealogy.v1.tree
+      eventType: tree.visibility_changed.v1
+    - name: tree.deleted
+      topic: gp.genealogy.v1.tree
+      eventType: tree.deleted.v1
+    - name: tree.archived
+      topic: gp.genealogy.v1.tree
+      eventType: tree.archived.v1
+    - name: tree.restored
+      topic: gp.genealogy.v1.tree
+      eventType: tree.restored.v1
+  # Audit hooks — every cache miss + every invalidation emit an
+  # audit event. The class mirrors
+  # `tree-projection-policy.yaml::spec.audit`.
+  audit:
+    auditClassOnMiss: authorization
+    auditActionOnMiss: treeProjection.cacheMissed
+    auditClassOnInvalidate: authorization
+    auditActionOnInvalidate: treeProjection.invalidated
+    emitInvalidationEvent: true
+  # Stats emission — the projection cache surfaces hit-rate +
+  # stale-rate metrics into the existing
+  # `genealogy-service` Prometheus scrape.
+  emitMetrics: true
+  metricPrefix: genealogy_projection_cache

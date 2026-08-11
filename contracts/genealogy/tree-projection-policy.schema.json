@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genealogy.local/contracts/genealogy/tree-projection-policy.schema.json",
+  "title": "TreeProjectionPolicy",
+  "description": "Schema for the E5.2 tree projection read-model contract. Mirrors contracts/genealogy/tree-projection-policy.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "TreeProjectionPolicy"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "namespace"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "default-tree-projection/v1"
+        },
+        "namespace": {
+          "type": "string",
+          "const": "gp-platform"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policyId",
+        "maxDepth",
+        "maxNeighborhoodNodes",
+        "maxRelationshipsPerResponse",
+        "freshnessTtlSeconds",
+        "freshnessTtlSecondsCeiling",
+        "etagRequired",
+        "directions",
+        "viewKinds",
+        "relationshipFilters",
+        "livingStatusBuckets",
+        "redactionObligations",
+        "audit",
+        "invalidators",
+        "opaqueIdPattern",
+        "cacheKeyPrefix"
+      ],
+      "properties": {
+        "policyId": {
+          "type": "string",
+          "const": "default-tree-projection/v1"
+        },
+        "description": {
+          "type": "string"
+        },
+        "maxDepth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "maxNeighborhoodNodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "maxRelationshipsPerResponse": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "freshnessTtlSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800
+        },
+        "freshnessTtlSecondsCeiling": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800
+        },
+        "etagRequired": {
+          "type": "boolean",
+          "const": true
+        },
+        "directions": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["ANCESTORS", "DESCENDANTS", "BOTH", "SPOUSE_FAN"]
+          }
+        },
+        "viewKinds": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "defaultDirection", "maxDepth", "locked"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "enum": ["pedigree", "descendant", "fan", "hourglass", "family"]
+              },
+              "defaultDirection": {
+                "type": "string",
+                "enum": ["ANCESTORS", "DESCENDANTS", "BOTH", "SPOUSE_FAN"]
+              },
+              "maxDepth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 12
+              },
+              "locked": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "relationshipFilters": {
+          "type": "array",
+          "minItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "BIRTH_PARENT",
+              "ADOPTIVE_PARENT",
+              "FOSTER_PARENT",
+              "STEP_PARENT",
+              "GUARDIAN",
+              "SPOUSE",
+              "PARTNER",
+              "CUSTOM"
+            ]
+          }
+        },
+        "livingStatusBuckets": {
+          "type": "array",
+          "minItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["LIVING", "PRESUMED_LIVING", "DECEASED", "PRESUMED_DECEASED", "UNKNOWN"]
+          }
+        },
+        "redactionObligations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["reasonCode", "appliesToFields"],
+            "properties": {
+              "reasonCode": {
+                "type": "string",
+                "enum": [
+                  "living_redacted",
+                  "minor_guardian_required",
+                  "privacy_class_restricted",
+                  "visibility_unlisted_token_invalid"
+                ]
+              },
+              "appliesToFields": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              }
+            }
+          }
+        },
+        "audit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "auditClassOnQuery",
+            "auditActionOnQuery",
+            "auditClassOnRedaction",
+            "auditActionOnRedaction",
+            "emitRedactionEvent"
+          ],
+          "properties": {
+            "auditClassOnQuery": {
+              "type": "string",
+              "const": "authorization"
+            },
+            "auditActionOnQuery": {
+              "type": "string",
+              "const": "treeProjection.queried"
+            },
+            "auditClassOnRedaction": {
+              "type": "string",
+              "const": "authorization"
+            },
+            "auditActionOnRedaction": {
+              "type": "string",
+              "const": "treeProjection.redacted"
+            },
+            "emitRedactionEvent": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        },
+        "invalidators": {
+          "type": "array",
+          "minItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          }
+        },
+        "opaqueIdPattern": {
+          "type": "string",
+          "const": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "cacheKeyPrefix": {
+          "type": "string",
+          "pattern": "^gp:\\{tenant_pseudo_id\\}:genealogy:projection$"
+        }
+      }
+    }
+  }
+}

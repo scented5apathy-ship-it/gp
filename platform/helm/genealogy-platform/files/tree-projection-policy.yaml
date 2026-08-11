@@ -1,0 +1,156 @@
+# contracts/genealogy — Tree projection API contract (E5.2)
+#
+# Source of truth for the tree projection read model exposed by
+# `genealogy-service` and consumed by the `web-bff` adapter. Mirrors
+# `requirements.md` R6.3 ("cây lớn SHALL tải tăng dần, dùng
+# projection phía server và không tải toàn bộ graph vào client") +
+# `design.md` §5.4 ("`genealogy-service` duy trì read model cho
+# neighborhood/subtree theo root, direction, depth và relationship
+# filters ... projection mang version để client nhận biết stale
+# data").
+#
+# Mirror (byte-identical) lives under
+# `platform/helm/genealogy-platform/files/tree-projection-policy.yaml`.
+# The matching Java executor is the read-model service in
+# `services/genealogy-service/src/main/java/.../projection/`.
+#
+# The contract encodes:
+#   - the closed set of `directions` (ANCESTORS / DESCENDANTS /
+#     BOTH / SPOUSE_FAN) and `filters` (relationship kinds +
+#     living-status buckets);
+#   - the closed set of `viewKinds` mirrored in the BFF OpenAPI
+#     (`pedigree`, `descendant`, `fan`, `hourglass`, `family`);
+#   - hard caps on `maxDepth` (≤ 12) and `maxNeighborhoodNodes`
+#     (≤ 1000) — anything larger must paginate (§ScopeGuard).
+#   - redaction obligations (policy §2.1 Living, §2.2 Redaction,
+#     §2.7 Visibility) MUST be applied INSIDE the service that
+#     owns the aggregate before any serialisation
+#     (`glossary-and-policy-matrix.md` §11);
+#   - the projection `freshnessTtlSeconds` upper bound and the
+#     closed set of `invalidators` that bypass the TTL entirely.
+#
+# `agent-execution.md` §4.4 — config-as-code is the contract; the
+# Java executor is the implementation.
+apiVersion: v1
+kind: TreeProjectionPolicy
+metadata:
+  name: default-tree-projection/v1
+  namespace: gp-platform
+spec:
+  policyId: default-tree-projection/v1
+  description: >-
+    Read-model contract for the tree projection API. Pins the
+    closed-set of directions, view kinds, relationship filters
+    and freshness/redaction obligations exposed to `web-bff` and
+    consumed by `apps/web` (E5.3 tree views).
+  # R6.3 — server-side projection; client must never download the
+  # full graph. Hard caps below the contract: anything beyond the
+  # cap must paginate (§ScopeGuard).
+  maxDepth: 12
+  maxNeighborhoodNodes: 1000
+  maxRelationshipsPerResponse: 2000
+  # §5.4 — projection carries a monotonic version + a freshness
+  # timestamp. The client uses these to detect stale data.
+  freshnessTtlSeconds: 300
+  freshnessTtlSecondsCeiling: 1800
+  # ETag is required on every response so the client can send
+  # `If-None-Match` and trigger a 304 from the cache layer.
+  etagRequired: true
+  # Closed-set of cardinal directions the projection accepts.
+  # Matches the BFF OpenAPI enum (`TreeProjectionDirection`).
+  directions:
+    - ANCESTORS
+    - DESCENDANTS
+    - BOTH
+    - SPOUSE_FAN
+  # Closed-set of view kinds the BFF serves. The OpenAPI
+  # operationId is `{viewKind}Projection` and the policy maps each
+  # viewKind to a default `direction` (the client can override
+  # unless `locked` is true).
+  viewKinds:
+    - id: pedigree
+      defaultDirection: ANCESTORS
+      maxDepth: 8
+      locked: true
+    - id: descendant
+      defaultDirection: DESCENDANTS
+      maxDepth: 8
+      locked: true
+    - id: fan
+      defaultDirection: SPOUSE_FAN
+      maxDepth: 3
+      locked: false
+    - id: hourglass
+      defaultDirection: BOTH
+      maxDepth: 6
+      locked: false
+    - id: family
+      defaultDirection: SPOUSE_FAN
+      maxDepth: 2
+      locked: false
+  # Closed-set of relationship filters. The projection accepts a
+  # subset of these — never a free-form relationship string.
+  relationshipFilters:
+    - BIRTH_PARENT
+    - ADOPTIVE_PARENT
+    - FOSTER_PARENT
+    - STEP_PARENT
+    - GUARDIAN
+    - SPOUSE
+    - PARTNER
+    - CUSTOM
+  # Closed-set of living-status buckets the projection uses to
+  # decide whether a person is included in `node` payloads (R6 +
+  # glossary-and-policy-matrix.md §2.1).
+  livingStatusBuckets:
+    - LIVING
+    - PRESUMED_LIVING
+    - DECEASED
+    - PRESUMED_DECEASED
+    - UNKNOWN
+  # Required redaction obligations applied INSIDE the service
+  # BEFORE serialisation (`glossary-and-policy-matrix.md` §11).
+  # The BFF never re-applies redaction — it only formats. Any
+  # field that triggers an obligation is dropped (or masked) and
+  # the response carries a `redaction.reasonCodes` array per node
+  # so the audit ledger can correlate.
+  redactionObligations:
+    - reasonCode: living_redacted
+      appliesToFields: [livingFields]
+    - reasonCode: minor_guardian_required
+      appliesToFields: [minorFields]
+    - reasonCode: privacy_class_restricted
+      appliesToFields: [privacyLevel]
+    - reasonCode: visibility_unlisted_token_invalid
+      appliesToFields: [unlistedTokenScope]
+  # Audit contract — every projection response carries the
+  # traceId + a hashed actor identifier; the projection-write
+  # side emits `redaction.applied` events to the audit ledger.
+  audit:
+    auditClassOnQuery: authorization
+    auditActionOnQuery: treeProjection.queried
+    auditClassOnRedaction: authorization
+    auditActionOnRedaction: treeProjection.redacted
+    emitRedactionEvent: true
+  # Closed-set of invalidation events that BYPASS the freshness
+  # TTL. Mirror in `tree-projection-cache.yaml` (Valkey wiring).
+  invalidators:
+    - person.upserted
+    - person.deleted
+    - person.living_status_changed
+    - person.privacy_changed
+    - relationship.upserted
+    - relationship.deleted
+    - tree.visibility_changed
+    - tree.deleted
+    - tree.archived
+    - tree.restored
+  # Pattern for opaque person / relationship / tree IDs that the
+  # projection passes back to the client. Never expose any PII,
+  # DNA, contact or admin identifier in the projection.
+  opaqueIdPattern: "^[A-Za-z0-9._:-]{1,128}$"
+  # Cache class identifier (Valkey ACL `keys` pattern in
+  # `tree-projection-cache.yaml`). Kept here so the policy
+  # documents the cache contract without coupling to the
+  # transport.
+  cacheKeyPrefix: "gp:{tenant_pseudo_id}:genealogy:projection"

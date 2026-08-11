@@ -1,0 +1,526 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — BFF Tree Projection API
+  version: 1.0.0
+  description: |
+    Server-side projection read model consumed by the Next.js PWA
+    (`apps/web`). The BFF never queries `genealogy-service` for the
+    full graph — every endpoint below returns a bounded
+    neighbourhood/subtree scoped by `rootPersonId`, `direction`,
+    `depth` and `filters`. Mirrors
+    `contracts/genealogy/tree-projection-policy.yaml` (E5.2) and
+    `design.md` §5.4.
+
+    Constraints pinned by the policy contract:
+      * `depth` ∈ [1, 12] (spec.maxDepth)
+      * `maxNodes` ∈ [1, 1000] (spec.maxNeighborhoodNodes)
+      * `maxRelationships` ∈ [1, 2000]
+      * `direction` ∈ {ANCESTORS, DESCENDANTS, BOTH, SPOUSE_FAN}
+      * `viewKind` ∈ {pedigree, descendant, fan, hourglass, family}
+      * `filter.relationshipKinds` ∈ the closed set listed below
+      * every response carries `ETag` + `X-Tree-Projection-Version`
+        so the PWA can detect staleness and reuse cache entries
+      * every person node carries `redaction.reasonCodes`; the
+        redaction obligation is applied INSIDE `genealogy-service`
+        before the BFF renders the response — the BFF never
+        re-applies redaction
+      * the response is NEVER the full graph; the renderer is
+        required to fetch incrementally by viewport (E5.3)
+  x-contract-major: 1
+  contact:
+    name: Web
+    url: https://github.com/genealogy/platform
+  license:
+    name: Proprietary
+servers:
+  - url: https://bff.internal/api/v1
+    description: BFF internal
+tags:
+  - name: TreeProjection
+    description: Read-model projection endpoints for the tree view.
+paths:
+  /trees/{treeId}/projection/{viewKind}:
+    parameters:
+      - name: treeId
+        in: path
+        required: true
+        description: Opaque tree id (UUID v4). Resolved by the BFF from the membership cache.
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      - name: viewKind
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [pedigree, descendant, fan, hourglass, family]
+      - name: rootPersonId
+        in: query
+        required: true
+        description: Opaque person id that anchors the projection.
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      - name: direction
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [ANCESTORS, DESCENDANTS, BOTH, SPOUSE_FAN]
+          default: BOTH
+      - name: depth
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 12
+          default: 4
+      - name: maxNodes
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 250
+      - name: maxRelationships
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+      - name: filter[relationshipKinds]
+        in: query
+        required: false
+        description: |
+          Closed-set filter. Repeated query parameter; values outside
+          the closed set return 400. Multiple values are OR-ed.
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+              - BIRTH_PARENT
+              - ADOPTIVE_PARENT
+              - FOSTER_PARENT
+              - STEP_PARENT
+              - GUARDIAN
+              - SPOUSE
+              - PARTNER
+              - CUSTOM
+        style: form
+        explode: true
+      - name: filter[livingStatus]
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+              - LIVING
+              - PRESUMED_LIVING
+              - DECEASED
+              - PRESUMED_DECEASED
+              - UNKNOWN
+        style: form
+        explode: true
+      - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    get:
+      tags: [TreeProjection]
+      operationId: getTreeProjection
+      summary: Read a bounded neighbourhood/subtree projection
+      description: |
+        Returns the projection anchored at `rootPersonId`, scoped by
+        `direction`/`depth` and the optional filters. The BFF adds
+        `ETag` and `X-Tree-Projection-Version` headers; the client
+        sends them back as `If-None-Match` to receive a 304. The
+        cache layer (Valkey, ACL `gp:{tenant_pseudo_id}:genealogy:projection`)
+        holds the projection for `spec.freshnessTtlSeconds` (300s)
+        and is invalidated by the events listed in
+        `tree-projection-policy.yaml::spec.invalidators`.
+      responses:
+        "200":
+          description: Projection snapshot.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+            X-Tree-Projection-Version:
+              description: |
+                Monotonic projection version. The client persists the
+                version and re-queries when its local copy is stale.
+              schema:
+                type: integer
+                minimum: 1
+            X-Tree-Projection-Generated-At:
+              description: |
+                RFC-3339 timestamp the projection was assembled.
+                Together with `freshnessTtlSeconds` (300s) the
+                client decides whether to refetch.
+              schema:
+                type: string
+                format: date-time
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreeProjection"
+        "304":
+          description: Not modified — the client's `If-None-Match` matched.
+        "400":
+          description: Validation failure (closed-set violation, depth > 12, etc.).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "404":
+          description: Tree or root person not found in the caller's tenant scope.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /trees/{treeId}/projection/{viewKind}/neighborhood:
+    parameters:
+      - name: treeId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      - name: viewKind
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [pedigree, descendant, fan, hourglass, family]
+      - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    post:
+      tags: [TreeProjection]
+      operationId: expandNeighborhood
+      summary: Expand the projection by viewport / depth
+      description: |
+        Incremental neighbourhood fetch. The PWA calls this when
+        the user pans/zooms the tree and needs the nodes + edges
+        around the viewport. The request body MUST be bounded by
+        `spec.maxDepth` + `spec.maxNeighborhoodNodes`; the BFF
+        rejects anything larger with 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NeighborhoodRequest"
+      responses:
+        "200":
+          description: Projection delta (nodes + edges to add).
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+            X-Tree-Projection-Version:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreeProjectionDelta"
+        "400":
+          description: Validation failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "404":
+          description: Tree or anchor not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "409":
+          description: Stale projection version. Client should refetch the full projection.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "412":
+          description: If-Match precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+components:
+  schemas:
+    TreeProjection:
+      type: object
+      required:
+        - treeId
+        - viewKind
+        - direction
+        - depth
+        - version
+        - generatedAt
+        - nodes
+        - edges
+        - redaction
+      properties:
+        treeId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        viewKind:
+          type: string
+          enum: [pedigree, descendant, fan, hourglass, family]
+        direction:
+          type: string
+          enum: [ANCESTORS, DESCENDANTS, BOTH, SPOUSE_FAN]
+        depth:
+          type: integer
+          minimum: 1
+          maximum: 12
+        version:
+          type: integer
+          minimum: 1
+        generatedAt:
+          type: string
+          format: date-time
+        nodes:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/ProjectionNode"
+        edges:
+          type: array
+          maxItems: 2000
+          items:
+            $ref: "#/components/schemas/ProjectionEdge"
+        redaction:
+          $ref: "#/components/schemas/RedactionSummary"
+        pagination:
+          $ref: "#/components/schemas/ProjectionPagination"
+    ProjectionNode:
+      type: object
+      required:
+        - personId
+        - displayName
+        - livingStatus
+        - generation
+        - redaction
+      properties:
+        personId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        displayName:
+          type: string
+          description: |
+            Locale-aware display name (rendered by the BFF from the
+            primary `PersonName` after redaction). Empty when
+            `redaction.reasonCodes` includes `living_redacted`.
+          maxLength: 256
+        livingStatus:
+          type: string
+          enum:
+            - LIVING
+            - PRESUMED_LIVING
+            - DECEASED
+            - PRESUMED_DECEASED
+            - UNKNOWN
+        birthYear:
+          type: integer
+          minimum: 1
+          maximum: 9999
+          description: |
+            Year-only birth date for living persons (per
+            `glossary-and-policy-matrix.md` §11). Dropped when the
+            person is `LIVING` and the redaction obligation fires.
+        deathYear:
+          type: integer
+          minimum: 1
+          maximum: 9999
+        generation:
+          type: integer
+          description: |
+            Generation relative to `rootPersonId`; negative =
+            ancestors, positive = descendants, 0 = the root.
+          minimum: -12
+          maximum: 12
+        privacyLevel:
+          type: string
+          enum: [PUBLIC, UNLISTED, PRIVATE]
+        redaction:
+          $ref: "#/components/schemas/NodeRedaction"
+    ProjectionEdge:
+      type: object
+      required:
+        - fromPersonId
+        - toPersonId
+        - relationshipKind
+      properties:
+        fromPersonId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        toPersonId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        relationshipKind:
+          type: string
+          enum:
+            - BIRTH_PARENT
+            - ADOPTIVE_PARENT
+            - FOSTER_PARENT
+            - STEP_PARENT
+            - GUARDIAN
+            - SPOUSE
+            - PARTNER
+            - CUSTOM
+        provenanceStatus:
+          type: string
+          enum: [HYPOTHESIS, ASSERTED, VERIFIED, DISPUTED]
+    NodeRedaction:
+      type: object
+      required:
+        - redacted
+        - reasonCodes
+      properties:
+        redacted:
+          type: boolean
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            enum:
+              - living_redacted
+              - minor_guardian_required
+              - privacy_class_restricted
+              - visibility_unlisted_token_invalid
+        droppedFields:
+          type: array
+          description: |
+            List of fields the service dropped before serialisation
+            (e.g. `email`, `currentResidence`, `biography`).
+          items:
+            type: string
+            enum:
+              - name
+              - firstName
+              - lastName
+              - email
+              - phone
+              - address
+              - currentResidence
+              - school
+              - biography
+              - birthDate
+              - deathDate
+              - genderDescription
+              - freeText
+    RedactionSummary:
+      type: object
+      required:
+        - reasonCodes
+        - droppedFieldCount
+      properties:
+        reasonCodes:
+          type: array
+          items:
+            type: string
+        droppedFieldCount:
+          type: integer
+          minimum: 0
+        policyVersion:
+          type: string
+          description: |
+            `glossary-and-policy-matrix.md` policy version that
+            produced the redaction (e.g. `v1`). Used for audit
+            correlation.
+    ProjectionPagination:
+      type: object
+      required:
+        - hasMore
+      properties:
+        hasMore:
+          type: boolean
+        nextCursor:
+          type: string
+          description: Opaque cursor returned only when `hasMore=true`.
+          maxLength: 1024
+    NeighborhoodRequest:
+      type: object
+      required:
+        - anchorPersonId
+        - direction
+        - depth
+        - maxNodes
+        - baseVersion
+      properties:
+        anchorPersonId:
+          type: string
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        direction:
+          type: string
+          enum: [ANCESTORS, DESCENDANTS, BOTH, SPOUSE_FAN]
+        depth:
+          type: integer
+          minimum: 1
+          maximum: 12
+        maxNodes:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        viewport:
+          $ref: "#/components/schemas/Viewport"
+        baseVersion:
+          type: integer
+          minimum: 1
+          description: |
+            The `X-Tree-Projection-Version` the client currently
+            holds. The BFF returns 409 when its current version
+            differs so the client refetches the full snapshot.
+    Viewport:
+      type: object
+      required:
+        - topLeftGeneration
+        - bottomRightGeneration
+      properties:
+        topLeftGeneration:
+          type: integer
+          minimum: -12
+          maximum: 12
+        bottomRightGeneration:
+          type: integer
+          minimum: -12
+          maximum: 12
+        siblingIndexRange:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: integer
+            minimum: 0
+    TreeProjectionDelta:
+      type: object
+      required:
+        - version
+        - addedNodes
+        - addedEdges
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        addedNodes:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/ProjectionNode"
+        addedEdges:
+          type: array
+          maxItems: 2000
+          items:
+            $ref: "#/components/schemas/ProjectionEdge"
+        removedPersonIds:
+          type: array
+          items:
+            type: string
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
