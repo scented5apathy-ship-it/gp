@@ -1,0 +1,338 @@
+# contracts/research — Research log + citations + provenance
+# contract (E6.1).
+#
+# Source of truth for the research-service domain: the
+# Repository, Source, Citation, ResearchTask, Hypothesis and
+# Conflict aggregates, the closed-set vocabulary, the
+# state-transition matrix and the invariant reason codes. Mirrors
+# `requirements.md` R8.1 (repository, source, citation,
+# transcript, page/locator, URL, quality, attachment, research
+# log, task, hypothesis, conflict, status proof) + R4.4 (every
+# claim traceable to a citation) + R8.4 (provenance from fact
+# to source) + `design.md` §5.3 (research log + claim
+# lifecycle) + §5.5 (data model) + `ownership-catalog.md` §2.3
+# (research-service owns Source, Citation, ResearchTask,
+# Hypothesis) + ADR-E0.5-08 (Avro + Apicurio + closed-set
+# vocabularies).
+#
+# The Java executor lives under
+# `services/research-service/src/main/java/com/genealogy/
+# platform/services/research/domain/` (Repository / Source /
+# Citation / ResearchTask / Hypothesis / Conflict records +
+# `ResearchInvariants` self-check service +
+# `ResearchTaskStateMachine` / `HypothesisStateMachine` +
+# `ProvenanceQueryService`). The Flyway migration +
+# gRPC stubs + Kafka events land in the later E6.x
+# sub-epics.
+#
+# The chart mirror (byte-identical) lives at
+# `platform/helm/genealogy-platform/files/research-policy.yaml`
+# and is enforced by `scripts/lint-research-config.mjs`.
+#
+# Closed-set vocabulary:
+#   - sourceKind: PRIMARY / SECONDARY / DERIVED / ARCHIVE /
+#                 FINDING_AID / OTHER
+#   - citationQuality: ORIGINAL / TRANSCRIPT / ABSTRACT / IMAGE /
+#                      COPY / UNKNOWN
+#   - citationDisposition: SUPPORTS / REFUTES / MENTIONS /
+#                          UNCERTAIN
+#   - researchTaskStatus: OPEN / IN_PROGRESS / BLOCKED /
+#                         RESOLVED / ABANDONED
+#   - hypothesisStatus: DRAFT / ACTIVE / CORROBORATED / REFUTED /
+#                       SUPERSEDED
+#   - conflictKind: SOURCE_DISAGREES / CITATION_DISAGREES /
+#                   CLAIM_CONTRADICTS_SOURCE / HYPOTHESIS_COLLIDES /
+#                   OTHER
+#   - conflictStatus: OPEN / INVESTIGATING / RESOLVED / ABANDONED
+#   - repositoryKind: ARCHIVE / LIBRARY / CHURCH /
+#                     CIVIL_REGISTRY / CEMETERY / FAMILY_HOLDING /
+#                     DIGITAL_PLATFORM / OTHER
+#   - attachmentKind: DIGITAL_IMAGE / PDF / AUDIO / VIDEO /
+#                     TRANSCRIPT / EXTERNAL_URL / OTHER
+#   - certainty: HYPOTHESIS / ASSERTED / VERIFIED / DISPUTED
+#   - researchTaskStatusMatrix: per-aggregate state-transition map
+#   - invariants: closed-set of reason codes emitted by the
+#                 ResearchInvariants service
+#
+# Numeric thresholds are pinned per
+# `architecture-decisions.md` §A and
+# `glossary-and-policy-matrix.md` §2.4.
+apiVersion: v1
+kind: ResearchPolicy
+metadata:
+  name: default-research/v1
+  namespace: gp-platform
+spec:
+  policyId: default-research/v1
+  description: >-
+    Research log + citations + provenance defaults. Mirrors
+    `requirements.md` R8.1 + R8.4 + R4.4 and `design.md` §5.3 +
+    §5.5 + `ownership-catalog.md` §2.3. The platform never
+    accepts a citation that lacks a source; never accepts a
+    source that lacks a repository; never accepts a research
+    task in IN_PROGRESS without an assignment; never accepts
+    a HYPOTHESIS in CORROBORATED without a citation; never
+    persists a prohibited field (token, raw DNA, raw PII) in
+    any aggregate.
+
+  # ---------------------------------------------------------------------------
+  # Closed-set vocabulary (R8.1 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  sourceKinds:
+    - PRIMARY
+    - SECONDARY
+    - DERIVED
+    - ARCHIVE
+    - FINDING_AID
+    - OTHER
+
+  citationQualities:
+    - ORIGINAL
+    - TRANSCRIPT
+    - ABSTRACT
+    - IMAGE
+    - COPY
+    - UNKNOWN
+
+  citationDispositions:
+    - SUPPORTS
+    - REFUTES
+    - MENTIONS
+    - UNCERTAIN
+
+  researchTaskStatuses:
+    - OPEN
+    - IN_PROGRESS
+    - BLOCKED
+    - RESOLVED
+    - ABANDONED
+
+  hypothesisStatuses:
+    - DRAFT
+    - ACTIVE
+    - CORROBORATED
+    - REFUTED
+    - SUPERSEDED
+
+  conflictKinds:
+    - SOURCE_DISAGREES
+    - CITATION_DISAGREES
+    - CLAIM_CONTRADICTS_SOURCE
+    - HYPOTHESIS_COLLIDES
+    - OTHER
+
+  conflictStatuses:
+    - OPEN
+    - INVESTIGATING
+    - RESOLVED
+    - ABANDONED
+
+  repositoryKinds:
+    - ARCHIVE
+    - LIBRARY
+    - CHURCH
+    - CIVIL_REGISTRY
+    - CEMETERY
+    - FAMILY_HOLDING
+    - DIGITAL_PLATFORM
+    - OTHER
+
+  attachmentKinds:
+    - DIGITAL_IMAGE
+    - PDF
+    - AUDIO
+    - VIDEO
+    - TRANSCRIPT
+    - EXTERNAL_URL
+    - OTHER
+
+  certainties:
+    - HYPOTHESIS
+    - ASSERTED
+    - VERIFIED
+    - DISPUTED
+
+  # ---------------------------------------------------------------------------
+  # State-transition matrices (R8.1 + design.md §5.5 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  # ResearchTaskStatusMatrix — the only legal transitions
+  # enforced by `ResearchTaskStateMachine`. Terminal states
+  # never transition out.
+  researchTaskStatusMatrix:
+    OPEN:
+      - IN_PROGRESS
+      - BLOCKED
+      - ABANDONED
+    IN_PROGRESS:
+      - BLOCKED
+      - RESOLVED
+      - ABANDONED
+    BLOCKED:
+      - IN_PROGRESS
+      - ABANDONED
+    RESOLVED: []
+    ABANDONED: []
+
+  # HypothesisStatusMatrix — the only legal transitions
+  # enforced by `HypothesisStateMachine`.
+  hypothesisStatusMatrix:
+    DRAFT:
+      - ACTIVE
+      - REFUTED
+    ACTIVE:
+      - CORROBORATED
+      - REFUTED
+      - SUPERSEDED
+    CORROBORATED:
+      - REFUTED
+      - SUPERSEDED
+    REFUTED: []
+    SUPERSEDED: []
+
+  # ConflictStatusMatrix — terminal states never transition
+  # out.
+  conflictStatusMatrix:
+    OPEN:
+      - INVESTIGATING
+      - RESOLVED
+      - ABANDONED
+    INVESTIGATING:
+      - RESOLVED
+      - ABANDONED
+    RESOLVED: []
+    ABANDONED: []
+
+  # ---------------------------------------------------------------------------
+  # Numeric bounds (architecture-decisions.md §A + glossary §2.4)
+  # ---------------------------------------------------------------------------
+
+  # Per-aggregate length / cap bounds enforced by the compact
+  # constructor. The linter / unit test mirror every value.
+  maxSourceTitleLength: 512
+  maxSourceAuthorLength: 256
+  maxSourcePublisherLength: 256
+  maxSourcePublisherLocationLength: 256
+  maxSourceDescriptionLength: 4096
+  maxSourceAttachments: 64
+  maxSourceCitations: 256
+
+  maxRepositoryNameLength: 256
+  maxRepositoryLocationLabelLength: 1024
+  maxRepositoryWebsiteUrlLength: 2048
+  maxRepositoryDescriptionLength: 4096
+  maxRepositoryMetadataEntries: 32
+
+  maxCitationClaimReferenceLength: 128
+  maxCitationClaimKindLength: 64
+  maxCitationQuotedTextLength: 4096
+  maxCitationTranscriptSegments: 64
+  maxCitationAttachments: 64
+  maxCitationExternalUrls: 64
+
+  maxResearchTaskTitleLength: 256
+  maxResearchTaskDescriptionLength: 4096
+  maxResearchTaskSubjectReferenceLength: 128
+  maxResearchTaskSubjectKindLength: 64
+  maxResearchTaskBlockedReasonLength: 1024
+  maxResearchTaskResolvedProofLength: 128
+  maxResearchTaskAssignments: 16
+  maxResearchTaskLinkedCitations: 16
+
+  maxHypothesisStatementLength: 1024
+  maxHypothesisSubjectReferenceLength: 128
+  maxHypothesisSubjectKindLength: 64
+  maxHypothesisSupersededByLength: 128
+  maxHypothesisAssignedToLength: 128
+  maxHypothesisCorroboratingCitations: 64
+  maxHypothesisRefutingCitations: 64
+
+  maxConflictSummaryLength: 1024
+  maxConflictKindNoteLength: 1024
+  maxConflictResolutionLength: 4096
+  maxConflictResolutionProofLength: 128
+  maxConflictParticipants: 16
+  maxConflictLinkedCitations: 16
+  minConflictParticipants: 2
+
+  maxLocatorRawLength: 256
+  maxAttachmentMediaObjectIdLength: 128
+  maxAttachmentCanonicalUrlLength: 2048
+  maxAttachmentCaptionLength: 1024
+  maxTranscriptSegmentLineNumber: 100000
+  maxTranscriptSegmentTextLength: 4096
+  maxTranscriptSegmentOriginalScriptLength: 4096
+  maxTranscriptSegmentSpeakerLength: 256
+
+  maxAuditExtraKeys: 16
+  maxAuditExtraKeyLength: 64
+  maxAuditExtraValueLength: 1024
+  maxAuditCorrelationReasonLength: 256
+
+  confidenceMin: 0.0
+  confidenceMax: 1.0
+
+  # Provenance query result cap (per claim). Sourced from NFR2
+  # (p95 < 300 ms on common read paths).
+  maxHopsPerProvenanceChain: 256
+
+  # ---------------------------------------------------------------------------
+  # Required audit hooks (R16.2 + NFR5 + R8.1 status proof)
+  # ---------------------------------------------------------------------------
+
+  auditActorKey: actorPseudoId
+  auditCorrelationKey: correlationId
+  auditRequiredKeys:
+    - actorPseudoId
+    - correlationId
+  auditRequiredOnCreate: true
+  auditRequiredOnUpdate: true
+  auditRequiredOnArchive: true
+
+  auditClassOnCreate: research
+  auditActionOnCreate: research.created
+  auditClassOnUpdate: research
+  auditActionOnUpdate: research.updated
+  auditClassOnArchive: research
+  auditActionOnArchive: research.archived
+  auditClassOnResolve: research
+  auditActionOnResolve: research.resolved
+  auditClassOnAbandon: research
+  auditActionOnAbandon: research.abandoned
+
+  # ---------------------------------------------------------------------------
+  # Invariant reason codes (R8.1 + NFR1 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  invariants:
+    - SOURCE_POINTER_REQUIRES_ATTACHMENT
+    - TRANSCRIPT_QUALITY_REQUIRES_SEGMENT
+    - TRANSCRIPT_LINE_OUT_OF_ORDER
+    - RESEARCH_TASK_IN_PROGRESS_REQUIRES_ASSIGNMENT
+    - RESEARCH_TASK_BLOCKED_REQUIRES_REASON
+    - RESEARCH_TASK_RESOLVED_REQUIRES_PROOF
+    - HYPOTHESIS_CORROBORATED_REQUIRES_CITATION
+    - HYPOTHESIS_REFUTED_REQUIRES_CITATION
+    - HYPOTHESIS_SUPERSEDED_REQUIRES_BACK_REFERENCE
+    - CITATION_REQUIRES_LOCATOR_OR_QUOTE
+    - CITATION_REQUIRES_CONFIRMATION_FOR_LIVING
+    - REPOSITORY_PRIVATE_HOLDING_HIDES_BY_DEFAULT
+    - CONFLICT_RESOLVED_REQUIRES_PROOF
+    - CONFLICT_REQUIRE_MULTIPLE_PARTICIPANTS
+    - ATTACHMENT_EXTERNAL_URL_REQUIRES_DOMAIN_WHITELIST
+    - AUDIT_KEY_FORBIDDEN
+
+  # ---------------------------------------------------------------------------
+  # Forbidden payload scan (R13 DNA + NFR1 secret + R15 raw PII)
+  # ---------------------------------------------------------------------------
+
+  forbiddenPayloadPatterns:
+    - credential
+    - api[_-]?key
+    - private[_-]?key
+    - authorization
+    - bearer
+    - raw[_-]?dna
+    - raw[_-]?ssn
+    - raw[_-]?passport
