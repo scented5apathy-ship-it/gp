@@ -391,7 +391,7 @@ _Requirements: R3, R4, R5, R7, R8, R10, R18, NFR1, NFR4, NFR7_
   - Projection có version/freshness; redaction trước serialization.
   - Cache Valkey có tenant-aware key, TTL và invalidation.
 
-- [ ] E5.3 Tree views
+- [x] E5.3 Tree views
 
   - Pedigree, descendant, fan, hourglass và family view.
   - Pan/zoom/collapse/minimap/breadcrumb/search-root và stable node identity.
