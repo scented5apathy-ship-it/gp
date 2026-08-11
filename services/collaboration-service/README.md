@@ -3,7 +3,19 @@
 Service owner: see `OWNERS` (per-service CODEOWNERS file mirrored from
 `config/teams.yaml`).
 
-Implementation: delivered by downstream epics (E3.x for tenant, E4.x for
-genealogy, E5.x for sharing/DNA, etc.). E1.1 only wires the Gradle
-module, the package layout and the ArchUnit boundary guard so the
-monorepo build, lockfile and CI smoke run end-to-end.
+E6.2 ships the change proposal + review domain model
+(`com.genealogy.platform.services.collaboration.domain`) +
+the partial-merge executor + the closed-set vocabulary linter.
+The REST surface, gRPC stubs, Flyway migration, jOOQ
+persistence, Kafka producer/consumer and OpenFeature wiring
+land in the later E6.x / E11.x sub-epics.
+
+The proposal review re-authorizes through OpenFGA + ABAC at
+submit + every review decision via an injected port — the
+platform never mutates another service's domain record
+directly from the executor. The base version + normalized
+domain command list pattern (per `design.md` §8.3) replaces
+arbitrary JSON patch, so the executor can refuse to mutate
+forbidden fields (DNA raw data, consent receipt, living
+marker, visibility on a private tree, raw identifiers) at
+construction time.

@@ -1,0 +1,401 @@
+# contracts/collaboration — Change proposal + review contract (E6.2).
+#
+# Source of truth for the collaboration-service proposal /
+# review model. Mirrors `requirements.md` R10.1 (proposal
+# diff + source + reason + scope), R10.2 (editor approves /
+# rejects / requests change / partial merge), R10.3
+# (optimistic-concurrency conflict + comparison), R10.6
+# (approved changes trace back to proposal + reviewer),
+# R10.4 (tenant admin may choose direct edit / approval per
+# role / branch / resource type — operationalised by
+# E6.3), `design.md` §8.3 (proposal holds base version +
+# normalized patch/command, never arbitrary JSON patch on
+# forbidden fields, review re-checks OpenFGA + ABAC at
+# approve time, conflict returns comparison model, merge
+# creates a new domain command), `ownership-catalog.md`
+# §2.4 (collaboration-service owns `ChangeProposal`,
+# `Review`, `Comment`, `ActivityFeed`) and ADR-E0.5-08
+# (Avro + Apicurio + BACKWARD evolution of closed-set
+# vocabularies).
+#
+# The Java executor lives under
+# `services/collaboration-service/src/main/java/com/
+# genealogy/platform/services/collaboration/domain/`
+# (ChangeProposal + Review records + normalized DomainCommand
+# / DomainDiff value objects + ChangeProposalStateMachine +
+# ReviewStateMachine + PartialMergeExecutor +
+# CollaborationInvariants). The Flyway migration + gRPC
+# stubs + Kafka producer/consumer + OpenFeature wiring land
+# in the later E6.x / E11.x sub-epics.
+#
+# The chart mirror (byte-identical) lives at
+# `platform/helm/genealogy-platform/files/collaboration-
+# policy.yaml` (overwrites the E4.1 per-tree collaboration
+# mode file; the per-tree mode file is preserved under
+# `collaboration-tree-mode.yaml` so the E4.1 contract is not
+# broken) and is enforced by
+# `scripts/lint-collaboration-config.mjs`.
+#
+# Closed-set vocabulary:
+#   - proposalKind: PERSON / RELATIONSHIP / LIFE_EVENT /
+#                   CLAIM / SOURCE / CITATION / TREE_VISIBILITY
+#   - proposalStatus: DRAFT / SUBMITTED / IN_REVIEW /
+#                     CHANGES_REQUESTED / APPROVED /
+#                     PARTIALLY_MERGED / MERGED / REJECTED /
+#                     WITHDRAWN / EXPIRED
+#   - proposalDecision: APPROVE / REJECT / REQUEST_CHANGE /
+#                       PARTIAL_MERGE / WITHDRAW
+#   - domainCommandKind: CREATE_PERSON / UPDATE_PERSON /
+#                         ARCHIVE_PERSON / CREATE_RELATIONSHIP /
+#                         UPDATE_RELATIONSHIP / ARCHIVE_RELATIONSHIP /
+#                         CREATE_LIFE_EVENT / UPDATE_LIFE_EVENT /
+#                         ARCHIVE_LIFE_EVENT / CREATE_CLAIM /
+#                         UPDATE_CLAIM / ARCHIVE_CLAIM /
+#                         CREATE_SOURCE / UPDATE_SOURCE /
+#                         ARCHIVE_SOURCE / CREATE_CITATION /
+#                         UPDATE_CITATION / ARCHIVE_CITATION /
+#                         SET_TREE_VISIBILITY
+#   - reviewVerdict: APPROVED / REJECTED / CHANGES_REQUESTED /
+#                     PARTIAL_MERGED
+#   - conflictResolution: AUTO_MERGE / MANUAL_MERGE /
+#                         ABANDONED
+#   - reAuthorizationOutcome: ALLOW / DENY / ABAC_DENY
+#   - auditClassOnSubmit: collab
+#   - auditActionOnSubmit: collab.proposal.submitted
+#   - auditClassOnDecide: collab
+#   - auditActionOnApprove: collab.review.approved
+#   - auditActionOnReject: collab.review.rejected
+#   - auditActionOnRequestChange: collab.review.changesRequested
+#   - auditActionOnPartialMerge: collab.review.partialMerged
+#   - auditActionOnMerge: collab.proposal.merged
+#   - auditActionOnWithdraw: collab.proposal.withdrawn
+#   - auditActionOnExpire: collab.proposal.expired
+#
+# Numeric thresholds are pinned per
+# `architecture-decisions.md` §A and
+# `glossary-and-policy-matrix.md` §2.4.
+apiVersion: v1
+kind: CollaborationPolicy
+metadata:
+  name: default-collaboration/v2
+  namespace: gp-platform
+spec:
+  policyId: default-collaboration/v2
+  description: >-
+    Change proposal + review defaults. Mirrors
+    `requirements.md` R10.1, R10.2, R10.3, R10.6 + `design.md`
+    §8.3 + `ownership-catalog.md` §2.4. The collaboration
+    service never applies an arbitrary JSON patch to a
+    forbidden field; every proposal carries a base version +
+    normalized domain command list, OpenFGA + ABAC is
+    re-checked at submit + every review decision, partial
+    merge materialises a new domain command rather than
+    mutating the original proposal, and the approved change
+    always points back at the proposal + reviewer that
+    produced it.
+
+  # ---------------------------------------------------------------------------
+  # Closed-set vocabulary (R10.1 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  proposalKinds:
+    - PERSON
+    - RELATIONSHIP
+    - LIFE_EVENT
+    - CLAIM
+    - SOURCE
+    - CITATION
+    - TREE_VISIBILITY
+
+  proposalStatuses:
+    - DRAFT
+    - SUBMITTED
+    - IN_REVIEW
+    - CHANGES_REQUESTED
+    - APPROVED
+    - PARTIALLY_MERGED
+    - MERGED
+    - REJECTED
+    - WITHDRAWN
+    - EXPIRED
+
+  proposalDecisions:
+    - APPROVE
+    - REJECT
+    - REQUEST_CHANGE
+    - PARTIAL_MERGE
+    - WITHDRAW
+
+  domainCommandKinds:
+    - CREATE_PERSON
+    - UPDATE_PERSON
+    - ARCHIVE_PERSON
+    - CREATE_RELATIONSHIP
+    - UPDATE_RELATIONSHIP
+    - ARCHIVE_RELATIONSHIP
+    - CREATE_LIFE_EVENT
+    - UPDATE_LIFE_EVENT
+    - ARCHIVE_LIFE_EVENT
+    - CREATE_CLAIM
+    - UPDATE_CLAIM
+    - ARCHIVE_CLAIM
+    - CREATE_SOURCE
+    - UPDATE_SOURCE
+    - ARCHIVE_SOURCE
+    - CREATE_CITATION
+    - UPDATE_CITATION
+    - ARCHIVE_CITATION
+    - SET_TREE_VISIBILITY
+
+  reviewVerdicts:
+    - APPROVED
+    - REJECTED
+    - CHANGES_REQUESTED
+    - PARTIAL_MERGED
+
+  conflictResolutions:
+    - AUTO_MERGE
+    - MANUAL_MERGE
+    - ABANDONED
+
+  reAuthorizationOutcomes:
+    - ALLOW
+    - DENY
+    - ABAC_DENY
+
+  reviewStatuses:
+    - PENDING
+    - APPROVED
+    - REJECTED
+    - CHANGES_REQUESTED
+    - PARTIAL_MERGED
+
+  # ---------------------------------------------------------------------------
+  # State-transition matrices (R10.2 + design.md §8.3 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  # ProposalStatusMatrix — the only legal transitions
+  # enforced by `ChangeProposalStateMachine`. Terminal states
+  # never transition out; WITHDRAWN may be re-entered from
+  # CHANGES_REQUESTED via a new submission.
+  proposalStatusMatrix:
+    DRAFT:
+      - SUBMITTED
+      - WITHDRAWN
+    SUBMITTED:
+      - IN_REVIEW
+      - CHANGES_REQUESTED
+      - REJECTED
+      - WITHDRAWN
+      - EXPIRED
+    IN_REVIEW:
+      - APPROVED
+      - REJECTED
+      - CHANGES_REQUESTED
+      - PARTIALLY_MERGED
+      - WITHDRAWN
+      - EXPIRED
+    CHANGES_REQUESTED:
+      - SUBMITTED
+      - WITHDRAWN
+    APPROVED:
+      - MERGED
+      - PARTIALLY_MERGED
+      - EXPIRED
+    PARTIALLY_MERGED:
+      - MERGED
+      - EXPIRED
+    MERGED: []
+    REJECTED: []
+    WITHDRAWN: []
+    EXPIRED: []
+
+  # ReviewStatusMatrix — every review decision is terminal;
+  # a new proposal version is created for follow-ups.
+  reviewStatusMatrix:
+    PENDING:
+      - APPROVED
+      - REJECTED
+      - CHANGES_REQUESTED
+      - PARTIAL_MERGED
+    APPROVED: []
+    REJECTED: []
+    CHANGES_REQUESTED: []
+    PARTIAL_MERGED: []
+
+  # ---------------------------------------------------------------------------
+  # Forbidden fields — R10.1 forbids arbitrary JSON patch on
+  # certain sensitive fields (DNA, consent, living marker,
+  # visibility on a private tree, raw identifiers). The merge
+  # executor refuses to apply a domain command that targets any
+  # of these fields. Adding a new entry requires an ADR
+  # supersession.
+  # ---------------------------------------------------------------------------
+
+  forbiddenDomainCommandFields:
+    - dnaRawData
+    - dnaMatchId
+    - consentReceipt
+    - livingMarker
+    - visibility
+    - redactedFields
+    - rawEmail
+    - rawPhone
+    - rawSsn
+    - rawPassport
+    - ownerPseudoId
+    - tenantId
+
+  # Per-proposal-kind forbidden operations. Mirrors the same
+  # intent but pinned per kind so the executor can refuse at
+  # construction time.
+  forbiddenProposalKindOperations:
+    PERSON:
+      - SET_TREE_VISIBILITY
+    RELATIONSHIP:
+      - SET_TREE_VISIBILITY
+    LIFE_EVENT:
+      - SET_TREE_VISIBILITY
+    CLAIM:
+      - SET_TREE_VISIBILITY
+    SOURCE:
+      - SET_TREE_VISIBILITY
+    CITATION:
+      - SET_TREE_VISIBILITY
+    TREE_VISIBILITY:
+      - CREATE_PERSON
+      - UPDATE_PERSON
+      - ARCHIVE_PERSON
+      - CREATE_RELATIONSHIP
+      - UPDATE_RELATIONSHIP
+      - ARCHIVE_RELATIONSHIP
+      - CREATE_LIFE_EVENT
+      - UPDATE_LIFE_EVENT
+      - ARCHIVE_LIFE_EVENT
+      - CREATE_CLAIM
+      - UPDATE_CLAIM
+      - ARCHIVE_CLAIM
+      - CREATE_SOURCE
+      - UPDATE_SOURCE
+      - ARCHIVE_SOURCE
+      - CREATE_CITATION
+      - UPDATE_CITATION
+      - ARCHIVE_CITATION
+
+  # ---------------------------------------------------------------------------
+  # Numeric bounds (architecture-decisions.md §A + glossary §2.4)
+  # ---------------------------------------------------------------------------
+
+  maxProposalTitleLength: 256
+  maxProposalSummaryLength: 1024
+  maxProposalReasonLength: 4096
+  maxProposalScopeLength: 512
+  maxProposalSourceReferenceLength: 128
+  maxProposalDomainCommands: 256
+  maxProposalAffectedResourceIds: 256
+  maxProposalPartialMergeOperations: 256
+  maxProposalTtlSeconds: 2592000
+  minProposalTtlSeconds: 60
+
+  maxDomainCommandFieldKeyLength: 64
+  maxDomainCommandFieldValueLength: 4096
+  maxDomainCommandResourceIdLength: 128
+
+  maxReviewCommentLength: 4096
+  maxReviewDecisionsPerProposal: 64
+  maxReviewVerdicts: 16
+
+  maxAuditExtraKeys: 16
+  maxAuditExtraKeyLength: 64
+  maxAuditExtraValueLength: 1024
+  maxAuditCorrelationReasonLength: 256
+
+  maxConflictComparedValues: 64
+  maxConflictComparedFields: 64
+
+  maxHopsPerProposalTraceability: 64
+
+  # ---------------------------------------------------------------------------
+  # Required audit hooks (R16.2 + NFR5 + R10.6 traceability)
+  # ---------------------------------------------------------------------------
+
+  auditActorKey: actorPseudoId
+  auditCorrelationKey: correlationId
+  auditProposalPseudoIdKey: proposerPseudoId
+  auditReviewerPseudoIdKey: reviewerPseudoId
+  auditRequiredKeys:
+    - actorPseudoId
+    - correlationId
+  auditRequiredOnSubmit: true
+  auditRequiredOnDecide: true
+  auditRequiredOnMerge: true
+  auditRequiredOnWithdraw: true
+  auditRequiredOnExpire: true
+
+  auditClassOnSubmit: collab
+  auditActionOnSubmit: collab.proposal.submitted
+  auditClassOnDecide: collab
+  auditActionOnApprove: collab.review.approved
+  auditActionOnReject: collab.review.rejected
+  auditActionOnRequestChange: collab.review.changesRequested
+  auditActionOnPartialMerge: collab.review.partialMerged
+  auditClassOnMerge: collab
+  auditActionOnMerge: collab.proposal.merged
+  auditClassOnWithdraw: collab
+  auditActionOnWithdraw: collab.proposal.withdrawn
+  auditClassOnExpire: collab
+  auditActionOnExpire: collab.proposal.expired
+
+  # ---------------------------------------------------------------------------
+  # Invariant reason codes (R10.1 + R10.2 + NFR1 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  invariants:
+    - PROPOSAL_REQUIRED_BASE_VERSION
+    - PROPOSAL_BASE_VERSION_NOT_POSITIVE
+    - PROPOSAL_REASON_REQUIRED
+    - PROPOSAL_SCOPE_REQUIRED
+    - PROPOSAL_SOURCE_REFERENCE_REQUIRED
+    - PROPOSAL_DOMAIN_COMMAND_REQUIRED
+    - PROPOSAL_DOMAIN_COMMAND_FORBIDDEN_FIELD
+    - PROPOSAL_DOMAIN_COMMAND_FORBIDDEN_OPERATION
+    - PROPOSAL_TOO_LARGE
+    - PROPOSAL_TTL_OUT_OF_RANGE
+    - PROPOSAL_REAUTHORIZATION_REQUIRED
+    - PROPOSAL_REAUTHORIZATION_DENIED
+    - PROPOSAL_REAUTHORIZATION_ABAC_DENIED
+    - REVIEW_REQUIRED_COMMENT_FOR_REJECT
+    - REVIEW_REQUIRED_COMMENT_FOR_REQUEST_CHANGE
+    - REVIEW_PARTIAL_MERGE_REQUIRES_OPERATIONS
+    - REVIEW_TOO_MANY_DECISIONS
+    - REVIEW_DUPLICATE_DECISION
+    - PROPOSAL_NOT_IN_REVIEWABLE_STATE
+    - PROPOSAL_NOT_PARTIALLY_MERGEABLE
+    - CONFLICT_REQUIRE_BASE_VERSION_MATCH
+    - CONFLICT_REQUIRED_PARTIAL_MERGE_PLAN
+    - AUDIT_KEY_FORBIDDEN
+    - FORBIDDEN_DOMAIN_COMMAND_TARGET
+
+  # ---------------------------------------------------------------------------
+  # Forbidden payload scan (R13 DNA + NFR1 secret + R15 raw PII)
+  # ---------------------------------------------------------------------------
+
+  forbiddenPayloadPatterns:
+    - credential
+    - api[_-]?key
+    - private[_-]?key
+    - authorization
+    - bearer
+    - raw[_-]?dna
+    - raw[_-]?ssn
+    - raw[_-]?passport
+
+  # ---------------------------------------------------------------------------
+  # Re-authorization policy (R10.6 + design.md §8.3 + ADR-E0.5-06)
+  # ---------------------------------------------------------------------------
+
+  reAuthorizationOnSubmit: true
+  reAuthorizationOnApprove: true
+  reAuthorizationOnPartialMerge: true
+  reAuthorizationDenyClosesProposal: true
+  reAuthorizationAbacDenyClosesProposal: true

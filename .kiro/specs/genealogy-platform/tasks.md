@@ -434,7 +434,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
   - Research log, task, hypothesis, conflict, assignment và status.
   - Provenance query từ claim đến citation/source/file.
 
-- [ ] E6.2 Proposal/review model
+- [x] E6.2 Proposal/review model
 
   - Lưu normalized domain command/diff, base version, source và reason.
   - Hỗ trợ approve/reject/request-change/partial merge.

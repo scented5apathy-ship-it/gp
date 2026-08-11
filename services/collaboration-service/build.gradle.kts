@@ -1,12 +1,36 @@
 /*
- * Skeleton for `collaboration-service`. Implementation lands in later
- * epics (E3.x for tenant, E4.x for genealogy, E5.x for sharing/DNA,
- * etc.). E1.1 only wires the Gradle module so the monorepo build,
- * lockfile and CI smoke run end-to-end.
+ * E6.2 — `collaboration-service` change proposal + review model.
+ *
+ * Implements the ChangeProposal + Review aggregates, the
+ * normalized DomainCommand / DomainDiff value objects, the
+ * state-transition matrices and the partial-merge executor.
+ * Mirrors `contracts/collaboration/collaboration-policy.yaml`
+ * (E6.2). The Java domain
+ * (`com.genealogy.platform.services.collaboration.domain`) is
+ * the executor; the YAML file is the source of truth per
+ * `agent-execution.md` §4.4.
+ *
+ * E6.2 ships the domain + invariants + partial-merge executor
+ * only. REST surface, gRPC stubs, Flyway migration, jOOQ
+ * persistence, Kafka producer/consumer and OpenFeature wiring
+ * land in the later E6.x / E11.x sub-epics. Per ADR-E0.5-01
+ * the module inherits the Java 21 toolchain through the
+ * convention script and is locked to keep the build
+ * reproducible.
+ *
+ * Dependencies intentionally avoid coupling to other services.
+ * Cross-service interaction happens via gRPC + Kafka events
+ * (stubs deferred). The proposal review re-authorizes through
+ * OpenFGA + ABAC at submit + every review decision via an
+ * injected port — the platform never mutates another
+ * service's domain record directly from the executor.
  */
 plugins {
     java
 }
+
+apply(from = "$rootDir/gradle/conventions/java-conventions.gradle.kts")
+apply(from = "$rootDir/gradle/conventions/service-conventions.gradle.kts")
 
 dependencyLocking {
     lockAllConfigurations()

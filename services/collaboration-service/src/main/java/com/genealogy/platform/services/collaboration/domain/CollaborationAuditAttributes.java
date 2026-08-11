@@ -1,0 +1,87 @@
+package com.genealogy.platform.services.collaboration.domain;
+
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * Audit metadata attached to every collaboration aggregate.
+ * Mirrors `contracts/collaboration/collaboration-policy.yaml
+ * ::spec.auditAttributes` (E6.2) + `requirements.md` R16.2
+ * (audit log append-only) + NFR5 (no raw PII / DNA / token
+ * in logs).
+ *
+ * <p>Mandatory keys:
+ *
+ * <ul>
+ *   <li>{@code actorPseudoId} — the platform pseudonym
+ *       derived from the Keycloak subject + Kong boundary.
+ *       Never the raw subject id, never the email.
+ *   <li>{@code correlationId} — the request / event
+ *       correlation id, used to stitch the proposal + review
+ *       decisions + partial-merge + audit entries together.
+ * </ul>
+ *
+ * <p>Optional keys are restricted to the closed-set below;
+ * adding a new key requires an ADR supersession.
+ */
+public record CollaborationAuditAttributes(
+        String actorPseudoId,
+        String correlationId,
+        String correlationReason,
+        Map<String, String> extras) {
+
+    public static final int MAX_EXTRAS = 16;
+
+    public CollaborationAuditAttributes {
+        Objects.requireNonNull(actorPseudoId, "actorPseudoId");
+        Objects.requireNonNull(correlationId, "correlationId");
+        if (actorPseudoId.isBlank()) {
+            throw new IllegalArgumentException("actorPseudoId must not be blank");
+        }
+        if (correlationId.isBlank()) {
+            throw new IllegalArgumentException("correlationId must not be blank");
+        }
+        if (correlationReason != null && correlationReason.length() > 256) {
+            throw new IllegalArgumentException(
+                    "correlationReason exceeds 256 characters");
+        }
+        extras = extras == null
+                ? Map.of()
+                : Collections.unmodifiableMap(new LinkedHashMap<>(extras));
+        if (extras.size() > MAX_EXTRAS) {
+            throw new IllegalArgumentException(
+                    "extras exceeds " + MAX_EXTRAS + ": " + extras.size());
+        }
+        for (Map.Entry<String, String> e : extras.entrySet()) {
+            String key = e.getKey();
+            String value = e.getValue();
+            if (key == null || key.isBlank()) {
+                throw new IllegalArgumentException("extras key must not be blank");
+            }
+            if (key.length() > 64) {
+                throw new IllegalArgumentException(
+                        "extras key exceeds 64 characters: " + key);
+            }
+            if (value != null && value.length() > 1024) {
+                throw new IllegalArgumentException(
+                        "extras value exceeds 1024 characters for key " + key);
+            }
+        }
+    }
+
+    public static CollaborationAuditAttributes of(String actorPseudoId, String correlationId) {
+        return new CollaborationAuditAttributes(actorPseudoId, correlationId, null, Map.of());
+    }
+
+    public CollaborationAuditAttributes withReason(String reason) {
+        return new CollaborationAuditAttributes(actorPseudoId, correlationId, reason, extras);
+    }
+
+    public CollaborationAuditAttributes withExtra(String key, String value) {
+        Map<String, String> next = new LinkedHashMap<>(extras);
+        next.put(key, value);
+        return new CollaborationAuditAttributes(actorPseudoId, correlationId, correlationReason, next);
+    }
+}
