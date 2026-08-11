@@ -1,0 +1,540 @@
+# contracts/collaboration — Mixed collaboration policy (E6.3).
+#
+# Source of truth for the per-role / per-branch / per-resource-type
+# direct edit vs approval decision matrix. Extends the E6.2
+# proposal / review contract. Mirrors `requirements.md` R10.4
+# (tenant / tree admin SHALL configure direct edit OR approval
+# per role / branch / resource type), `design.md` §8.3
+# (policy decides whether a mutation is applied directly or
+# routed through a proposal; conflict returns a comparison
+# model; merge creates a new domain command — never an
+# arbitrary JSON patch on forbidden fields), `ownership-
+# catalog.md` §2.4 (collaboration-service owns the routing
+# policy), `glossary-and-policy-matrix.md` §2.4 (mixed
+# collaboration behaviour) and ADR-E0.5-08 (Avro + Apicurio
+# + BACKWARD evolution of closed-set vocabularies).
+#
+# The Java executor lives under
+# `services/collaboration-service/src/main/java/com/
+# genealogy/platform/services/collaboration/domain/`
+# (CollaborationRole + TreeBranch + RoutingDecision +
+# DirectEditMatrix + ConflictComparison + MergeCommandFactory
+# + PatchValidation + FlagsmithRolloutSync). The Flyway
+# migration + gRPC stubs + OpenFeature wiring land in the
+# later E6.x / E11.x sub-epics.
+#
+# The chart mirror (byte-identical) lives at
+# `platform/helm/genealogy-platform/files/collaboration-mixed-policy.yaml`
+# and is enforced by
+# `scripts/lint-collaboration-mixed-policy.mjs`.
+#
+# Closed-set vocabulary:
+#   - collaborationRole: TENANT_ADMIN / TREE_ADMIN / EDITOR /
+#                         REVIEWER / CONTRIBUTOR / VIEWER /
+#                         GUARDIAN / DNA_STEWARD
+#   - treeBranch: TRUNK / MATERNAL / PATERNAL / ADOPTIVE /
+#                 STEP / GUARDIAN / CUSTOM
+#   - resourceType: PERSON / RELATIONSHIP / LIFE_EVENT /
+#                   CLAIM / SOURCE / CITATION / TREE_VISIBILITY
+#   - routingDecision: DIRECT_EDIT / APPROVAL_REQUIRED /
+#                      DENY
+#   - conflictResolution: AUTO_MERGE / MANUAL_MERGE /
+#                         ABANDONED
+#   - conflictFieldKind: SAME / DIFFERENT / ONLY_BASE /
+#                        ONLY_INCOMING / ONLY_LOCAL
+#   - mergeOutcomeKind: AUTO_MERGED / MANUAL_MERGED /
+#                       ABANDONED / FORBIDDEN_FIELD /
+#                       FORBIDDEN_OPERATION /
+#                       BASE_VERSION_STALE /
+#                       RESOURCE_ID_NOT_IN_SCOPE
+#   - flagsmithRolloutStrategy: SAFE_DEFAULT / PROGRESSIVE /
+#                               CANARY / KILL_SWITCH
+#   - flagsmithSyncOutcome: IN_SYNC / STALE / DRIFT / MISSING
+#   - auditClassOnRoute: collab
+#   - auditActionOnDirectEdit: collab.routing.directEdit
+#   - auditActionOnApprovalRequired: collab.routing.approvalRequired
+#   - auditActionOnDeny: collab.routing.deny
+#   - auditClassOnConflict: collab
+#   - auditActionOnConflictDetected: collab.conflict.detected
+#   - auditActionOnConflictAutoMerged: collab.conflict.autoMerged
+#   - auditActionOnConflictManualMerged: collab.conflict.manualMerged
+#   - auditClassOnFlagsmithSync: collab
+#   - auditActionOnFlagsmithSync: collab.flagsmith.synced
+#   - auditActionOnFlagsmithDrift: collab.flagsmith.drift
+#
+# Numeric thresholds are pinned per
+# `architecture-decisions.md` §A and
+# `glossary-and-policy-matrix.md` §2.4.
+apiVersion: v1
+kind: MixedCollaborationPolicy
+metadata:
+  name: default-collaboration-mixed/v2
+  namespace: gp-platform
+spec:
+  policyId: default-collaboration-mixed/v2
+  description: >-
+    Mixed collaboration policy — direct edit vs approval per
+    role × branch × resource type, conflict comparison +
+    merge command materialisation, Flagsmith rollout sync.
+    Mirrors `requirements.md` R10.4 + `design.md` §8.3 +
+    `ownership-catalog.md` §2.4 + ADR-E0.5-08. The
+    collaboration service never applies an arbitrary JSON
+    patch on a forbidden field; every merge command is
+    derived from a domain command; policy changes flow
+    through Flagsmith only as a rollout switch — the YAML
+    contract remains the source of truth.
+
+  # ---------------------------------------------------------------------------
+  # Closed-set vocabulary (R10.4 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  collaborationRoles:
+    - TENANT_ADMIN
+    - TREE_ADMIN
+    - EDITOR
+    - REVIEWER
+    - CONTRIBUTOR
+    - VIEWER
+    - GUARDIAN
+    - DNA_STEWARD
+
+  treeBranches:
+    - TRUNK
+    - MATERNAL
+    - PATERNAL
+    - ADOPTIVE
+    - STEP
+    - GUARDIAN
+    - CUSTOM
+
+  resourceTypes:
+    - PERSON
+    - RELATIONSHIP
+    - LIFE_EVENT
+    - CLAIM
+    - SOURCE
+    - CITATION
+    - TREE_VISIBILITY
+
+  routingDecisions:
+    - DIRECT_EDIT
+    - APPROVAL_REQUIRED
+    - DENY
+
+  conflictResolutions:
+    - AUTO_MERGE
+    - MANUAL_MERGE
+    - ABANDONED
+
+  conflictFieldKinds:
+    - SAME
+    - DIFFERENT
+    - ONLY_BASE
+    - ONLY_INCOMING
+    - ONLY_LOCAL
+
+  mergeOutcomeKinds:
+    - AUTO_MERGED
+    - MANUAL_MERGED
+    - ABANDONED
+    - FORBIDDEN_FIELD
+    - FORBIDDEN_OPERATION
+    - BASE_VERSION_STALE
+    - RESOURCE_ID_NOT_IN_SCOPE
+
+  flagsmithRolloutStrategies:
+    - SAFE_DEFAULT
+    - PROGRESSIVE
+    - CANARY
+    - KILL_SWITCH
+
+  flagsmithSyncOutcomes:
+    - IN_SYNC
+    - STALE
+    - DRIFT
+    - MISSING
+
+  # ---------------------------------------------------------------------------
+  # Direct edit matrix (R10.4 + design.md §8.3)
+  # ---------------------------------------------------------------------------
+  # The matrix is keyed by role and lists the routing
+  # decision per branch × resource type pair. The absence
+  # of a key falls back to `defaultRoutingDecision`. The
+  # executor refuses to apply a direct edit on a resource
+  # type that contains a forbidden field (see
+  # `forbiddenDomainCommandFields` from the E6.2 contract).
+  # ---------------------------------------------------------------------------
+
+  defaultRoutingDecision: APPROVAL_REQUIRED
+
+  # Guard rails — even an explicit DIRECT_EDIT never
+  # overrides these:
+  alwaysApprovalRequired:
+    - TREE_VISIBILITY
+    - CLAIM
+    - SOURCE
+
+  # Resource types where direct edit is permitted for any
+  # role (the role-level guard still applies).
+  directEditPermittedResources:
+    - LIFE_EVENT
+    - CITATION
+
+  # Role × branch × resource-type routing matrix.
+  # Per R10.4 the tenant / tree admin may OPT-IN to direct
+  # edit for a given role on a given branch + resource type;
+  # the default is APPROVAL_REQUIRED (the matrix below is
+  # therefore a positive-list of direct-edit grants).
+  # Each entry is a flat record (role / branch / resourceType /
+  # decision) so the loose YAML parser + the closed-set
+  # checker can validate them independently.
+  directEditMatrix:
+    - role: TENANT_ADMIN
+      branch: TRUNK
+      resourceType: PERSON
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: TRUNK
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: TRUNK
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: TRUNK
+      resourceType: CLAIM
+      decision: APPROVAL_REQUIRED
+    - role: TENANT_ADMIN
+      branch: TRUNK
+      resourceType: SOURCE
+      decision: APPROVAL_REQUIRED
+    - role: TENANT_ADMIN
+      branch: TRUNK
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: TRUNK
+      resourceType: TREE_VISIBILITY
+      decision: APPROVAL_REQUIRED
+    - role: TENANT_ADMIN
+      branch: MATERNAL
+      resourceType: PERSON
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: MATERNAL
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: MATERNAL
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: MATERNAL
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: PATERNAL
+      resourceType: PERSON
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: PATERNAL
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: PATERNAL
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: PATERNAL
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: ADOPTIVE
+      resourceType: PERSON
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: ADOPTIVE
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: STEP
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: GUARDIAN
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TENANT_ADMIN
+      branch: CUSTOM
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: TRUNK
+      resourceType: PERSON
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: TRUNK
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: TRUNK
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: TRUNK
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: MATERNAL
+      resourceType: PERSON
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: MATERNAL
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: MATERNAL
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: MATERNAL
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: PATERNAL
+      resourceType: PERSON
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: PATERNAL
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: PATERNAL
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: PATERNAL
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: ADOPTIVE
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: STEP
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: GUARDIAN
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: TREE_ADMIN
+      branch: CUSTOM
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+    - role: EDITOR
+      branch: TRUNK
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: EDITOR
+      branch: TRUNK
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: EDITOR
+      branch: MATERNAL
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: EDITOR
+      branch: MATERNAL
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: EDITOR
+      branch: PATERNAL
+      resourceType: LIFE_EVENT
+      decision: DIRECT_EDIT
+    - role: EDITOR
+      branch: PATERNAL
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: REVIEWER
+      branch: TRUNK
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: REVIEWER
+      branch: MATERNAL
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: REVIEWER
+      branch: PATERNAL
+      resourceType: CITATION
+      decision: DIRECT_EDIT
+    - role: GUARDIAN
+      branch: GUARDIAN
+      resourceType: RELATIONSHIP
+      decision: DIRECT_EDIT
+
+  # Roles that never receive DIRECT_EDIT even if the matrix
+  # is later relaxed. Hard-coded safety guard.
+  directEditForbiddenRoles:
+    - VIEWER
+    - CONTRIBUTOR
+
+  # ---------------------------------------------------------------------------
+  # Conflict comparison + merge command (R10.3 + design.md §8.3)
+  # ---------------------------------------------------------------------------
+  # The merge command factory derives a new `DomainCommand`
+  # from the incoming diff + the local base version. Arbitrary
+  # JSON patch is rejected whenever the field is in
+  # `forbiddenDomainCommandFields` (E6.2). The factory emits
+  # one merge outcome per conflict field so the UI can
+  # surface the comparison model.
+  # ---------------------------------------------------------------------------
+
+  conflictRequiredBaseVersionMatch: true
+  conflictComparisonMaxFields: 64
+  conflictComparisonMaxValues: 64
+  conflictAutoMergeOnlyWhenBaseVersionMatch: true
+  conflictAutoMergeOnlyWhenNoForbiddenField: true
+  conflictAutoMergeOnlyWhenNoForbiddenOperation: true
+  conflictManualMergeRequiredAuditReason: true
+
+  # Patch validation — the executor MUST refuse any
+  # user-supplied patch that:
+  #   1. targets a key in forbiddenFields, OR
+  #   2. carries a value that exceeds a length cap, OR
+  #   3. carries a value that matches a forbidden pattern.
+  patchValidationForbiddenFields:
+    - dnaRawData
+    - dnaMatchId
+    - consentReceipt
+    - livingMarker
+    - visibility
+    - redactedFields
+    - rawEmail
+    - rawPhone
+    - rawSsn
+    - rawPassport
+    - ownerPseudoId
+    - tenantId
+
+  patchValidationMaxFieldKeyLength: 64
+  patchValidationMaxFieldValueLength: 4096
+  patchValidationMaxResourceIdLength: 128
+  patchValidationMaxAffectedResourceIds: 256
+  patchValidationMaxDepth: 8
+  patchValidationMaxOperationsPerPatch: 256
+
+  # ---------------------------------------------------------------------------
+  # Flagsmith rollout sync (R10.4 + ADR-E0.5-08 + design.md §6)
+  # ---------------------------------------------------------------------------
+  # Policy changes flow through Flagsmith ONLY as a rollout
+  # switch / canary / kill-switch — the YAML contract remains
+  # the source of truth. The sync executor pulls a snapshot
+  # from Flagsmith, validates the closed-set vocabulary
+  # (rolloutStrategy, syncOutcome), and refuses to apply a
+  # flag override that contradicts the contract.
+  # ---------------------------------------------------------------------------
+
+  flagsmithEnabled: true
+  flagsmithFeatureFlagKey: collab.mixedPolicy.v2
+  flagsmithDefaultEnvironmentId: production
+  flagsmithSafeDefaultStrategy: SAFE_DEFAULT
+  flagsmithSafeDefaultValue: false
+  flagsmithRolloutStageDurationsSeconds:
+    SAFE_DEFAULT: 0
+    PROGRESSIVE: 900
+    CANARY: 300
+    KILL_SWITCH: 0
+  flagsmithSyncRequiredOnStartup: true
+  flagsmithSyncIntervalSeconds: 300
+  flagsmithSnapshotMaxAgeSeconds: 900
+  flagsmithRolloutContractSupersedesFlag: true
+  flagsmithKillSwitchRefusesAllDirectEdits: true
+  flagsmithSyncRequiredAuditKeys:
+    - actorPseudoId
+    - correlationId
+    - flagsmithEnvironmentId
+    - flagsmithSnapshotVersion
+
+  # ---------------------------------------------------------------------------
+  # Numeric bounds (architecture-decisions.md §A + glossary §2.4)
+  # ---------------------------------------------------------------------------
+
+  maxDirectEditMatrixRoles: 32
+  maxDirectEditMatrixBranches: 32
+  maxDirectEditMatrixKeysPerRole: 256
+  maxConflictComparedValues: 64
+  maxConflictComparedFields: 64
+  maxMergeCommandsPerConflict: 256
+  maxPatchOperations: 256
+  maxFlagsmithSnapshotVersionLength: 64
+  maxFlagsmithEnvironmentIdLength: 64
+  maxFlagsmithFeatureFlagKeyLength: 128
+
+  # ---------------------------------------------------------------------------
+  # Required audit hooks (R16.2 + NFR5 + R10.6 traceability)
+  # ---------------------------------------------------------------------------
+
+  auditClassOnRoute: collab
+  auditActionOnDirectEdit: collab.routing.directEdit
+  auditActionOnApprovalRequired: collab.routing.approvalRequired
+  auditActionOnDeny: collab.routing.deny
+  auditClassOnConflict: collab
+  auditActionOnConflictDetected: collab.conflict.detected
+  auditActionOnConflictAutoMerged: collab.conflict.autoMerged
+  auditActionOnConflictManualMerged: collab.conflict.manualMerged
+  auditClassOnFlagsmithSync: collab
+  auditActionOnFlagsmithSync: collab.flagsmith.synced
+  auditActionOnFlagsmithDrift: collab.flagsmith.drift
+
+  auditRequiredKeys:
+    - actorPseudoId
+    - correlationId
+  auditRequiredOnRoute: true
+  auditRequiredOnConflict: true
+  auditRequiredOnFlagsmithSync: true
+
+  # ---------------------------------------------------------------------------
+  # Invariant reason codes (R10.4 + NFR1 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  invariants:
+    - ROUTING_DEFAULT_REQUIRED
+    - ROUTING_FORBIDDEN_RESOURCE
+    - ROUTING_FORBIDDEN_ROLE
+    - ROUTING_MATRIX_ROLE_NOT_FOUND
+    - ROUTING_MATRIX_BRANCH_NOT_FOUND
+    - ROUTING_MATRIX_RESOURCE_NOT_FOUND
+    - ROUTING_FORBIDDEN_FIELD
+    - ROUTING_FORBIDDEN_OPERATION
+    - CONFLICT_BASE_VERSION_STALE
+    - CONFLICT_BASE_VERSION_REQUIRED
+    - CONFLICT_NO_OVERLAP
+    - CONFLICT_FORBIDDEN_FIELD
+    - CONFLICT_FORBIDDEN_OPERATION
+    - CONFLICT_AUTO_MERGE_NOT_PERMITTED
+    - CONFLICT_MANUAL_MERGE_AUDIT_REQUIRED
+    - PATCH_OPERATION_FORBIDDEN_FIELD
+    - PATCH_OPERATION_TOO_LARGE
+    - PATCH_OPERATION_RESOURCE_NOT_IN_SCOPE
+    - FLAGSMITH_SNAPSHOT_STALE
+    - FLAGSMITH_SNAPSHOT_MISSING
+    - FLAGSMITH_STRATEGY_NOT_PERMITTED
+    - FLAGSMITH_SYNC_OUTCOMES_DIVERGED
+    - FLAGSMITH_KILL_SWITCH_ACTIVE
+    - FLAGSMITH_ROLLOUT_NOT_YET_ENABLED
+
+  # ---------------------------------------------------------------------------
+  # Forbidden payload scan (R13 DNA + NFR1 secret + R15 raw PII)
+  # ---------------------------------------------------------------------------
+
+  forbiddenPayloadPatterns:
+    - credential
+    - api[_-]?key
+    - private[_-]?key
+    - authorization
+    - bearer
+    - raw[_-]?dna
+    - raw[_-]?ssn
+    - raw[_-]?passport

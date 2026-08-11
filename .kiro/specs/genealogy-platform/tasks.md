@@ -440,7 +440,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
   - Hỗ trợ approve/reject/request-change/partial merge.
   - Re-authorize bằng OpenFGA+ABAC tại thời điểm review.
 
-- [ ] E6.3 Mixed collaboration policy
+- [x] E6.3 Mixed collaboration policy
 
   - Quy tắc direct edit/approval theo role, branch và resource type.
   - Conflict comparison và merge command mới; không apply arbitrary patch vào field cấm.
