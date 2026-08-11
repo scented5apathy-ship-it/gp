@@ -29,8 +29,12 @@ import { getBffClient } from "@/lib/api/client";
 import { createBffPersonFetcher } from "@/lib/profile/client";
 import { createBffBackedPlaceProvider } from "@/lib/profile/place-provider";
 import { EMPTY_PERSON_SNAPSHOT, PersonEditorStore } from "@/lib/profile/store";
+import { useLiveRegionAnnouncer } from "@/lib/a11y/use-live-region-announcer";
+import { LiveRegion } from "@/lib/a11y/live-region";
+import { usePrefersReducedMotion } from "@/lib/a11y/use-prefers-reduced-motion";
 
 import { PersonProfile } from "@/components/profile/person-profile";
+import { PersonListTable } from "@/components/profile/person-list-table";
 import { PersonTimeline } from "@/components/profile/person-timeline";
 import { PlaceMap } from "@/components/profile/place-map";
 
@@ -71,11 +75,25 @@ export function PersonRoute({
   const [snapshot, setSnapshot] = useState(store.getSnapshot());
   useEffect(() => store.subscribe((next) => setSnapshot(next)), [store]);
 
+  const [listView, setListView] = useState<boolean>(false);
+  const { announcer, message: liveMessage } = useLiveRegionAnnouncer();
+  const reducedMotion = usePrefersReducedMotion();
+  const handleToggleListView = useCallback(() => {
+    setListView((prev) => {
+      const next = !prev;
+      announcer.announce(next ? translate("a11y.viewList") : translate("a11y.viewForm"));
+      return next;
+    });
+  }, [announcer, translate]);
+
   const handlePatch = useCallback(
     (patch: Partial<Parameters<typeof store.patchDraft>[0]>) => store.patchDraft(patch),
     [store],
   );
-  const handleCommit = useCallback(() => void store.commit(), [store]);
+  const handleCommit = useCallback(() => {
+    announcer.announce(translate("profile.editSaving"));
+    void store.commit();
+  }, [announcer, store, translate]);
   const handleRevert = useCallback(() => store.revert(), [store]);
 
   const [timeline, setTimeline] = useState<{
@@ -124,18 +142,29 @@ export function PersonRoute({
   const permissions: PersonPermissions | null = snapshot.permissions;
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-8" data-person-tree={treeId}>
+    <div
+      className="mx-auto w-full max-w-4xl px-4 py-8"
+      data-person-tree={treeId}
+      data-reduced-motion={reducedMotion ? "true" : "false"}
+    >
+      <LiveRegion announcer={{ announce: announcer.announce }} message={liveMessage} />
       <p className="text-xs text-surface-muted" data-tenant={tenantId ?? "unscoped"}>
         {translate("profile.sectionLabel")} · {locale}
       </p>
-      <PersonProfile
-        snapshot={snapshot}
-        translate={translate}
-        locale={locale}
-        onPatch={handlePatch}
-        onCommit={handleCommit}
-        onRevert={handleRevert}
-      />
+      {listView && snapshot.body ? (
+        <PersonListTable body={snapshot.body} translate={translate} locale={locale} />
+      ) : (
+        <PersonProfile
+          snapshot={snapshot}
+          translate={translate}
+          locale={locale}
+          onPatch={handlePatch}
+          onCommit={handleCommit}
+          onRevert={handleRevert}
+          onToggleListView={handleToggleListView}
+          listViewActive={listView}
+        />
+      )}
       {permissions ? (
         <div className="mt-6 flex flex-col gap-6">
           <PersonTimeline

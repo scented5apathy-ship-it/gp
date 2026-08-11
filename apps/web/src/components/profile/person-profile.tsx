@@ -59,6 +59,8 @@ export interface PersonProfileProps {
   readonly onPatch: (patch: Parameters<typeof applyOptimisticPatch>[1]) => void;
   readonly onCommit: () => void;
   readonly onRevert: () => void;
+  readonly onToggleListView?: () => void;
+  readonly listViewActive?: boolean;
 }
 
 const LIVING_STATUS_KEYS: Readonly<Record<LivingStatus, string>> = {
@@ -100,6 +102,8 @@ export function PersonProfile({
   onPatch,
   onCommit,
   onRevert,
+  onToggleListView,
+  listViewActive,
 }: PersonProfileProps): JSX.Element {
   const body = snapshot.body;
   const draft = snapshot.draft;
@@ -176,6 +180,16 @@ export function PersonProfile({
               reasons: redactionSummary.reasonCodes.join(", "),
             })}
           </span>
+        ) : null}
+        {onToggleListView ? (
+          <button
+            type="button"
+            onClick={onToggleListView}
+            aria-pressed={listViewActive === true}
+            className="ml-auto rounded border border-surface-sunken bg-surface-raised px-3 py-1 text-xs"
+          >
+            {translate(listViewActive ? "a11y.viewForm" : "a11y.viewList")}
+          </button>
         ) : null}
       </header>
 

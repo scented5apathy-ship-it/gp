@@ -60,6 +60,7 @@ import {
   type TreeViewStore,
 } from "@/lib/tree-view/store";
 import { layoutSnapshot, SLOT_HEIGHT, SLOT_WIDTH } from "@/lib/tree-view/layout";
+import { handleKeyboardTreeEvent } from "@/lib/tree-view/keyboard-navigation";
 
 export interface TreeViewProps {
   readonly store: TreeViewStore;
@@ -171,27 +172,18 @@ export function TreeView({ store, translate, locale }: TreeViewProps): JSX.Eleme
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLOListElement>) => {
       const ids = Array.from(snapshot.nodesById.keys());
-      if (ids.length === 0) return;
       const currentIndex = ids.indexOf(snapshot.ui.selectedPersonId ?? "");
-      if (event.key === "ArrowDown" || event.key === "ArrowRight") {
-        const next = ids[(currentIndex + 1 + ids.length) % ids.length];
+      const action = handleKeyboardTreeEvent(event, {
+        ids,
+        currentIndex,
+        pageSize: 5,
+      });
+      if (action.kind === "select") {
+        const next = ids[action.index];
         if (next) handleSelectPerson(next);
-        event.preventDefault();
-      } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
-        const prev = ids[(currentIndex - 1 + ids.length) % ids.length];
-        if (prev) handleSelectPerson(prev);
-        event.preventDefault();
-      } else if (event.key === "Home") {
-        const first = ids[0];
-        if (first) handleSelectPerson(first);
-        event.preventDefault();
-      } else if (event.key === "End") {
-        const last = ids[ids.length - 1];
-        if (last) handleSelectPerson(last);
-        event.preventDefault();
-      } else if (event.key === "Enter" && snapshot.ui.selectedPersonId) {
-        handleCollapseToggle(snapshot.ui.selectedPersonId);
-        event.preventDefault();
+      } else if (action.kind === "toggle") {
+        const target = ids[action.index];
+        if (target) handleCollapseToggle(target);
       }
     },
     [handleCollapseToggle, handleSelectPerson, snapshot.nodesById, snapshot.ui.selectedPersonId],
@@ -542,7 +534,7 @@ function TreeViewSidebar({
           {translate("tree.listLabel")}
         </h2>
         <p id="tree-list-help" className="text-xs text-surface-muted">
-          {translate("tree.listHelp")}
+          {translate("a11y.treeListHelp")}
         </p>
         <ol
           tabIndex={0}

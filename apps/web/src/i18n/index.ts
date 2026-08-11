@@ -22,6 +22,8 @@ import { supportedLocales } from "@genealogy/i18n";
 
 import { en } from "./messages/en";
 import { vi } from "./messages/vi";
+import { enXA } from "./messages/en-XA";
+import { arXB } from "./messages/ar-XB";
 import type { MessageTree } from "./types";
 
 export type { Locale } from "@genealogy/i18n";
@@ -39,6 +41,24 @@ const catalogues: Readonly<Record<Locale, Catalogue>> = {
   en: en as unknown as Catalogue,
   vi: vi as unknown as Catalogue,
 };
+
+/**
+ * Pseudolocales — QA-only catalogues used to detect hard-coded
+ * English (`en-XA`, padded) and hard-coded LTR (`ar-XB`, RTL
+ * mirrored). They are **not** part of the `Locale` union or
+ * `supportedLocales` — the only way to enable them is by setting
+ * `GENEALOGY_PSEUDOLOCALE=en-XA` (or `ar-XB`) before render time.
+ *
+ * The factory `createTranslator(locale)` will accept the
+ * pseudolocale strings for testing only; production builds must
+ * never set the env var (the E5.5 linter greps for it).
+ */
+const pseudoCatalogues: Readonly<Record<string, Catalogue>> = {
+  "en-XA": enXA as unknown as Catalogue,
+  "ar-XB": arXB as unknown as Catalogue,
+};
+
+export const pseudoLocales: ReadonlyArray<string> = Object.keys(pseudoCatalogues);
 
 export const defaultLocale: Locale = "en";
 
@@ -97,9 +117,16 @@ export type Translator = (
  * Build a translator bound to the given locale. The translator
  * always succeeds: missing keys fall back to the default locale
  * and ultimately to the key itself so the UI degrades gracefully.
+ *
+ * Pseudolocale tags (e.g. `en-XA`, `ar-XB`) are accepted for QA
+ * tooling; they never reach production builds because
+ * `negotiateLocale` only returns a `Locale`.
  */
-export function createTranslator(locale: Locale): Translator {
-  const primary = catalogues[locale] ?? catalogues[defaultLocale]!;
+export function createTranslator(locale: string): Translator {
+  const isPseudo = Object.prototype.hasOwnProperty.call(pseudoCatalogues, locale);
+  const primary = isPseudo
+    ? pseudoCatalogues[locale]!
+    : (catalogues[locale as Locale] ?? catalogues[defaultLocale]!);
   const fallback = catalogues[defaultLocale]!;
   return (key, params) => {
     const primaryHit = lookupPath(primary, key);
@@ -118,6 +145,10 @@ export function createTranslator(locale: Locale): Translator {
  * Negotiate the active locale from a `Accept-Language` header. Used
  * by the middleware / dynamic segment loader when a request lands
  * without an explicit locale prefix.
+ *
+ * Pseudolocales are **not** negotiated from `Accept-Language` —
+ * they must be opted into explicitly via `pseudolocaleFromEnv` or
+ * `createTranslator("en-XA")`. This keeps production builds safe.
  */
 export function negotiateLocale(acceptLanguage: string | null | undefined): Locale {
   if (!acceptLanguage) {
@@ -142,6 +173,19 @@ export function negotiateLocale(acceptLanguage: string | null | undefined): Loca
 }
 
 /**
+ * Resolve a pseudolocale from the `GENEALOGY_PSEUDOLOCALE` env var.
+ * Returns `null` when the env var is unset or unknown.
+ */
+export function pseudolocaleFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  const raw = env["GENEALOGY_PSEUDOLOCALE"];
+  if (!raw) return null;
+  if (Object.prototype.hasOwnProperty.call(pseudoCatalogues, raw)) return raw;
+  return null;
+}
+
+/**
  * The `dir` (text direction) associated with each locale. RTL
  * support is mandated by R18 and is enforced by the root layout
  * through the `dir` attribute on `<html>`.
@@ -150,3 +194,23 @@ export const localeDirection: Readonly<Record<Locale, "ltr" | "rtl">> = {
   en: "ltr",
   vi: "ltr",
 };
+
+export const pseudoLocaleDirection: Readonly<Record<string, "ltr" | "rtl">> = {
+  "en-XA": "ltr",
+  "ar-XB": "rtl",
+};
+
+/**
+ * Resolve the `dir` for any catalogue the loader knows about —
+ * production locales *and* pseudolocales. Falls back to the
+ * base-locale entry when the exact BCP-47 tag is unknown (e.g.
+ * `ar-XX` falls back to `ar` → `rtl`).
+ */
+const RTL_BASE_LOCALES: ReadonlyArray<string> = ["ar", "he", "fa", "ur"];
+export function resolveDirection(locale: string): "ltr" | "rtl" {
+  if (locale in pseudoLocaleDirection) return pseudoLocaleDirection[locale] ?? "ltr";
+  if (locale in localeDirection) return localeDirection[locale as Locale];
+  const base = locale.split("-")[0] ?? "";
+  if (RTL_BASE_LOCALES.includes(base)) return "rtl";
+  return "ltr";
+}
