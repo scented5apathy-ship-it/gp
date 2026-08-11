@@ -403,7 +403,7 @@ _Requirements: R3, R4, R5, R7, R8, R10, R18, NFR1, NFR4, NFR7_
   - Timeline cá nhân/gia đình; map adapter không khóa geocoding vendor.
   - Quyền field/action lấy từ BFF và vẫn được server thực thi.
 
-- [ ] E5.5 Accessibility/i18n
+- [x] E5.5 Accessibility/i18n
 
   - Semantic list/table alternative, keyboard navigation, focus management và screen-reader labels.
   - ICU messages, RTL, pseudolocale, name/address ordering và reduced motion.
