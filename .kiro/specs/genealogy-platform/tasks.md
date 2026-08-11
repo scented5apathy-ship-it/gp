@@ -428,7 +428,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
 
 ### Subtasks
 
-- [ ] E6.1 Research service
+- [x] E6.1 Research service
 
   - Repository, Source, Citation, Transcript, locator, quality và attachment references.
   - Research log, task, hypothesis, conflict, assignment và status.
