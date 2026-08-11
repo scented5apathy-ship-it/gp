@@ -19,6 +19,7 @@
 @tailwind utilities;
 
 @import "./tokens.css";
+@import "./print.css";
 
 html {
   scrollbar-gutter: stable;

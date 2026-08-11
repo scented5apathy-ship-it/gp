@@ -23,6 +23,7 @@ import { useEffect, useMemo, useState } from "react";
 import { TREE_PROJECTION_VIEW_KINDS, type TreeProjectionViewKind } from "@genealogy/api-client";
 
 import { TreeView } from "@/components/tree-view";
+import { PrintToolbar } from "@/components/print/print-toolbar";
 import { getBffClient } from "@/lib/api/client";
 import { createBffTreeProjectionFetcher } from "@/lib/tree-view/client";
 import { defaultQuery, EMPTY_SNAPSHOT, TreeViewStore } from "@/lib/tree-view/store";
@@ -73,7 +74,20 @@ export function TreeViewRoute(props: TreeViewRouteProps): JSX.Element {
       <p className="text-xs text-surface-muted" data-tenant={tenantId ?? "unscoped"}>
         {translate("tree.sectionLabel")} · {locale}
       </p>
-      {hydrated ? <TreeView store={store} translate={translate} locale={locale} /> : null}
+      {hydrated ? (
+        <>
+          <TreeView store={store} translate={translate} locale={locale} />
+          <PrintToolbar
+            locale={locale}
+            translate={translate}
+            tenantId={tenantId ?? "unscoped"}
+            treeId={treeId}
+            rootPersonId={rootPersonId || "00000000-0000-4000-8000-000000000000"}
+            actorPseudoId="user-pseudo"
+            variant="tree"
+          />
+        </>
+      ) : null}
     </div>
   );
 }

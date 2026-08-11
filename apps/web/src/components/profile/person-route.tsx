@@ -37,6 +37,7 @@ import { PersonProfile } from "@/components/profile/person-profile";
 import { PersonListTable } from "@/components/profile/person-list-table";
 import { PersonTimeline } from "@/components/profile/person-timeline";
 import { PlaceMap } from "@/components/profile/place-map";
+import { PrintToolbar } from "@/components/print/print-toolbar";
 
 export interface PersonRouteProps {
   readonly locale: string;
@@ -151,6 +152,16 @@ export function PersonRoute({
       <p className="text-xs text-surface-muted" data-tenant={tenantId ?? "unscoped"}>
         {translate("profile.sectionLabel")} · {locale}
       </p>
+      <PrintToolbar
+        locale={locale}
+        translate={translate}
+        tenantId={tenantId ?? "unscoped"}
+        treeId={treeId}
+        rootPersonId={personId}
+        actorPseudoId="user-pseudo"
+        defaultScope="currentPerson"
+        variant="person"
+      />
       {listView && snapshot.body ? (
         <PersonListTable body={snapshot.body} translate={translate} locale={locale} />
       ) : (

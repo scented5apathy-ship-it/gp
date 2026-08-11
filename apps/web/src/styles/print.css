@@ -1,0 +1,125 @@
+/*
+ * Print stylesheet — E5.6 (R6.4 / J-SHARE-3).
+ *
+ * The PWA shell uses one stylesheet for screen rendering and a
+ * dedicated `@media print` block that:
+ *
+ *   - hides interactive chrome (skip-link, top bar, footer,
+ *     live-region announcer, modals, export panels);
+ *   - enforces `@page` size + margin per `PRINT_LAYOUT_CSS`;
+ *   - splits long trees along the configured page-break rule
+ *     (per-generation / per-node / single-page);
+ *   - removes background colour to save ink and to keep the
+ *     preview faithful to what Gotenberg will rasterise;
+ *   - ensures the watermark placeholder is always visible;
+ *   - preserves `prefers-reduced-motion` semantics (no print
+ *     animation by definition).
+ *
+ * The print stylesheet is imported from `globals.css` so it
+ * travels with the existing cascade — no extra bundle entry
+ * point.
+ */
+
+@media print {
+  /* Hide interactive chrome — every rule must be deterministic
+   * so the print preview matches the actual PDF rasterisation
+   * (the linter asserts the watermark placeholder is *not*
+   * hidden). */
+  .skip-link,
+  [data-print-hide="true"],
+  header[role="banner"],
+  footer[role="contentinfo"],
+  [data-a11y-live-region],
+  [data-export-panel],
+  [data-print-toolbar],
+  [data-no-print] {
+    display: none !important;
+  }
+
+  /* Reset background colours — Gotenberg rasterises to PDF on
+   * white; printing on coloured background wastes ink and hides
+   * the watermark. */
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  a {
+    color: inherit !important;
+    text-decoration: underline;
+  }
+
+  /* Watermark placeholder is always rendered (R15 obligation row
+   * "W" — watermark must appear on PUBLIC / UNLISTED + share
+   * tokens). The placeholder text comes from the i18n catalogue. */
+  [data-print-watermark] {
+    display: block !important;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-30deg);
+    font-size: 4rem;
+    opacity: 0.18;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Per-generation page-break is the default for tree exports. */
+  [data-print-page-break="per-generation"] [data-print-generation] {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* Per-node page-break is used for compact person profile
+   * exports. */
+  [data-print-page-break="per-node"] [data-print-node] {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* Single-page mode never inserts a break. */
+  [data-print-page-break="single-page"] [data-print-generation],
+  [data-print-page-break="single-page"] [data-print-node] {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  /* Avoid splitting a single node across two pages. */
+  [data-print-node],
+  [data-print-generation] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Long URL links must wrap. */
+  [data-print-export-header] {
+    word-break: break-all;
+    font-size: 0.85rem;
+    color: #444 !important;
+  }
+
+  /* Keep the header + watermark visible on every page. */
+  [data-print-header] {
+    position: running(header);
+  }
+
+  /* Default A4 portrait fallback (the BFF may inject @page via
+   * Gotenberg; the preview falls back to this rule). */
+  @page {
+    size: A4 portrait;
+    margin: 14mm 14mm 18mm 14mm;
+  }
+}
+
+@media print and (prefers-reduced-motion: reduce) {
+  /* Print + reduced motion is the default — the placeholder
+   * honours the media query explicitly so the linter can grep
+   * for it. */
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
