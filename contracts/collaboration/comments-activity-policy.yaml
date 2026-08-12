@@ -1,0 +1,247 @@
+# contracts/collaboration — Comments / activity policy (E6.4).
+#
+# Source of truth for the collaboration-service comment,
+# mention, watch, assignment, activity feed and notification
+# hook model. Extends the E6.2 proposal / review contract
+# and the E6.3 mixed-collaboration routing. Mirrors
+# `requirements.md` R10.5 (system SHALL have comment,
+# mention, watch, assignment, notification and activity
+# feed), R10.6 (approved changes trace back to proposal +
+# reviewer), `design.md` §8.3 (review re-checks OpenFGA +
+# ABAC at approve time), `ownership-catalog.md` §2.4
+# (collaboration-service owns `ChangeProposal`, `Review`,
+# `Comment`, `ActivityFeed`; redisplays "Comments /
+# metadata" under DPO delegate, "Comments" under AppSec
+# partner) and ADR-E0.5-08 (Avro + Apicurio + BACKWARD
+# evolution of closed-set vocabularies).
+#
+# The Java executor lives under
+# `services/collaboration-service/src/main/java/com/
+# genealogy/platform/services/collaboration/domain/`
+# (Comment + Mention + Watch + Assignment + ActivityFeed +
+# ActivityFeedItem + NotificationHook + NotificationHookKind
+# + ActivityRedactionFilter + CommentAuthorizationPort +
+# CommentAuthorizationOutcome + ActivityFeedCollector). The
+# Flyway migration + gRPC stubs + Kafka producer / consumer
+# + OpenFeature wiring land in the later E6.x / E11.x
+# sub-epics.
+#
+# The chart mirror (byte-identical) lives at
+# `platform/helm/genealogy-platform/files/collaboration-comments-activity-policy.yaml`
+# and is enforced by
+# `scripts/lint-collaboration-comments-activity.mjs`.
+#
+# Closed-set vocabulary:
+#   - commentStatus: ACTIVE / EDITED / DELETED / REDACTED /
+#                    HIDDEN
+#   - mentionTargetKind: USER / ROLE / TREE / BRANCH
+#   - watchScope: PROPOSAL / REVIEW / COMMENT / PERSON /
+#                 RELATIONSHIP / TREE_VISIBILITY /
+#                 COLLAB_THREAD
+#   - watchTrigger: ANY_CHANGE / MENTION / STATUS_CHANGE /
+#                   DIRECT_EDIT / APPROVAL_REQUIRED / DENY
+#   - assignmentRole: WATCHER / REVIEWER / APPROVER /
+#                     GATEKEEPER / MENTIONED
+#   - assignmentStatus: PENDING / ACCEPTED / DECLINED /
+#                       EXPIRED / REVOKED
+#   - activityKind: COMMENT_CREATED / COMMENT_EDITED /
+#                   COMMENT_REDACTED / COMMENT_DELETED /
+#                   MENTION_NOTIFIED / WATCH_SUBSCRIBED /
+#                   WATCH_UNSUBSCRIBED / ASSIGNMENT_OPENED /
+#                   ASSIGNMENT_ACCEPTED / ASSIGNMENT_DECLINED
+#                   / ASSIGNMENT_REVOKED / ASSIGNMENT_EXPIRED
+#                   / NOTIFICATION_DELIVERED / NOTIFICATION_DROPPED
+#   - activityVisibility: PUBLIC / TREE / BRANCH / PRIVATE
+#   - notificationChannel: IN_APP / EMAIL / PUSH / WEBHOOK
+#   - notificationOutcome: DELIVERED / DROPPED / RATE_LIMITED /
+#                          REDACTED / TEMPLATE_MISSING /
+#                          CHANNEL_DISABLED / RECIPIENT_OPTED_OUT
+#   - notificationHookKind: COMMENT_CREATED / MENTION /
+#                           WATCH_TRIGGER / ASSIGNMENT_DUE
+#   - redactionReason: LIVING_MINOR / DNA_CONSENT_REVOKED /
+#                      RAW_PII_DETECTED / VISIBILITY_DEMOTED /
+#                      SUBJECT_REMOVED / CORRECTION_APPLIED
+#   - auditClassOnComment: collab
+#   - auditActionOnCommentCreated: collab.comment.created
+#   - auditActionOnCommentEdited: collab.comment.edited
+#   - auditActionOnCommentRedacted: collab.comment.redacted
+#   - auditActionOnCommentDeleted: collab.comment.deleted
+#   - auditClassOnMention: collab
+#   - auditActionOnMentionNotified: collab.mention.notified
+#   - auditActionOnMentionDropped: collab.mention.dropped
+#   - auditClassOnWatch: collab
+#   - auditActionOnWatchSubscribed: collab.watch.subscribed
+#   - auditActionOnWatchUnsubscribed: collab.watch.unsubscribed
+#   - auditClassOnAssignment: collab
+#   - auditActionOnAssignmentAccepted: collab.assignment.accepted
+#   - auditActionOnAssignmentDeclined: collab.assignment.declined
+#   - auditClassOnActivityFeed: collab
+#   - auditActionOnActivityFeedProjected: collab.activity.projected
+#   - auditActionOnActivityFeedRedacted: collab.activity.redacted
+#   - auditClassOnNotification: collab
+#   - auditActionOnNotificationDelivered: collab.notification.delivered
+#   - auditActionOnNotificationDropped: collab.notification.dropped
+#
+# Numeric thresholds are pinned per
+# `architecture-decisions.md` §A and
+# `glossary-and-policy-matrix.md` §2.4.
+apiVersion: v1
+kind: CommentsActivityPolicy
+metadata:
+  name: default-collaboration-comments-activity/v2
+  namespace: gp-platform
+spec:
+  policyId: default-collaboration-comments-activity/v2
+  description: >-
+    Comments / activity policy — every comment, mention,
+    watch, assignment, activity feed projection and
+    notification hook carries an explicit scope + an
+    authorization decision taken at construction time. The
+    activity feed is reconstructed by projecting domain
+    events through the current permission redaction
+    pipeline (no sensitive content is snapshot into a
+    notification). Mirrors `requirements.md` R10.5 + R10.6
+    + `design.md` §8.3 + `ownership-catalog.md` §2.4 +
+    ADR-E0.5-08.
+
+  # ---------------------------------------------------------------------------
+  # Closed-set vocabulary (R10.5 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  commentStatuses: [ACTIVE, EDITED, DELETED, REDACTED, HIDDEN]
+  mentionTargetKinds: [USER, ROLE, TREE, BRANCH]
+  watchScopes: [PROPOSAL, REVIEW, COMMENT, PERSON, RELATIONSHIP, TREE_VISIBILITY, COLLAB_THREAD]
+  watchTriggers: [ANY_CHANGE, MENTION, STATUS_CHANGE, DIRECT_EDIT, APPROVAL_REQUIRED, DENY]
+  assignmentRoles: [WATCHER, REVIEWER, APPROVER, GATEKEEPER, MENTIONED]
+  assignmentStatuses: [PENDING, ACCEPTED, DECLINED, EXPIRED, REVOKED]
+  activityKinds: [COMMENT_CREATED, COMMENT_EDITED, COMMENT_REDACTED, COMMENT_DELETED, MENTION_NOTIFIED, MENTION_DROPPED, WATCH_SUBSCRIBED, WATCH_UNSUBSCRIBED, ASSIGNMENT_OPENED, ASSIGNMENT_ACCEPTED, ASSIGNMENT_DECLINED, ASSIGNMENT_REVOKED, ASSIGNMENT_EXPIRED, NOTIFICATION_DELIVERED, NOTIFICATION_DROPPED]
+  activityVisibilities: [PUBLIC, TREE, BRANCH, PRIVATE]
+  notificationChannels: [IN_APP, EMAIL, PUSH, WEBHOOK]
+  notificationOutcomes: [DELIVERED, DROPPED, RATE_LIMITED, REDACTED, TEMPLATE_MISSING, CHANNEL_DISABLED, RECIPIENT_OPTED_OUT]
+  notificationHookKinds: [COMMENT_CREATED, MENTION, WATCH_TRIGGER, ASSIGNMENT_DUE]
+  redactionReasons: [LIVING_MINOR, DNA_CONSENT_REVOKED, RAW_PII_DETECTED, VISIBILITY_DEMOTED, SUBJECT_REMOVED, CORRECTION_APPLIED]
+
+  # ---------------------------------------------------------------------------
+  # Mention / watch / assignment guard rails (R10.5 + design.md §8.3)
+  # ---------------------------------------------------------------------------
+
+  # Sensitive fields that MAY NEVER be referenced in a comment
+  # body. Touching a sensitive field renders the comment
+  # HIDDEN and forces a REDACTED state.
+  mentionSensitiveFieldGuardRail: true
+  mentionSensitiveFields: [dnaRawData, dnaMatchId, consentReceipt, livingMarker, visibility, redactedFields, rawEmail, rawPhone, rawSsn, rawPassport]
+
+  # Watch subscriptions on a TREE_VISIBILITY scope are
+  # always opt-in + always re-authorized before the watcher
+  # receives a notification.
+  watchReAuthorizationRequiredOnVisibilityChange: true
+  watchReAuthorizationRequiredOnProposalStatus: true
+
+  # An assignment may only be opened against a role that is
+  # in the E6.3 collaboration-role closed-set.
+  assignmentRolesAllowed: [WATCHER, REVIEWER, APPROVER, GATEKEEPER, MENTIONED]
+
+  # Activity feed is always reconstructed by re-projecting
+  # the source domain event through the current permission
+  # state. A snapshot may never carry the raw payload.
+  activityFeedAlwaysReproject: true
+  activityFeedSnapshotRawPayloadAllowed: false
+  activityFeedRedactedFieldMarker: "[REDACTED]"
+
+  # Notification hook MUST strip sensitive content before
+  # dispatch. The raw payload is never copied into the
+  # notification request.
+  notificationHookNeverCopyRawPayload: true
+  notificationHookTemplateRequired: true
+  notificationHookAllowedReasons: [COMMENT_CREATED, MENTION, WATCH_TRIGGER, ASSIGNMENT_DUE]
+
+  # ---------------------------------------------------------------------------
+  # Wire-level scopes (R10.5 + design.md §8.3)
+  # ---------------------------------------------------------------------------
+
+  commentScopes: [PROPOSAL, REVIEW, PERSON, RELATIONSHIP, LIFE_EVENT, CLAIM, SOURCE, CITATION, TREE_VISIBILITY, COLLAB_THREAD]
+
+  # ---------------------------------------------------------------------------
+  # Numeric bounds (architecture-decisions.md §A + glossary §2.4)
+  # ---------------------------------------------------------------------------
+
+  maxCommentBodyLength: 8192
+  maxCommentEditTrailLength: 32
+  maxMentionsPerComment: 32
+  maxWatchScopesPerUser: 256
+  maxAssignmentScopesPerUser: 64
+  maxActivityFeedItemsPerPage: 100
+  maxActivityFeedPageWindows: 24
+  maxNotificationHookPayloadBytes: 4096
+  maxNotificationHookTemplateKeyLength: 64
+  maxNotificationHookCorrelationReasonLength: 256
+  maxRedactionReasonCodeLength: 96
+  maxMentionTargetIdLength: 128
+  maxWatchScopeIdLength: 128
+  maxAssignmentDueSeconds: 2592000
+  minAssignmentDueSeconds: 60
+  maxNotificationHookBatchSize: 64
+  maxActivityFeedRetentionSeconds: 31536000
+
+  # ---------------------------------------------------------------------------
+  # Required audit hooks (R16.2 + NFR5 + R10.6 traceability)
+  # ---------------------------------------------------------------------------
+
+  auditActorKey: actorPseudoId
+  auditCorrelationKey: correlationId
+  auditTargetKey: targetPseudoId
+  auditRequiredKeys: [actorPseudoId, correlationId, targetPseudoId]
+  auditRequiredOnCommentCreated: true
+  auditRequiredOnCommentEdited: true
+  auditRequiredOnCommentRedacted: true
+  auditRequiredOnCommentDeleted: true
+  auditRequiredOnMention: true
+  auditRequiredOnWatchSubscribed: true
+  auditRequiredOnAssignmentOpened: true
+  auditRequiredOnActivityFeedProjected: true
+  auditRequiredOnNotification: true
+
+  auditClassOnComment: collab
+  auditActionOnCommentCreated: collab.comment.created
+  auditActionOnCommentEdited: collab.comment.edited
+  auditActionOnCommentRedacted: collab.comment.redacted
+  auditActionOnCommentDeleted: collab.comment.deleted
+  auditClassOnMention: collab
+  auditActionOnMentionNotified: collab.mention.notified
+  auditActionOnMentionDropped: collab.mention.dropped
+  auditClassOnWatch: collab
+  auditActionOnWatchSubscribed: collab.watch.subscribed
+  auditActionOnWatchUnsubscribed: collab.watch.unsubscribed
+  auditClassOnAssignment: collab
+  auditActionOnAssignmentAccepted: collab.assignment.accepted
+  auditActionOnAssignmentDeclined: collab.assignment.declined
+  auditClassOnActivityFeed: collab
+  auditActionOnActivityFeedProjected: collab.activity.projected
+  auditActionOnActivityFeedRedacted: collab.activity.redacted
+  auditClassOnNotification: collab
+  auditActionOnNotificationDelivered: collab.notification.delivered
+  auditActionOnNotificationDropped: collab.notification.dropped
+
+  # ---------------------------------------------------------------------------
+  # Invariant reason codes (R10.5 + R10.6 + NFR1 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  invariants: [COMMENT_FORBIDDEN_SCOPE, COMMENT_BODY_REQUIRED, COMMENT_BODY_TOO_LARGE, COMMENT_EDIT_FORBIDDEN_STATE, COMMENT_DELETE_FORBIDDEN_STATE, COMMENT_REDACTION_REQUIRED_REASON, COMMENT_SENSITIVE_FIELD_MENTIONED, MENTION_FORBIDDEN_TARGET_KIND, MENTION_TARGET_REQUIRED, MENTION_TARGET_NOT_IN_SCOPE, MENTION_TOO_MANY_PER_COMMENT, WATCH_SCOPE_NOT_PERMITTED, WATCH_REAUTHORIZATION_DENIED, WATCH_TRIGGER_NOT_PERMITTED, ASSIGNMENT_ROLE_NOT_PERMITTED, ASSIGNMENT_TARGET_REQUIRED, ASSIGNMENT_TTL_OUT_OF_RANGE, ASSIGNMENT_OPEN_FORBIDDEN_STATE, ACTIVITY_FEED_RAW_PAYLOAD_FORBIDDEN, ACTIVITY_FEED_REPROJECT_REQUIRED, ACTIVITY_FEED_VISIBILITY_DEMOTED, NOTIFICATION_RAW_PAYLOAD_FORBIDDEN, NOTIFICATION_TEMPLATE_REQUIRED, NOTIFICATION_CHANNEL_DISABLED, NOTIFICATION_RECIPIENT_OPTED_OUT, NOTIFICATION_RATE_LIMITED, NOTIFICATION_SENSITIVE_CONTENT_DETECTED, AUDIT_KEY_FORBIDDEN]
+
+  # ---------------------------------------------------------------------------
+  # Forbidden payload scan (R13 DNA + NFR1 secret + R15 raw PII)
+  # ---------------------------------------------------------------------------
+
+  forbiddenPayloadPatterns: [credential, api[_-]?key, private[_-]?key, authorization, bearer, raw[_-]?dna, raw[_-]?ssn, raw[_-]?passport]
+
+  # ---------------------------------------------------------------------------
+  # Re-authorization policy (R10.5 + R10.6 + design.md §8.3 + ADR-E0.5-06)
+  # ---------------------------------------------------------------------------
+
+  mentionReAuthorizationRequired: true
+  watchReAuthorizationRequiredOnTrigger: true
+  assignmentReAuthorizationRequiredOnAccept: true
+  activityFeedReAuthorizationRequiredOnRead: true
+  notificationHookReAuthorizationRequiredOnDispatch: true
+  reAuthorizationDenyClosesSubscription: true
+  reAuthorizationAbacDenyClosesSubscription: true

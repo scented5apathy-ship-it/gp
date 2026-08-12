@@ -12,9 +12,17 @@ per-branch × per-resource-type routing decision
 comparison model + merge command factory
 (`MergeCommandFactory` + `PatchValidator`), and the
 Flagsmith rollout sync (`FlagsmithRolloutSync` +
-`FlagsmithSnapshot`). The REST surface, gRPC stubs, Flyway
-migration, jOOQ persistence, Kafka producer/consumer and
-OpenFeature wiring land in the later E6.x / E11.x sub-epics.
+`FlagsmithSnapshot`). E6.4 adds the comments / activity /
+notification hook: per-scope comment + mention + watch +
+assignment + activity feed projection + notification hook
+(`Comment` + `Mention` + `Watch` + `Assignment` +
+`ActivityFeedItem` + `ActivityFeed` + `NotificationHook` +
+`CommentAuthorizer` + `ActivityFeedCollector` +
+`ActivityFeedFilter` + `NotificationHookDispatcher` +
+`ActivityRedactionFilter`). The REST surface, gRPC stubs,
+Flyway migration, jOOQ persistence, Kafka producer/consumer
+and OpenFeature wiring land in the later E6.x / E11.x
+sub-epics.
 
 The proposal review re-authorizes through OpenFGA + ABAC at
 submit + every review decision via an injected port — the
@@ -30,3 +38,9 @@ routes mutations through one of three outcomes
 forcing every write through the proposal pipeline;
 policy changes flow through Flagsmith only as a rollout
 switch — the YAML contract remains the source of truth.
+The comments / activity policy (E6.4) re-authorizes every
+comment / mention / watch / assignment / notification
+dispatch through the same OpenFGA + ABAC port; the activity
+feed is rebuilt by re-projecting the source domain event
+through the current permission state and the raw payload
+is never copied into a notification.

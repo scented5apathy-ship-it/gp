@@ -1,23 +1,31 @@
 /*
- * E6.2 + E6.3 — `collaboration-service` change proposal + review
- * model and mixed-collaboration policy.
+ * E6.2 + E6.3 + E6.4 — `collaboration-service` change
+ * proposal + review model, mixed-collaboration policy and
+ * comments / activity / notification hook.
  *
  * Implements the ChangeProposal + Review aggregates, the
  * normalized DomainCommand / DomainDiff value objects, the
  * state-transition matrices and the partial-merge executor
  * (E6.2). Adds the DirectEditMatrix + RoutingExecutor +
  * MergeCommandFactory + PatchValidator + FlagsmithRolloutSync
- * (E6.3). Mirrors
- * `contracts/collaboration/collaboration-policy.yaml` (E6.2)
- * and `contracts/collaboration/mixed-collaboration-policy.yaml`
- * (E6.3). The Java domain
+ * (E6.3). Adds the Comment + Mention + Watch + Assignment +
+ * ActivityFeedItem + ActivityFeed + NotificationHook +
+ * CommentAuthorizer + ActivityFeedCollector +
+ * ActivityFeedFilter + NotificationHookDispatcher +
+ * ActivityRedactionFilter (E6.4). Mirrors
+ * `contracts/collaboration/collaboration-policy.yaml` (E6.2),
+ * `contracts/collaboration/mixed-collaboration-policy.yaml`
+ * (E6.3) and
+ * `contracts/collaboration/comments-activity-policy.yaml`
+ * (E6.4). The Java domain
  * (`com.genealogy.platform.services.collaboration.domain`) is
  * the executor; the YAML files are the source of truth per
  * `agent-execution.md` §4.4.
  *
- * E6.2 + E6.3 ship the domain + invariants + partial-merge
+ * E6.2 + E6.3 + E6.4 ship the domain + invariants + partial-merge
  * executor + mixed-collaboration routing + merge command
- * factory + Flagsmith rollout sync only. REST surface, gRPC
+ * factory + Flagsmith rollout sync + comments / activity
+ * feed / notification hook only. REST surface, gRPC
  * stubs, Flyway migration, jOOQ persistence, Kafka
  * producer/consumer and OpenFeature wiring land in the later
  * E6.x / E11.x sub-epics. Per ADR-E0.5-01 the module inherits

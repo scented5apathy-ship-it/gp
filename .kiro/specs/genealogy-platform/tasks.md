@@ -446,7 +446,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
   - Conflict comparison và merge command mới; không apply arbitrary patch vào field cấm.
   - Đồng bộ policy changes với Flagsmith chỉ cho rollout, không thay policy source of truth.
 
-- [ ] E6.4 Comments/activity
+- [x] E6.4 Comments/activity
   - Comment, mention, watch và assignment có scope/authorization.
   - Activity feed từ event nhưng lọc lại theo quyền hiện tại.
   - Không snapshot sensitive content vào notification.
