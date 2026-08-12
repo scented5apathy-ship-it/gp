@@ -434,15 +434,29 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
   - Research log, task, hypothesis, conflict, assignment và status.
   - Provenance query từ claim đến citation/source/file.
 
-  > **Scope split (commit `a19f7e6`):** E6.1 là epic cha; phần
+  > **Scope split (commit `5b77886`):** E6.1 là epic cha; phần
   > domain layer đã ship ở commit `7bfd521` (implementation) +
   > `52c887c` (evidence flip). Phần còn lại (persistence,
   > REST + OpenAPI, gRPC + Kafka, Testcontainers + Helm) tách
-  > thành 4 sub-task `E6.1a` … `E6.1d` để tránh vi phạm
-  > `agent-execution.md` §4.4 (no scope expansion). Xem
-  > `evidence/E6.1.md` §"Sub-task split".
+  > thành 5 sub-task `E6.1a` … `E6.1e` (gồm cả `E6.1a` cho
+  > domain layer để giữ mapping 1-1 với evidence) để tránh
+  > vi phạm `agent-execution.md` §4.4 (no scope expansion).
+  > Xem `evidence/E6.1.md` §"Sub-task split".
 
-  - [ ] E6.1a Persistence + jOOQ (Flyway + RLS + audit columns)
+  - [x] E6.1a Domain layer (Repository, Source, Citation, Hypothesis, Conflict aggregates + invariants + provenance query executor)
+
+    - Domain records (Repository / Source / Citation / ResearchTask / Hypothesis / Conflict) theo `requirements.md` R8.1 + `design.md` §5.5.
+    - Closed-set enums (SourceKind / CitationQuality / ResearchTaskStatus / HypothesisStatus / ConflictKind / RepositoryKind / AttachmentKind / Certainty) thuần Java 21, không phụ thuộc Spring.
+    - Value objects (Locator / AttachmentRef / TranscriptSegment / TenantScopedId / ResearchAuditAttributes / Confidence).
+    - State machines (ResearchTask / Hypothesis) với terminal guard.
+    - `ResearchInvariants` (16 closed-set codes × DENY/WARN/INFO).
+    - `ProvenanceQueryService` in-memory executor (claim → citation → source → file).
+    - `contracts/research/research-policy.yaml` single source of truth + chart mirror byte-identical.
+    - `scripts/lint-research-config.mjs` + 13 linter unit tests.
+    - 66 Java unit tests (ClosedSetEnumsTest / ValueObjectTest / RepositoryTest / SourceTest / CitationTest / ResearchTaskStateMachineTest / HypothesisStateMachineTest / ResearchInvariantsTest / ProvenanceQueryServiceTest).
+    - Checkstyle / Gradle / boundary / lockfile / ownership checks pass.
+
+  - [ ] E6.1b Persistence + jOOQ (Flyway + RLS + audit columns)
 
     - `db/migration/V{next}__research.sql` với 6 bảng
       (`repository`, `source`, `citation`, `research_task`,
@@ -455,7 +469,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
     - Audit columns: `created_at`, `updated_at`, `archived_at`,
       `version`, `created_by_actor_pseudo_id`, `correlation_id`.
 
-  - [ ] E6.1b REST + OpenAPI + Kong routing
+  - [ ] E6.1c REST + OpenAPI + Kong routing
 
     - `services/research-service/openapi.yaml` với endpoints
       `POST /api/v1/repositories`, `GET /api/v1/repositories/{id}`,
@@ -469,7 +483,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
     - DTO bound với aggregate records qua `DraftDomainMapper`
       (không leak enum constant cho API consumer).
 
-  - [ ] E6.1c gRPC + Kafka events + OpenFGA/ABAC adapter
+  - [ ] E6.1d gRPC + Kafka events + OpenFGA/ABAC adapter
 
     - gRPC stubs `gp.research.v1.{RepositoryService, CitationService,
       ResearchTaskService, HypothesisService, ConflictService}` +
@@ -483,7 +497,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
     - `ReAuthorizationPort` adapter (Spring bean) gọi OpenFGA
       + ABAC overlay (FlagChip) cho submit / approve / partial-merge.
 
-  - [ ] E6.1d Testcontainers + Helm chart + smoke
+  - [ ] E6.1e Testcontainers + Helm chart + smoke
 
     - Testcontainers integration tests: Postgres + Kafka +
       OpenFGA + Apicurio spin-up; verify RLS prevents cross-tenant
