@@ -171,6 +171,41 @@ public record ResearchTask(
                 Instant.now(), Instant.now(), null, 1L, audit);
     }
 
+    /**
+     * Rehydrate a ResearchTask from a persisted row. The
+     * {@code assignments} list carries the
+     * {@code research_task_assignments} bridge rows; the
+     * {@code linkedCitationIds} list is the JSONB column on the
+     * parent row. The {@code status}, {@code blockedReason},
+     * {@code resolvedProof} and {@code resolvedAt} columns are
+     * restored as-is so the version history stays intact.
+     */
+    public static ResearchTask rehydrate(
+            TenantScopedId id,
+            String title,
+            String description,
+            String subjectReference,
+            String subjectKind,
+            ResearchTaskStatus status,
+            List<Assignment> assignments,
+            List<TenantScopedId> linkedCitationIds,
+            String blockedReason,
+            String resolvedProof,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant resolvedAt,
+            long version,
+            ResearchAuditAttributes audit) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(title, "title");
+        Objects.requireNonNull(subjectReference, "subjectReference");
+        Objects.requireNonNull(status, "status");
+        Objects.requireNonNull(audit, "audit");
+        return new ResearchTask(id, title, description, subjectReference, subjectKind,
+                status, assignments, linkedCitationIds, blockedReason, resolvedProof,
+                createdAt, updatedAt, resolvedAt, version, audit);
+    }
+
     public ResearchTask withStatus(
             ResearchTaskStatus next,
             String nextBlockedReason,

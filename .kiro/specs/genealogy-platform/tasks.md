@@ -469,7 +469,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
     - Audit columns: `created_at`, `updated_at`, `archived_at`,
       `version`, `created_by_actor_pseudo_id`, `correlation_id`.
 
-  - [ ] E6.1c REST + OpenAPI + Kong routing
+  - [x] E6.1c REST + OpenAPI + Kong routing
 
     - `services/research-service/openapi.yaml` với endpoints
       `POST /api/v1/repositories`, `GET /api/v1/repositories/{id}`,

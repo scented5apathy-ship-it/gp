@@ -131,4 +131,35 @@ public record Repository(
         return new Repository(id, name, kind, locationLabel, websiteUrl, description,
                 false, Instant.now(), Instant.now(), null, 1L, audit, Map.of());
     }
+
+    /**
+     * Rehydrate a Repository from a persisted row. The audit
+     * attributes are reconstructed from the
+     * {@code created_by_actor_pseudo_id} + {@code correlation_id}
+     * columns so the runtime view carries the original creator
+     * even after the row has been updated. The {@code metadata}
+     * map is shared by reference; callers must not mutate it.
+     */
+    public static Repository rehydrate(
+            TenantScopedId id,
+            String name,
+            RepositoryKind kind,
+            String locationLabel,
+            String websiteUrl,
+            String description,
+            boolean privateHolding,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant archivedAt,
+            long version,
+            ResearchAuditAttributes audit,
+            Map<String, String> metadata) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(kind, "kind");
+        Objects.requireNonNull(audit, "audit");
+        return new Repository(id, name, kind, locationLabel, websiteUrl, description,
+                privateHolding, createdAt, updatedAt, archivedAt, version, audit,
+                metadata == null ? Map.of() : metadata);
+    }
 }

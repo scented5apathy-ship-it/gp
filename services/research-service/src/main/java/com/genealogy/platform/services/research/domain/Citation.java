@@ -165,4 +165,44 @@ public record Citation(
                 externalUrls == null ? List.of() : List.copyOf(externalUrls),
                 Instant.now(), Instant.now(), 1L, audit);
     }
+
+    /**
+     * Rehydrate a Citation from a persisted row. The aggregate
+     * the JSONB {@code transcript_segments} / {@code attachments} /
+     * {@code external_urls} columns back into the immutable
+     * domain lists; the {@code at} / {@code updatedAt} timestamps
+     * are restored as-is so the version history stays intact.
+     */
+    public static Citation rehydrate(
+            TenantScopedId id,
+            TenantScopedId sourceId,
+            String claimReference,
+            String claimKind,
+            Locator locator,
+            CitationQuality quality,
+            Disposition disposition,
+            Certainty certainty,
+            Double confidence,
+            String quotedText,
+            List<TranscriptSegment> transcriptSegments,
+            List<AttachmentRef> attachments,
+            List<String> externalUrls,
+            Instant createdAt,
+            Instant updatedAt,
+            long version,
+            ResearchAuditAttributes audit) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(claimReference, "claimReference");
+        Objects.requireNonNull(quality, "quality");
+        Objects.requireNonNull(disposition, "disposition");
+        Objects.requireNonNull(certainty, "certainty");
+        Objects.requireNonNull(audit, "audit");
+        return new Citation(id, sourceId, claimReference, claimKind, locator, quality,
+                disposition, certainty, confidence, quotedText,
+                transcriptSegments == null ? List.of() : List.copyOf(transcriptSegments),
+                attachments == null ? List.of() : List.copyOf(attachments),
+                externalUrls == null ? List.of() : List.copyOf(externalUrls),
+                createdAt, updatedAt, version, audit);
+    }
 }

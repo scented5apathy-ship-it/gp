@@ -1,0 +1,1242 @@
+openapi: 3.1.0
+info:
+  title: Genealogy Platform — Research & Evidence API
+  version: 1.0.0
+  description: |
+    Research, citations, provenance, tasks, hypotheses and conflicts
+    for the `research-service`. Backed by
+    `services/research-service`. Mounted at `/api/v1/`.
+
+    Every non-GET mutation requires an `Idempotency-Key` header
+    (UUID v4 recommended). Concurrent updates require `If-Match`
+    with the ETag returned by the previous read. The `X-Correlation-Id`
+    header is echoed on every response and stamped on every audit
+    event.
+  x-contract-major: 1
+  contact:
+    name: Research & Evidence
+    url: https://github.com/genealogy/platform
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.genealogy-platform.com/api/v1
+    description: Production
+  - url: https://api.staging.genealogy-platform.com/api/v1
+    description: Staging
+tags:
+  - name: Repository
+    description: Repository aggregate (the home that groups sources).
+  - name: Source
+    description: Source aggregate (records / finding aids / archives).
+  - name: Citation
+    description: Citation aggregate (claim → source pointers).
+  - name: Claims
+    description: Provenance query (claim → citation → source → repository).
+  - name: ResearchTask
+    description: Research task aggregate (the unit of work in the research log).
+  - name: Hypothesis
+    description: Hypothesis aggregate (active / corroborated / refuted / superseded).
+  - name: Conflict
+    description: Conflict aggregate (disagreement that needs human review).
+paths:
+  /repositories:
+    post:
+      tags: [Repository]
+      operationId: createRepository
+      summary: Create a repository
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRepositoryRequest"
+      responses:
+        "201":
+          description: Repository created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+            X-Correlation-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Repository"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /repositories/{repositoryId}:
+    parameters:
+      - name: repositoryId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._\\-]{1,128}$"
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    get:
+      tags: [Repository]
+      operationId: getRepository
+      summary: Retrieve a repository by id
+      responses:
+        "200":
+          description: Repository detail.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Repository"
+        "404":
+          description: Repository not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /sources:
+    post:
+      tags: [Source]
+      operationId: createSource
+      summary: Create a source
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSourceRequest"
+      responses:
+        "201":
+          description: Source created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Source"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /sources/{sourceId}:
+    parameters:
+      - name: sourceId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._\\-]{1,128}$"
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    get:
+      tags: [Source]
+      operationId: getSource
+      summary: Retrieve a source by id
+      responses:
+        "200":
+          description: Source detail.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Source"
+        "404":
+          description: Source not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /citations:
+    post:
+      tags: [Citation]
+      operationId: createCitation
+      summary: Create a citation
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCitationRequest"
+      responses:
+        "201":
+          description: Citation created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Citation"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /citations/{citationId}:
+    parameters:
+      - name: citationId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._\\-]{1,128}$"
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    get:
+      tags: [Citation]
+      operationId: getCitation
+      summary: Retrieve a citation by id
+      responses:
+        "200":
+          description: Citation detail.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Citation"
+        "404":
+          description: Citation not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /claims/{claimId}/provenance:
+    parameters:
+      - name: claimId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._\\-]{1,128}$"
+      - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+    get:
+      tags: [Claims]
+      operationId: getClaimProvenance
+      summary: Trace a claim back to its sources
+      description: |
+        Returns every citation that points at the given
+        `claimReference`, ordered by `certainty` (DESC) then
+        `citationId` (ASC). Each hop carries the source +
+        repository indirections so the UI can render the chain
+        without dereferencing anything.
+      responses:
+        "200":
+          description: Provenance chain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProvenanceChain"
+        "404":
+          description: No citations found for the claim.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /research-tasks:
+    post:
+      tags: [ResearchTask]
+      operationId: createResearchTask
+      summary: Create a research task
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateResearchTaskRequest"
+      responses:
+        "201":
+          description: Research task created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchTask"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /research-tasks/{taskId}/transitions:
+    parameters:
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._\\-]{1,128}$"
+      - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+      - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+    post:
+      tags: [ResearchTask]
+      operationId: transitionResearchTask
+      summary: Transition a research task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionResearchTaskRequest"
+      responses:
+        "200":
+          description: Updated research task.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchTask"
+        "409":
+          description: Invalid transition for the current status.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "412":
+          description: ETag mismatch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /hypotheses:
+    post:
+      tags: [Hypothesis]
+      operationId: createHypothesis
+      summary: Create a hypothesis
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHypothesisRequest"
+      responses:
+        "201":
+          description: Hypothesis created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hypothesis"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /hypotheses/{hypothesisId}/transitions:
+    parameters:
+      - name: hypothesisId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._\\-]{1,128}$"
+      - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+      - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Hypothesis]
+      operationId: transitionHypothesis
+      summary: Transition a hypothesis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionHypothesisRequest"
+      responses:
+        "200":
+          description: Updated hypothesis.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hypothesis"
+        "409":
+          description: Invalid transition for the current status.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "412":
+          description: ETag mismatch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /conflicts:
+    post:
+      tags: [Conflict]
+      operationId: createConflict
+      summary: Create a conflict
+      parameters:
+        - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+        - $ref: "../../common/headers.yaml#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConflictRequest"
+      responses:
+        "201":
+          description: Conflict created.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conflict"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation (e.g. fewer than two participants).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+  /conflicts/{conflictId}/transitions:
+    parameters:
+      - name: conflictId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._\\-]{1,128}$"
+      - $ref: "../../common/headers.yaml#/components/parameters/IfMatch"
+      - $ref: "../../common/headers.yaml#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Conflict]
+      operationId: transitionConflict
+      summary: Transition a conflict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionConflictRequest"
+      responses:
+        "200":
+          description: Updated conflict.
+          headers:
+            ETag:
+              $ref: "../../common/headers.yaml#/components/headers/ETagHeader"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conflict"
+        "409":
+          description: Invalid transition for the current status.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "412":
+          description: ETag mismatch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+        "422":
+          description: Research invariant violation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../../common/problem-details.yaml#/components/schemas/Problem"
+components:
+  schemas:
+    Repository:
+      type: object
+      required:
+        - id
+        - tenantId
+        - name
+        - kind
+        - privateHolding
+        - createdAt
+        - version
+        - etag
+      properties:
+        id:
+          type: string
+          pattern: "^[A-Za-z0-9._\\-]{1,128}$"
+        tenantId:
+          type: string
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        kind:
+          type: string
+          enum: [ARCHIVE, LIBRARY, CHURCH, CIVIL_REGISTRY, CEMETERY, FAMILY_HOLDING, DIGITAL_PLATFORM, OTHER]
+        locationLabel:
+          type: string
+          maxLength: 1024
+        websiteUrl:
+          type: string
+          maxLength: 2048
+        description:
+          type: string
+          maxLength: 4096
+        privateHolding:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+        etag:
+          type: string
+          pattern: '^"[^"]+"$'
+    CreateRepositoryRequest:
+      type: object
+      required:
+        - name
+        - kind
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        kind:
+          type: string
+          enum: [ARCHIVE, LIBRARY, CHURCH, CIVIL_REGISTRY, CEMETERY, FAMILY_HOLDING, DIGITAL_PLATFORM, OTHER]
+        locationLabel:
+          type: string
+          maxLength: 1024
+        websiteUrl:
+          type: string
+          maxLength: 2048
+        description:
+          type: string
+          maxLength: 4096
+        privateHolding:
+          type: boolean
+    Source:
+      type: object
+      required:
+        - id
+        - tenantId
+        - repositoryId
+        - title
+        - sourceKind
+        - locator
+        - createdAt
+        - version
+        - etag
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        repositoryId:
+          type: string
+        title:
+          type: string
+          minLength: 1
+          maxLength: 512
+        sourceKind:
+          type: string
+          enum: [PRIMARY, SECONDARY, DERIVED, ARCHIVE, FINDING_AID, OTHER]
+        author:
+          type: string
+          maxLength: 256
+        publisher:
+          type: string
+          maxLength: 256
+        publicationYear:
+          type: integer
+          minimum: 1000
+          maximum: 9999
+        publisherLocation:
+          type: string
+          maxLength: 256
+        locator:
+          $ref: "#/components/schemas/Locator"
+        attachments:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/Attachment"
+        description:
+          type: string
+          maxLength: 4096
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+        etag:
+          type: string
+    CreateSourceRequest:
+      type: object
+      required:
+        - repositoryId
+        - title
+        - sourceKind
+        - locator
+      properties:
+        repositoryId:
+          type: string
+        title:
+          type: string
+          minLength: 1
+          maxLength: 512
+        sourceKind:
+          type: string
+          enum: [PRIMARY, SECONDARY, DERIVED, ARCHIVE, FINDING_AID, OTHER]
+        author:
+          type: string
+        publisher:
+          type: string
+        publicationYear:
+          type: integer
+        publisherLocation:
+          type: string
+        locator:
+          $ref: "#/components/schemas/Locator"
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attachment"
+        description:
+          type: string
+    Locator:
+      type: object
+      required:
+        - raw
+      properties:
+        raw:
+          type: string
+          minLength: 1
+          maxLength: 256
+        page:
+          type: string
+        entry:
+          type: string
+        volume:
+          type: string
+    Attachment:
+      type: object
+      required:
+        - kind
+        - mediaObjectId
+      properties:
+        kind:
+          type: string
+          enum: [DIGITAL_IMAGE, PDF, AUDIO, VIDEO, TRANSCRIPT, EXTERNAL_URL, OTHER]
+        mediaObjectId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        canonicalUrl:
+          type: string
+          maxLength: 2048
+        caption:
+          type: string
+          maxLength: 1024
+        locale:
+          type: string
+    Citation:
+      type: object
+      required:
+        - id
+        - tenantId
+        - sourceId
+        - claimReference
+        - locator
+        - quality
+        - disposition
+        - certainty
+        - createdAt
+        - version
+        - etag
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        sourceId:
+          type: string
+        claimReference:
+          type: string
+          minLength: 1
+          maxLength: 128
+        claimKind:
+          type: string
+          maxLength: 64
+        locator:
+          $ref: "#/components/schemas/Locator"
+        quality:
+          type: string
+          enum: [ORIGINAL, TRANSCRIPT, ABSTRACT, IMAGE, COPY, UNKNOWN]
+        disposition:
+          type: string
+          enum: [SUPPORTS, REFUTES, MENTIONS, UNCERTAIN]
+        certainty:
+          type: string
+          enum: [HYPOTHESIS, ASSERTED, VERIFIED, DISPUTED]
+        confidence:
+          type: number
+          format: double
+          minimum: 0.0
+          maximum: 1.0
+        quotedText:
+          type: string
+          maxLength: 4096
+        transcriptSegments:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/TranscriptSegment"
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attachment"
+        externalUrls:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+        etag:
+          type: string
+    CreateCitationRequest:
+      type: object
+      required:
+        - sourceId
+        - claimReference
+        - locator
+        - quality
+        - disposition
+        - certainty
+      properties:
+        sourceId:
+          type: string
+        claimReference:
+          type: string
+        claimKind:
+          type: string
+        locator:
+          $ref: "#/components/schemas/Locator"
+        quality:
+          type: string
+          enum: [ORIGINAL, TRANSCRIPT, ABSTRACT, IMAGE, COPY, UNKNOWN]
+        disposition:
+          type: string
+          enum: [SUPPORTS, REFUTES, MENTIONS, UNCERTAIN]
+        certainty:
+          type: string
+          enum: [HYPOTHESIS, ASSERTED, VERIFIED, DISPUTED]
+        confidence:
+          type: number
+          format: double
+        quotedText:
+          type: string
+        transcriptSegments:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptSegment"
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attachment"
+        externalUrls:
+          type: array
+          items:
+            type: string
+    TranscriptSegment:
+      type: object
+      required:
+        - lineNumber
+        - text
+      properties:
+        lineNumber:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        originalScript:
+          type: string
+          maxLength: 4096
+        translationLocale:
+          type: string
+        speaker:
+          type: string
+          maxLength: 256
+    ProvenanceChain:
+      type: object
+      required:
+        - tenantId
+        - claimReference
+        - hops
+      properties:
+        tenantId:
+          type: string
+        claimReference:
+          type: string
+        hops:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProvenanceHop"
+    ProvenanceHop:
+      type: object
+      required:
+        - citationId
+        - sourceId
+        - quality
+        - disposition
+        - certainty
+      properties:
+        citationId:
+          type: string
+        sourceId:
+          type: string
+        sourceTitle:
+          type: string
+        sourceKind:
+          type: string
+        repositoryId:
+          type: string
+        repositoryName:
+          type: string
+        repositoryKind:
+          type: string
+        quality:
+          type: string
+        disposition:
+          type: string
+        certainty:
+          type: string
+        confidence:
+          type: number
+          format: double
+        locatorRaw:
+          type: string
+        quotedText:
+          type: string
+    ResearchTask:
+      type: object
+      required:
+        - id
+        - tenantId
+        - title
+        - subjectReference
+        - status
+        - createdAt
+        - version
+        - etag
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        title:
+          type: string
+          minLength: 1
+          maxLength: 256
+        description:
+          type: string
+          maxLength: 4096
+        subjectReference:
+          type: string
+          minLength: 1
+          maxLength: 128
+        subjectKind:
+          type: string
+          maxLength: 64
+        status:
+          type: string
+          enum: [OPEN, IN_PROGRESS, BLOCKED, RESOLVED, ABANDONED]
+        assignments:
+          type: array
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/Assignment"
+        linkedCitationIds:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+        blockedReason:
+          type: string
+          maxLength: 1024
+        resolvedProof:
+          type: string
+          maxLength: 128
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+        etag:
+          type: string
+    CreateResearchTaskRequest:
+      type: object
+      required:
+        - title
+        - subjectReference
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        subjectReference:
+          type: string
+        subjectKind:
+          type: string
+    TransitionResearchTaskRequest:
+      type: object
+      required:
+        - toStatus
+      properties:
+        toStatus:
+          type: string
+          enum: [OPEN, IN_PROGRESS, BLOCKED, RESOLVED, ABANDONED]
+        blockedReason:
+          type: string
+        resolvedProof:
+          type: string
+    Assignment:
+      type: object
+      required:
+        - assigneePseudoId
+        - assignedAt
+      properties:
+        assigneePseudoId:
+          type: string
+        assigneeRole:
+          type: string
+        assignedAt:
+          type: string
+          format: date-time
+        releasedAt:
+          type: string
+          format: date-time
+        note:
+          type: string
+    Hypothesis:
+      type: object
+      required:
+        - id
+        - tenantId
+        - statement
+        - subjectReference
+        - certainty
+        - status
+        - createdAt
+        - version
+        - etag
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        statement:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        subjectReference:
+          type: string
+        subjectKind:
+          type: string
+        certainty:
+          type: string
+          enum: [HYPOTHESIS, ASSERTED, VERIFIED, DISPUTED]
+        confidence:
+          type: number
+          format: double
+        status:
+          type: string
+          enum: [DRAFT, ACTIVE, CORROBORATED, REFUTED, SUPERSEDED]
+        corroboratingCitations:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+        refutingCitations:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+        supersededByHypothesisId:
+          type: string
+        assignedTo:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+        etag:
+          type: string
+    CreateHypothesisRequest:
+      type: object
+      required:
+        - statement
+        - subjectReference
+        - certainty
+      properties:
+        statement:
+          type: string
+        subjectReference:
+          type: string
+        subjectKind:
+          type: string
+        certainty:
+          type: string
+          enum: [HYPOTHESIS, ASSERTED, VERIFIED, DISPUTED]
+        confidence:
+          type: number
+          format: double
+    TransitionHypothesisRequest:
+      type: object
+      required:
+        - toStatus
+      properties:
+        toStatus:
+          type: string
+          enum: [DRAFT, ACTIVE, CORROBORATED, REFUTED, SUPERSEDED]
+    Conflict:
+      type: object
+      required:
+        - id
+        - tenantId
+        - summary
+        - kind
+        - participants
+        - status
+        - createdAt
+        - version
+        - etag
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        kind:
+          type: string
+          enum: [SOURCE_DISAGREES, CITATION_DISAGREES, CLAIM_CONTRADICTS_SOURCE, HYPOTHESIS_COLLIDES, OTHER]
+        kindNote:
+          type: string
+          maxLength: 1024
+        participants:
+          type: array
+          minItems: 2
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/Participant"
+        linkedCitationIds:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+        status:
+          type: string
+          enum: [OPEN, INVESTIGATING, RESOLVED, ABANDONED]
+        resolution:
+          type: string
+          maxLength: 4096
+        resolutionProof:
+          type: string
+          maxLength: 128
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+        etag:
+          type: string
+    CreateConflictRequest:
+      type: object
+      required:
+        - summary
+        - kind
+        - participants
+      properties:
+        summary:
+          type: string
+        kind:
+          type: string
+          enum: [SOURCE_DISAGREES, CITATION_DISAGREES, CLAIM_CONTRADICTS_SOURCE, HYPOTHESIS_COLLIDES, OTHER]
+        kindNote:
+          type: string
+        participants:
+          type: array
+          minItems: 2
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/Participant"
+    TransitionConflictRequest:
+      type: object
+      required:
+        - toStatus
+      properties:
+        toStatus:
+          type: string
+          enum: [OPEN, INVESTIGATING, RESOLVED, ABANDONED]
+        resolution:
+          type: string
+        resolutionProof:
+          type: string
+    Participant:
+      type: object
+      required:
+        - reference
+      properties:
+        reference:
+          type: string
+          minLength: 1
+          maxLength: 128
+        referenceKind:
+          type: string
+          maxLength: 64
+        interpretation:
+          type: string
+          maxLength: 1024
+        supportingCitations:
+          type: array
+          maxItems: 64
+          items:
+            type: string

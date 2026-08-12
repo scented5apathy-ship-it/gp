@@ -175,4 +175,36 @@ public record Conflict(
                 List.of(), ConflictStatus.OPEN, null, null,
                 Instant.now(), Instant.now(), null, 1L, audit);
     }
+
+    /**
+     * Rehydrate a Conflict from a persisted row. The
+     * {@code participants} list carries the
+     * {@code conflict_participants} bridge rows; the
+     * {@code linkedCitationIds} list is the JSONB column on the
+     * parent row.
+     */
+    public static Conflict rehydrate(
+            TenantScopedId id,
+            String summary,
+            ConflictKind kind,
+            String kindNote,
+            List<Participant> participants,
+            List<TenantScopedId> linkedCitationIds,
+            ConflictStatus status,
+            String resolution,
+            String resolutionProof,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant resolvedAt,
+            long version,
+            ResearchAuditAttributes audit) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(summary, "summary");
+        Objects.requireNonNull(kind, "kind");
+        Objects.requireNonNull(status, "status");
+        Objects.requireNonNull(audit, "audit");
+        return new Conflict(id, summary, kind, kindNote, participants,
+                linkedCitationIds, status, resolution, resolutionProof,
+                createdAt, updatedAt, resolvedAt, version, audit);
+    }
 }

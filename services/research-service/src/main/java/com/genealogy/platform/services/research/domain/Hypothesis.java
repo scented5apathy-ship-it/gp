@@ -131,6 +131,41 @@ public record Hypothesis(
                 Instant.now(), Instant.now(), null, 1L, audit);
     }
 
+    /**
+     * Rehydrate a Hypothesis from a persisted row. The
+     * {@code corroboratingCitations} / {@code refutingCitations}
+     * lists are stored as the bridge tables in V2
+     * (E6.1b) and joined back by the repository at read time.
+     */
+    public static Hypothesis rehydrate(
+            TenantScopedId id,
+            String statement,
+            String subjectReference,
+            String subjectKind,
+            Certainty certainty,
+            Double confidence,
+            HypothesisStatus status,
+            List<TenantScopedId> corroboratingCitations,
+            List<TenantScopedId> refutingCitations,
+            String supersededByHypothesisId,
+            String assignedTo,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant resolvedAt,
+            long version,
+            ResearchAuditAttributes audit) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(statement, "statement");
+        Objects.requireNonNull(subjectReference, "subjectReference");
+        Objects.requireNonNull(certainty, "certainty");
+        Objects.requireNonNull(status, "status");
+        Objects.requireNonNull(audit, "audit");
+        return new Hypothesis(id, statement, subjectReference, subjectKind, certainty,
+                confidence, status, corroboratingCitations, refutingCitations,
+                supersededByHypothesisId, assignedTo,
+                createdAt, updatedAt, resolvedAt, version, audit);
+    }
+
     public Hypothesis withStatus(HypothesisStatus next) {
         Objects.requireNonNull(next, "next");
         Instant now = Instant.now();

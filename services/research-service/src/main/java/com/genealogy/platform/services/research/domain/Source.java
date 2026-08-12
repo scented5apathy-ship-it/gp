@@ -166,4 +166,40 @@ public record Source(
                 attachments == null ? List.of() : List.copyOf(attachments),
                 List.of(), description, Instant.now(), Instant.now(), null, 1L, audit);
     }
+
+    /**
+     * Rehydrate a Source from a persisted row. The {@code citations}
+     * list is intentionally left empty — the REST surface resolves
+     * the per-source citation list on demand (E6.1c keeps the
+     * {@code citations} list as a read-only view; the relational
+     * access lands in E6.1d when the outbox relay needs the
+     * reverse-index).
+     */
+    public static Source rehydrate(
+            TenantScopedId id,
+            TenantScopedId repositoryId,
+            String title,
+            SourceKind sourceKind,
+            String author,
+            String publisher,
+            Integer publicationYear,
+            String publisherLocation,
+            Locator locator,
+            List<AttachmentRef> attachments,
+            String description,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant archivedAt,
+            long version,
+            ResearchAuditAttributes audit) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(repositoryId, "repositoryId");
+        Objects.requireNonNull(title, "title");
+        Objects.requireNonNull(sourceKind, "sourceKind");
+        Objects.requireNonNull(audit, "audit");
+        return new Source(id, repositoryId, title, sourceKind, author, publisher,
+                publicationYear, publisherLocation, locator,
+                attachments == null ? List.of() : List.copyOf(attachments),
+                List.of(), description, createdAt, updatedAt, archivedAt, version, audit);
+    }
 }
