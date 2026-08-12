@@ -428,11 +428,73 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
 
 ### Subtasks
 
-- [x] E6.1 Research service
+- [ ] E6.1 Research service
 
   - Repository, Source, Citation, Transcript, locator, quality và attachment references.
   - Research log, task, hypothesis, conflict, assignment và status.
   - Provenance query từ claim đến citation/source/file.
+
+  > **Scope split (commit `a19f7e6`):** E6.1 là epic cha; phần
+  > domain layer đã ship ở commit `7bfd521` (implementation) +
+  > `52c887c` (evidence flip). Phần còn lại (persistence,
+  > REST + OpenAPI, gRPC + Kafka, Testcontainers + Helm) tách
+  > thành 4 sub-task `E6.1a` … `E6.1d` để tránh vi phạm
+  > `agent-execution.md` §4.4 (no scope expansion). Xem
+  > `evidence/E6.1.md` §"Sub-task split".
+
+  - [ ] E6.1a Persistence + jOOQ (Flyway + RLS + audit columns)
+
+    - `db/migration/V{next}__research.sql` với 6 bảng
+      (`repository`, `source`, `citation`, `research_task`,
+      `hypothesis`, `conflict`) + bridge (`research_task_assignment`,
+      `hypothesis_corroborating_citation`, `hypothesis_refuting_citation`,
+      `conflict_participant`, `conflict_participant_supporting_citation`).
+    - Tenant-scoped RLS policies cho mọi bảng (NFR1).
+    - jOOQ repository bind với `TenantScopedId` (mọi query
+      inject `tenant_id` qua `WHERE` + `WITH CHECK`).
+    - Audit columns: `created_at`, `updated_at`, `archived_at`,
+      `version`, `created_by_actor_pseudo_id`, `correlation_id`.
+
+  - [ ] E6.1b REST + OpenAPI + Kong routing
+
+    - `services/research-service/openapi.yaml` với endpoints
+      `POST /api/v1/repositories`, `GET /api/v1/repositories/{id}`,
+      `POST /api/v1/sources`, `POST /api/v1/citations`,
+      `GET /api/v1/claims/{id}/provenance`,
+      `POST /api/v1/research-tasks`, `POST /api/v1/research-tasks/{id}/transitions`,
+      `POST /api/v1/hypotheses`, `POST /api/v1/conflicts`.
+    - `Idempotency-Key` (UUID v4) header bắt buộc cho mọi POST.
+    - Kong declarative route + `X-Tenant-Id` policy + rate-limit
+      theo `research-service` consumer.
+    - DTO bound với aggregate records qua `DraftDomainMapper`
+      (không leak enum constant cho API consumer).
+
+  - [ ] E6.1c gRPC + Kafka events + OpenFGA/ABAC adapter
+
+    - gRPC stubs `gp.research.v1.{RepositoryService, CitationService,
+      ResearchTaskService, HypothesisService, ConflictService}` +
+      protobuf under `contracts/protobuf/research/v1/`.
+    - Kafka producer cho `gp.research.v1.{CitationCreated, ClaimVerified,
+      ConflictDetected}` (3 events, BACKWARD evolution per
+      ADR-E0.5-08).
+    - Kafka consumer cho `gp.genealogy.v1.{TreeVisibilityChanged,
+      PersonRedacted}` → re-projection workspace với redaction
+      overlay (R8.4 + NFR1).
+    - `ReAuthorizationPort` adapter (Spring bean) gọi OpenFGA
+      + ABAC overlay (FlagChip) cho submit / approve / partial-merge.
+
+  - [ ] E6.1d Testcontainers + Helm chart + smoke
+
+    - Testcontainers integration tests: Postgres + Kafka +
+      OpenFGA + Apicurio spin-up; verify RLS prevents cross-tenant
+      read / write; verify redaction overlay on visibility change.
+    - Helm values for `research-service`: replica, PDB, probe
+      contract (`/actuator/health/readiness` + `/actuator/health/liveness`),
+      default-deny `NetworkPolicy`, Vault agent-inject annotations,
+      OpenFeature sidecar.
+    - `runbook/research-service.md` (mirrors
+      `runbook/audit-service.md` style) + Grafana dashboard
+      `dashboards/research-service.json` với `tenant_pseudo_id` label.
 
 - [x] E6.2 Proposal/review model
 
