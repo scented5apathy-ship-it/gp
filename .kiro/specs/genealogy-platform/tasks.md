@@ -456,7 +456,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
     - 66 Java unit tests (ClosedSetEnumsTest / ValueObjectTest / RepositoryTest / SourceTest / CitationTest / ResearchTaskStateMachineTest / HypothesisStateMachineTest / ResearchInvariantsTest / ProvenanceQueryServiceTest).
     - Checkstyle / Gradle / boundary / lockfile / ownership checks pass.
 
-  - [ ] E6.1b Persistence + jOOQ (Flyway + RLS + audit columns)
+  - [x] E6.1b Persistence + jOOQ (Flyway + RLS + audit columns)
 
     - `db/migration/V{next}__research.sql` với 6 bảng
       (`repository`, `source`, `citation`, `research_task`,
