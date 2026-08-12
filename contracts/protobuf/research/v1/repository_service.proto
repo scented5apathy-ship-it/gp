@@ -1,0 +1,71 @@
+// Contracts — research v1 — repository service
+//
+// Mirrors the REST contract under
+// `contracts/openapi/public-api/v1/research.yaml` and the
+// `Repository` domain aggregate (E6.1a). The server-side
+// implementation maps every gRPC method onto the framework-free
+// `ResearchCommandService` via `DraftDomainMapper` (no domain
+// code changes).
+syntax = "proto3";
+
+package com.genealogy.platform.research.v1;
+
+import "common/v1/context.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.research.v1";
+
+service RepositoryService {
+  rpc CreateRepository(CreateRepositoryRequest)   returns (Repository);
+  rpc GetRepository(GetRepositoryRequest)         returns (Repository);
+  rpc ArchiveRepository(ArchiveRepositoryRequest) returns (Repository);
+}
+
+message Repository {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  RepositoryKind kind = 4;
+  string location_label = 5;
+  string website_url = 6;
+  string description = 7;
+  bool private_holding = 8;
+  string etag = 9;
+  string created_at = 10;
+  string updated_at = 11;
+  string archived_at = 12;
+  int64 version = 13;
+}
+
+enum RepositoryKind {
+  REPOSITORY_KIND_UNSPECIFIED = 0;
+  REPOSITORY_ARCHIVE = 1;
+  REPOSITORY_LIBRARY = 2;
+  REPOSITORY_CHURCH = 3;
+  REPOSITORY_CIVIL_REGISTRY = 4;
+  REPOSITORY_CEMETERY = 5;
+  REPOSITORY_FAMILY_HOLDING = 6;
+  REPOSITORY_DIGITAL_PLATFORM = 7;
+  REPOSITORY_OTHER = 8;
+}
+
+message CreateRepositoryRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string name = 2;
+  RepositoryKind kind = 3;
+  string location_label = 4;
+  string website_url = 5;
+  string description = 6;
+  bool private_holding = 7;
+}
+
+message GetRepositoryRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string repository_id = 2;
+}
+
+message ArchiveRepositoryRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string repository_id = 2;
+  string etag = 3;
+}

@@ -77,6 +77,151 @@ public final class DraftDomainMapper {
         }
     }
 
+    /**
+     * Map a Java domain {@link RepositoryKind} to the
+     * protobuf wire name. The protobuf enum values are
+     * prefixed with {@code REPOSITORY_} to avoid the
+     * cross-enum collision that protoc forbids (see
+     * {@code contracts/protobuf/research/v1/repository_service.proto}).
+     */
+    public static String repositoryKindToProto(com.genealogy.platform.services.research.domain.RepositoryKind k) {
+        if (k == null) {
+            return "REPOSITORY_KIND_UNSPECIFIED";
+        }
+        return switch (k) {
+            case ARCHIVE -> "REPOSITORY_ARCHIVE";
+            case LIBRARY -> "REPOSITORY_LIBRARY";
+            case CHURCH -> "REPOSITORY_CHURCH";
+            case CIVIL_REGISTRY -> "REPOSITORY_CIVIL_REGISTRY";
+            case CEMETERY -> "REPOSITORY_CEMETERY";
+            case FAMILY_HOLDING -> "REPOSITORY_FAMILY_HOLDING";
+            case DIGITAL_PLATFORM -> "REPOSITORY_DIGITAL_PLATFORM";
+            case OTHER -> "REPOSITORY_OTHER";
+        };
+    }
+
+    /**
+     * Map a Java domain {@link SourceKind} to the protobuf
+     * wire name (prefixed with {@code SOURCE_} — see
+     * {@link #repositoryKindToProto} for the rationale).
+     */
+    public static String sourceKindToProto(com.genealogy.platform.services.research.domain.SourceKind k) {
+        if (k == null) {
+            return "SOURCE_KIND_UNSPECIFIED";
+        }
+        return switch (k) {
+            case PRIMARY -> "SOURCE_PRIMARY";
+            case SECONDARY -> "SOURCE_SECONDARY";
+            case DERIVED -> "SOURCE_DERIVED";
+            case ARCHIVE -> "SOURCE_ARCHIVE";
+            case FINDING_AID -> "SOURCE_FINDING_AID";
+            case OTHER -> "SOURCE_OTHER";
+        };
+    }
+
+    /**
+     * Map a protobuf wire name (prefixed) back to the Java
+     * domain {@link RepositoryKind}. Handles the bare
+     * proto fallback ({@code OTHER} → {@code OTHER})
+     * for backward compatibility with the REST surface.
+     */
+    public static RepositoryKind repositoryKindFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("REPOSITORY_") ? wire.substring("REPOSITORY_".length()) : wire;
+        return repositoryKind(stripped);
+    }
+
+    /** Mirror of {@link #repositoryKindFromProto} for {@link SourceKind}. */
+    public static SourceKind sourceKindFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("SOURCE_") ? wire.substring("SOURCE_".length()) : wire;
+        return switch (stripped) {
+            case "PRIMARY" -> SourceKind.PRIMARY;
+            case "SECONDARY" -> SourceKind.SECONDARY;
+            case "DERIVED" -> SourceKind.DERIVED;
+            case "ARCHIVE" -> SourceKind.ARCHIVE;
+            case "FINDING_AID" -> SourceKind.FINDING_AID;
+            default -> sourceKind(stripped);
+        };
+    }
+
+    public static CitationQuality citationQualityFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("CITATION_") ? wire.substring("CITATION_".length()) : wire;
+        return citationQuality(stripped);
+    }
+
+    public static Citation.Disposition dispositionFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("CITATION_") ? wire.substring("CITATION_".length()) : wire;
+        return disposition(stripped);
+    }
+
+    public static Certainty certaintyFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("CERTAINTY_") ? wire.substring("CERTAINTY_".length()) : wire;
+        return switch (stripped) {
+            case "POSSIBLE" -> Certainty.HYPOTHESIS;
+            case "LIKELY" -> Certainty.ASSERTED;
+            case "CERTAIN" -> Certainty.VERIFIED;
+            default -> certainty(stripped);
+        };
+    }
+
+    public static ResearchTaskStatus researchTaskStatusFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("RESEARCH_TASK_") ? wire.substring("RESEARCH_TASK_".length()) : wire;
+        return researchTaskStatus(stripped);
+    }
+
+    public static HypothesisStatus hypothesisStatusFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("HYPOTHESIS_") ? wire.substring("HYPOTHESIS_".length()) : wire;
+        return hypothesisStatus(stripped);
+    }
+
+    public static ConflictKind conflictKindFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("CONFLICT_") ? wire.substring("CONFLICT_".length()) : wire;
+        return switch (stripped) {
+            case "FACTUAL" -> ConflictKind.SOURCE_DISAGREES;
+            case "INTERPRETATION" -> ConflictKind.HYPOTHESIS_COLLIDES;
+            case "IDENTIFICATION" -> ConflictKind.OTHER;
+            case "SOURCE_CONFLICT" -> ConflictKind.CLAIM_CONTRADICTS_SOURCE;
+            default -> conflictKind(stripped);
+        };
+    }
+
+    public static Conflict.ConflictStatus conflictStatusFromProto(String wire) {
+        if (wire == null || wire.isBlank()) {
+            return null;
+        }
+        String stripped = wire.startsWith("CONFLICT_") ? wire.substring("CONFLICT_".length()) : wire;
+        return switch (stripped) {
+            case "DETECTED" -> Conflict.ConflictStatus.OPEN;
+            case "IN_REVIEW" -> Conflict.ConflictStatus.INVESTIGATING;
+            case "RESOLVED" -> Conflict.ConflictStatus.RESOLVED;
+            case "REJECTED" -> Conflict.ConflictStatus.ABANDONED;
+            default -> conflictStatus(stripped);
+        };
+    }
+
     public static CitationQuality citationQuality(String wire) {
         try {
             return wire == null ? null : CitationQuality.fromWire(wire);

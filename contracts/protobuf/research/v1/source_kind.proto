@@ -1,0 +1,36 @@
+// Contracts — research v1 — source kind enum.
+//
+// The enum was moved into its own file so the citation
+// service protobuf can reference it without dragging the
+// repository service protobuf into the same compilation
+// unit (the protobuf plugin forbids two enumerations in the
+// same Go/Java package from sharing value names, so the
+// repository service and citation service own
+// cross-references via opaque ids — see
+// `ProvenanceHop.repository_id` in citation_service.proto).
+syntax = "proto3";
+
+package com.genealogy.platform.research.v1;
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.research.v1";
+
+enum SourceKind {
+  SOURCE_KIND_UNSPECIFIED = 0;
+  SOURCE_VITAL_RECORD = 1;
+  SOURCE_CENSUS = 2;
+  SOURCE_CHURCH_RECORD = 3;
+  SOURCE_CIVIL_REGISTRY = 4;
+  SOURCE_PARISH_REGISTER = 5;
+  SOURCE_IMMIGRATION_RECORD = 6;
+  SOURCE_MILITARY_RECORD = 7;
+  SOURCE_PROBATE_RECORD = 8;
+  SOURCE_NEWSPAPER = 9;
+  SOURCE_OBITUARY = 10;
+  SOURCE_PHOTO = 11;
+  SOURCE_LETTER = 12;
+  SOURCE_DIARY = 13;
+  SOURCE_INTERVIEW = 14;
+  SOURCE_BOOK = 15;
+  SOURCE_OTHER = 16;
+}

@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "ClaimVerified",
+  "namespace": "com.genealogy.platform.events.research.v1",
+  "doc": "Emitted when a citation reaches `disposition=SUPPORTING` + `certainty=CERTAIN` (or higher) — the threshold that flips a claim from 'unverified' to 'verified'. Compatibility policy = BACKWARD per ADR-E0.5-08. Partition key = aggregateId per tenancy. NO raw DNA, PII, secrets.",
+  "fields": [
+    {"name": "claimReference", "type": "string", "doc": "Opaque claim reference."},
+    {"name": "tenantId", "type": "string", "doc": "Pseudonymous tenant id."},
+    {"name": "verifyingCitationId", "type": "string", "doc": "The citation whose disposition+certainty crossed the verification threshold."},
+    {"name": "verifiedAt", "type": "string", "logicalType": "timestamp-millis"},
+    {"name": "actorPseudoId", "type": "string", "doc": "Platform pseudonym."},
+    {"name": "correlationId", "type": "string"}
+  ]
+}

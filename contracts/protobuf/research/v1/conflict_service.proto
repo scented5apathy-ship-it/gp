@@ -1,0 +1,86 @@
+// Contracts — research v1 — conflict service.
+syntax = "proto3";
+
+package com.genealogy.platform.research.v1;
+
+import "common/v1/context.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.research.v1";
+
+service ConflictService {
+  rpc CreateConflict(CreateConflictRequest) returns (Conflict);
+  rpc GetConflict(GetConflictRequest)       returns (Conflict);
+  rpc TransitionConflict(TransitionConflictRequest) returns (Conflict);
+  rpc PartialMergeConflict(PartialMergeConflictRequest) returns (Conflict);
+}
+
+message Conflict {
+  string id = 1;
+  string tenant_id = 2;
+  string summary = 3;
+  ConflictKind kind = 4;
+  string kind_note = 5;
+  ConflictStatus status = 6;
+  string resolution = 7;
+  string resolution_proof = 8;
+  string etag = 9;
+  string created_at = 10;
+  string updated_at = 11;
+  string resolved_at = 12;
+  int64 version = 13;
+}
+
+enum ConflictKind {
+  CONFLICT_KIND_UNSPECIFIED = 0;
+  CONFLICT_FACTUAL = 1;
+  CONFLICT_INTERPRETATION = 2;
+  CONFLICT_IDENTIFICATION = 3;
+  CONFLICT_SOURCE_CONFLICT = 4;
+}
+
+enum ConflictStatus {
+  CONFLICT_STATUS_UNSPECIFIED = 0;
+  CONFLICT_DETECTED = 1;
+  CONFLICT_IN_REVIEW = 2;
+  CONFLICT_RESOLVED = 3;
+  CONFLICT_REJECTED = 4;
+}
+
+message CreateConflictRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string summary = 2;
+  ConflictKind kind = 3;
+  string kind_note = 4;
+  repeated ConflictParticipant participants = 5;
+}
+
+message ConflictParticipant {
+  string reference = 1;
+  string reference_kind = 2;
+  string interpretation = 3;
+  repeated string supporting_citation_ids = 4;
+}
+
+message GetConflictRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string conflict_id = 2;
+}
+
+message TransitionConflictRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string conflict_id = 2;
+  string etag = 3;
+  ConflictStatus to_status = 4;
+  string resolution = 5;
+  string resolution_proof = 6;
+}
+
+message PartialMergeConflictRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string conflict_id = 2;
+  string etag = 3;
+  string resolution = 4;
+  string resolution_proof = 5;
+  repeated string approving_citation_ids = 6;
+}

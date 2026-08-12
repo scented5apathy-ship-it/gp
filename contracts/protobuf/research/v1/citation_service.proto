@@ -1,0 +1,124 @@
+// Contracts — research v1 — citation service.
+syntax = "proto3";
+
+package com.genealogy.platform.research.v1;
+
+import "common/v1/context.proto";
+import "research/v1/source_kind.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.research.v1";
+
+service CitationService {
+  rpc CreateCitation(CreateCitationRequest) returns (Citation);
+  rpc GetCitation(GetCitationRequest)       returns (Citation);
+  rpc SubmitCitation(SubmitCitationRequest) returns (Citation);
+  rpc ApproveCitation(ApproveCitationRequest) returns (Citation);
+  rpc GetClaimProvenance(GetClaimProvenanceRequest) returns (ProvenanceChain);
+}
+
+message Citation {
+  string id = 1;
+  string tenant_id = 2;
+  string source_id = 3;
+  string claim_reference = 4;
+  string claim_kind = 5;
+  CitationQuality quality = 6;
+  CitationDisposition disposition = 7;
+  Certainty certainty = 8;
+  double confidence = 9;
+  string quoted_text = 10;
+  string etag = 11;
+  string created_at = 12;
+  string updated_at = 13;
+  int64 version = 14;
+}
+
+enum CitationQuality {
+  CITATION_QUALITY_UNSPECIFIED = 0;
+  CITATION_PRIMARY = 1;
+  CITATION_AUTHORITATIVE = 2;
+  CITATION_DERIVED = 3;
+  CITATION_UNOFFICIAL = 4;
+}
+
+enum CitationDisposition {
+  CITATION_DISPOSITION_UNSPECIFIED = 0;
+  CITATION_SUPPORTING = 1;
+  CITATION_CONTRADICTING = 2;
+  CITATION_MENTION = 3;
+}
+
+enum Certainty {
+  CERTAINTY_UNSPECIFIED = 0;
+  CERTAINTY_POSSIBLE = 1;
+  CERTAINTY_LIKELY = 2;
+  CERTAINTY_CERTAIN = 3;
+}
+
+message CreateCitationRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string source_id = 2;
+  string claim_reference = 3;
+  string claim_kind = 4;
+  CitationQuality quality = 5;
+  CitationDisposition disposition = 6;
+  Certainty certainty = 7;
+  double confidence = 8;
+  string quoted_text = 9;
+  string locator_raw = 10;
+  string locator_page = 11;
+  string locator_entry = 12;
+  string locator_volume = 13;
+}
+
+message GetCitationRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string citation_id = 2;
+}
+
+message SubmitCitationRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string citation_id = 2;
+  string etag = 3;
+  string actor_role = 4;
+}
+
+message ApproveCitationRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string citation_id = 2;
+  string etag = 3;
+  string reviewer_role = 4;
+  string reason_code = 5;
+}
+
+message GetClaimProvenanceRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string claim_reference = 2;
+}
+
+message ProvenanceChain {
+  string tenant_id = 1;
+  string claim_reference = 2;
+  repeated ProvenanceHop hops = 3;
+}
+
+message ProvenanceHop {
+  // Citations ↔ sources ↔ repositories are opaque-id
+  // references; the kind enum on the source side is the
+  // only one we need to ship on the wire (the source
+  // repository kind is intentionally omitted — the
+  // research UI joins the repository row by id).
+  string citation_id = 1;
+  string source_id = 2;
+  string source_title = 3;
+  SourceKind source_kind = 4;
+  string repository_id = 5;
+  string repository_name = 6;
+  CitationQuality quality = 7;
+  CitationDisposition disposition = 8;
+  Certainty certainty = 9;
+  double confidence = 10;
+  string locator_raw = 11;
+  string quoted_text = 12;
+}

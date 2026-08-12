@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "name": "ConflictDetected",
+  "namespace": "com.genealogy.platform.events.research.v1",
+  "doc": "Emitted when a Conflict aggregate is created. Compatibility policy = BACKWARD per ADR-E0.5-08. Partition key = aggregateId per tenancy. NO raw DNA, PII, secrets.",
+  "fields": [
+    {"name": "conflictId", "type": "string", "doc": "Opaque conflict id."},
+    {"name": "tenantId", "type": "string", "doc": "Pseudonymous tenant id."},
+    {"name": "kind", "type": "string", "doc": "Closed-set: FACTUAL | INTERPRETATION | IDENTIFICATION | SOURCE_CONFLICT."},
+    {"name": "participantCount", "type": "int", "doc": "Number of conflicting interpretations aggregated."},
+    {"name": "summary", "type": "string", "doc": "Human-readable summary; no PII."},
+    {"name": "actorPseudoId", "type": "string", "doc": "Platform pseudonym."},
+    {"name": "correlationId", "type": "string"},
+    {"name": "detectedAt", "type": "string", "logicalType": "timestamp-millis"}
+  ]
+}

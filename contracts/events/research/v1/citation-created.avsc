@@ -1,0 +1,20 @@
+{
+  "type": "record",
+  "name": "CitationCreated",
+  "namespace": "com.genealogy.platform.events.research.v1",
+  "doc": "Emitted when a citation is created in research-service. Backed by the transactional outbox (`research_service.outbox`). Compatibility policy = BACKWARD per ADR-E0.5-08. Partition key = aggregateId per tenancy. NO raw DNA, PII, secrets.",
+  "fields": [
+    {"name": "citationId", "type": "string", "doc": "Opaque citation id."},
+    {"name": "tenantId", "type": "string", "doc": "Pseudonymous tenant id."},
+    {"name": "sourceId", "type": "string", "doc": "Opaque source id (foreign key to genealogy tree)."},
+    {"name": "claimReference", "type": "string", "doc": "Opaque claim reference; consumers join provenance off this."},
+    {"name": "claimKind", "type": ["null", "string"], "default": null},
+    {"name": "quality", "type": "string", "doc": "Closed-set: PRIMARY | AUTHORITATIVE | DERIVED | UNOFFICIAL."},
+    {"name": "disposition", "type": "string", "doc": "Closed-set: SUPPORTING | CONTRADICTING | MENTION."},
+    {"name": "certainty", "type": "string", "doc": "Closed-set: POSSIBLE | LIKELY | CERTAIN."},
+    {"name": "confidence", "type": ["null", "double"], "default": null},
+    {"name": "actorPseudoId", "type": "string", "doc": "Platform pseudonym; never raw subject / email."},
+    {"name": "correlationId", "type": "string", "doc": "Request-scoped correlation id."},
+    {"name": "createdAt", "type": "string", "logicalType": "timestamp-millis"}
+  ]
+}

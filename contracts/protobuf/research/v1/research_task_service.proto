@@ -1,0 +1,63 @@
+// Contracts — research v1 — research task service.
+syntax = "proto3";
+
+package com.genealogy.platform.research.v1;
+
+import "common/v1/context.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.research.v1";
+
+service ResearchTaskService {
+  rpc CreateResearchTask(CreateResearchTaskRequest) returns (ResearchTask);
+  rpc GetResearchTask(GetResearchTaskRequest)       returns (ResearchTask);
+  rpc TransitionResearchTask(TransitionResearchTaskRequest) returns (ResearchTask);
+}
+
+message ResearchTask {
+  string id = 1;
+  string tenant_id = 2;
+  string title = 3;
+  string description = 4;
+  string subject_reference = 5;
+  string subject_kind = 6;
+  ResearchTaskStatus status = 7;
+  string blocked_reason = 8;
+  string resolved_proof = 9;
+  string etag = 10;
+  string created_at = 11;
+  string updated_at = 12;
+  string resolved_at = 13;
+  int64 version = 14;
+}
+
+enum ResearchTaskStatus {
+  RESEARCH_TASK_STATUS_UNSPECIFIED = 0;
+  RESEARCH_TASK_OPEN = 1;
+  RESEARCH_TASK_IN_PROGRESS = 2;
+  RESEARCH_TASK_BLOCKED = 3;
+  RESEARCH_TASK_RESOLVED = 4;
+  RESEARCH_TASK_ABANDONED = 5;
+}
+
+message CreateResearchTaskRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string title = 2;
+  string description = 3;
+  string subject_reference = 4;
+  string subject_kind = 5;
+}
+
+message GetResearchTaskRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string task_id = 2;
+}
+
+message TransitionResearchTaskRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string task_id = 2;
+  string etag = 3;
+  ResearchTaskStatus to_status = 4;
+  string blocked_reason = 5;
+  string resolved_proof = 6;
+}

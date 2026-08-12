@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "PersonRedacted",
+  "namespace": "com.genealogy.platform.events.genealogy.v1",
+  "doc": "Mirror of the genealogy `PersonRedacted` event. The research consumer applies the redaction overlay to every workspace projection that references the redacted person (R8.4 + NFR1). Compatibility policy = BACKWARD per ADR-E0.5-08. Partition key = aggregateId per tenancy.",
+  "fields": [
+    {"name": "personId", "type": "string", "doc": "Opaque person id."},
+    {"name": "tenantId", "type": "string", "doc": "Pseudonymous tenant id."},
+    {"name": "reason", "type": "string", "doc": "Closed-set: LIVING | MINOR | CONSENT_REVOKED | JURISDICTION_BLOCKED."},
+    {"name": "redactedAt", "type": "string", "logicalType": "timestamp-millis"},
+    {"name": "actorPseudoId", "type": "string"},
+    {"name": "correlationId", "type": "string"}
+  ]
+}

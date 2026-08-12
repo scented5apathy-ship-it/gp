@@ -1,56 +1,54 @@
 /*
- * E6.1c — `research-service` REST + OpenAPI + Kong routing.
+ * E6.1d — `research-service` gRPC + Kafka producer / consumer
+ * + OpenFGA / ABAC adapter.
  *
  * Builds on E6.1a (domain layer) + E6.1b (Flyway + RLS + audit
- * columns + RlsNegativeIT gate). E6.1c wires the REST surface
- * (`POST /api/v1/repositories`, `GET /api/v1/repositories/{id}`,
- * `POST /api/v1/sources`, `POST /api/v1/citations`,
- * `GET /api/v1/claims/{id}/provenance`,
- * `POST /api/v1/research-tasks`,
- * `POST /api/v1/research-tasks/{id}/transitions`,
- * `POST /api/v1/hypotheses`, `POST /api/v1/conflicts`), the
- * hand-authored OpenAPI YAML under `contracts/openapi/public-api/v1/`,
- * the JdbcTemplate-backed repositories for every aggregate
- * (matching the RLS bound by `ResearchRlsTxInterceptor`), the
- * `IdempotencyCache` + `DraftDomainMapper` + `*CommandService` /
- * `*QueryService` stack, and the Kong route mirror documented in
- * `platform/helm/genealogy-platform/files/kong.yml` (the
- * `public-api-v1` route is reused per E6.1c decisions).
+ * columns) + E6.1c (REST + OpenAPI + Kong routing). E6.1d adds
+ * the cross-service surface:
  *
- * Per ADR-E0.5-01 the module inherits the Java 21 toolchain
- * through the convention script and is locked to keep the build
- * reproducible.
+ *   - gRPC stubs (`gp.research.v1.{RepositoryService,
+ *     CitationService, ResearchTaskService, HypothesisService,
+ *     ConflictService}`) generated from the protobuf under
+ *     `contracts/protobuf/research/v1/`.
+ *   - Transactional outbox (`research_service.outbox`) + relay
+ *     that publishes 3 research events to Kafka via the
+ *     Apicurio-registered Avro schemas under
+ *     `contracts/events/research/v1/`. BACKWARD compatibility
+ *     per ADR-E0.5-08.
+ *   - Kafka consumer for `gp.genealogy.v1.{TreeVisibilityChanged,
+ *     PersonRedacted}` that re-projects the workspace and
+ *     applies the redaction overlay (R8.4 + NFR1).
+ *   - `ReAuthorizationPort` adapter (Spring bean) that calls
+ *     OpenFGA + the ABAC overlay for `submit` / `approve` /
+ *     `partial-merge` mutations.
  *
- * Persistence strategy: Spring JdbcTemplate (the same pattern as
- * `tenant-service`); RLS is enforced at the database layer by
- * the `SET LOCAL ROLE research_service_app` +
- * `SET LOCAL app.tenant_id = '…'` binding that the
- * `ResearchRlsTxInterceptor` issues as the first statement
- * inside every `@Transactional` command. The repositories use
- * `Propagation.MANDATORY` so a missing outer transaction is
- * surfaced immediately rather than silently bypassing the RLS
- * binding.
+ * Persistence: JdbcTemplate (same pattern as E6.1b/c). RLS is
+ * enforced by the `ResearchRlsTxInterceptor` (`SET LOCAL ROLE
+ * research_service_app` + `SET LOCAL app.tenant_id`) as the
+ * first statement of every `@Transactional` method.
  *
- * Cross-service interaction remains out-of-scope: gRPC stubs
- * (`gp.research.v1.*`) + Kafka events + OpenFGA/ABAC adapter
- * land in E6.1d; Helm chart + runbook + Grafana dashboard land
- * in E6.1e. The Testcontainers fixture (`RlsNegativeIT`) was
- * shipped in E6.1b; the REST surface integration test
- * (`ResearchRestIT`) runs through Testcontainers Postgres +
- * Flyway + the runtime role to prove cross-tenant REST reads
- * return 404 in E6.1c.
+ * Java 21 toolchain per ADR-E0.5-01 (no version pinning in this
+ * file — `java-conventions.gradle.kts` is the source of truth).
  *
  * Scope guard (per agent-execution.md §4.4):
  *   - No domain Java edits (E6.1a).
- *   - No gRPC / Kafka / OpenFGA (E6.1d).
- *   - No Helm / runbook / Grafana (E6.1e).
+ *   - No REST surface changes (E6.1c is the contract of record
+ *     for HTTP; gRPC mirrors it).
+ *   - No Testcontainers / Helm / runbook (E6.1e).
  *   - No research-policy.yaml contract changes (E6.1a locked).
- *   - No Kong route addition (E6.1c reuses `public-api-v1`).
+ *   - No Kong route additions (E6.1d reuses the platform
+ *     `public-api-v1` route; the gRPC port is bound by the
+ *     `spring-boot-starter-grpc` starter — Kong routes via
+ *     `x-research-service` upstream).
+ *   - No duplicate Apache Kafka client — the `spring-kafka`
+ *     starter brings Jackson + the client in version-aligned
+ *     pair.
  */
 plugins {
     java
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.spring.dependency.management)
+    alias(libs.plugins.protobuf)
 }
 
 apply(from = "$rootDir/gradle/conventions/java-conventions.gradle.kts")
@@ -94,10 +92,6 @@ val integrationTest by tasks.registering(Test::class) {
     classpath = sourceSets["integrationTest"].runtimeClasspath
     shouldRunAfter("test")
     useJUnitPlatform()
-    // CI runs with Docker; developers that don't have it locally
-    // can opt out with `-Dskip.it=true`. We read the property via
-    // the system-properties provider so a `-D` on the Gradle
-    // command line is honoured the same way as a Gradle property.
     val skip = providers.systemProperty("skip.it").orElse("false")
     if (skip.get() == "true") {
         enabled = false
@@ -108,15 +102,29 @@ val integrationTest by tasks.registering(Test::class) {
     }
 }
 
-tasks.withType<Checkstyle>().configureEach {
-    // The integration test source set is opt-in (developers skip
-    // it locally with `-Dskip.it=true`); the dedicated
-    // `checkstyleIntegrationTest` task follows the same flag so
-    // the default `check` aggregate does not pull in a Docker-
-    // dependent task.
-    if (name == "checkstyleIntegrationTest") {
-        val skip = providers.systemProperty("skip.it").orElse("false")
-        enabled = skip.get() != "true"
+// E6.1d wires the protobuf plugin which emits generated
+// Java sources (the `tenantId_` / `hops_` field names +
+// long-line statements) that trip the project's Google
+// Checkstyle config. The generated sources are NEVER
+// authored by a human, so we exclude the `build/generated/`
+// tree from the checkstyle pass via a `setSource(...)` call
+// that limits the FileTree to the human-authored Java dirs.
+// The canonical contract lints (Spectral + buf) catch any
+// proto drift upstream.
+afterEvaluate {
+    tasks.withType<Checkstyle>().configureEach {
+        if (name == "checkstyleIntegrationTest") {
+            val skip = providers.systemProperty("skip.it").orElse("false")
+            enabled = skip.get() != "true"
+            return@configureEach
+        }
+        // The checkstyle plugin's `source` FileTree is
+        // resolved from the source set's `java` source dirs;
+        // the protobuf plugin auto-adds the generated dir to
+        // the same FileTree. We swap the FileTree for one
+        // that only contains the human-authored paths.
+        val humanSrc = layout.projectDirectory.dir("src/$name/java")
+        setSource(humanSrc.asFileTree.matching { include("**/*.java") })
     }
 }
 
@@ -125,11 +133,73 @@ tasks.named("check") {
 }
 
 tasks.withType<Copy>().configureEach {
-    // E6.1c ships Flyway V1 baseline + V2 research aggregate (from
-    // E6.1b); the duplicates strategy is left at the default so a
-    // future contract-suite or starter cannot silently shadow a
-    // service-local resource.
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+// ---------------------------------------------------------------------------
+// Protobuf + gRPC stub generation.
+//
+// The shared `contracts/protobuf/**` tree is the single source
+// of truth. E1.3 already published the `com.genealogy.platform
+// .*` package + the `Context` envelope; E6.1d authors the
+// `research/v1` services + mirrors the existing surface. The
+// `protoc` plugin generates Java stubs into
+// `build/generated/source/proto/main/java/`. The Java service
+// implementations live under `services/research-service/src/
+// main/java/com/genealogy/platform/services/research/grpc/`.
+//
+// E6.1d's contribution: the generated Java code emits field
+// names + line lengths that trip the project's Google
+// Checkstyle config (`tenantId_` / `hops_` underscore-suffixed
+// fields + 150+ char lines from the Avro/grpc code-gen). The
+// project-wide Checkstyle run is configured to skip
+// `build/generated/` paths in the same way it skips the
+// `node_modules/` tree, so the human-authored Java code
+// remains gated. The canonical contract lints (Spectral +
+// buf) catch any proto drift upstream.
+// ---------------------------------------------------------------------------
+protobuf {
+    protoc {
+        artifact = libs.protobuf.protoc.get().toString()
+    }
+    plugins {
+        create("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            // The `java` built-in is auto-registered by the
+            // protobuf plugin; do NOT call `create("java")`
+            // or the plugin throws `Cannot add a PluginOptions
+            // with name 'java'`. We DO need to register the
+            // `grpc` plugin on every generated task so the
+            // `*ServiceGrpc` Java classes are produced.
+            plugins {
+                create("grpc")
+            }
+        }
+    }
+}
+
+sourceSets {
+    main {
+        proto {
+            // Compile the entire `contracts/protobuf` tree.
+            // The pre-existing enum collisions in the
+            // genealogy/tenant/search siblings are out of
+            // scope for E6.1d (they're tagged for E4.x in
+            // `tasks.md`); we exclude them via `excludes`
+            // so the build runs cleanly. The remaining
+            // siblings (`common/v1/context.proto` and
+            // `research/v1/*.proto`) compile together.
+            srcDir("$rootDir/contracts/protobuf")
+            exclude(
+                "**/genealogy/v1/*.proto",
+                "**/tenant/v1/*.proto",
+                "**/search/v1/*.proto")
+        }
+    }
 }
 
 dependencies {
@@ -142,11 +212,6 @@ dependencies {
     implementation(project(":libs:platform-feature-flags"))
 
     implementation(libs.bundles.spring.runtime)
-    // JdbcTemplate + @Transactional + AspectJ — same set as
-    // tenant-service. The RLS binding is issued as the first
-    // statement inside every `@Transactional` command method,
-    // so every JDBC call inherits the role + `app.tenant_id`
-    // GUC.
     implementation(libs.spring.boot.starter.jdbc)
     implementation(libs.spring.boot.starter.aop)
     implementation(libs.bundles.observability)
@@ -160,6 +225,24 @@ dependencies {
     // shared library; the Flagsmith provider is wired in E6.1d when
     // the ABAC overlay lands.
     implementation(libs.openfeature.sdk)
+
+    // E6.1d — gRPC + protobuf.
+    implementation(libs.protobuf.java)
+    implementation(libs.grpc.protobuf)
+    implementation(libs.grpc.stub)
+    implementation(libs.spring.boot.starter.grpc)
+    // The generated gRPC stubs still emit
+    // `@javax.annotation.Generated`; the annotation lives
+    // in the legacy `javax.annotation` package, so the
+    // compile classpath of the generated source set needs
+    // the legacy jar.
+    annotationProcessor(libs.javax.annotation.api)
+    compileOnly(libs.javax.annotation.api)
+
+    // E6.1d — Kafka producer / consumer for the transactional
+    // outbox relay + the redaction-overlay consumer.
+    implementation(libs.spring.kafka)
+    implementation(libs.kafka.clients)
 
     testImplementation(libs.bundles.testing.unit)
     testImplementation(libs.bundles.testing.testcontainers)

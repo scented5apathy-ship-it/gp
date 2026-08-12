@@ -1,0 +1,65 @@
+// Contracts — research v1 — hypothesis service.
+syntax = "proto3";
+
+package com.genealogy.platform.research.v1;
+
+import "common/v1/context.proto";
+import "research/v1/citation_service.proto";
+
+option java_multiple_files = true;
+option java_package = "com.genealogy.platform.research.v1";
+
+service HypothesisService {
+  rpc CreateHypothesis(CreateHypothesisRequest) returns (Hypothesis);
+  rpc GetHypothesis(GetHypothesisRequest)       returns (Hypothesis);
+  rpc TransitionHypothesis(TransitionHypothesisRequest) returns (Hypothesis);
+}
+
+message Hypothesis {
+  string id = 1;
+  string tenant_id = 2;
+  string statement = 3;
+  string subject_reference = 4;
+  string subject_kind = 5;
+  Certainty certainty = 6;
+  double confidence = 7;
+  HypothesisStatus status = 8;
+  string superseded_by_hypothesis_id = 9;
+  string assigned_to = 10;
+  string etag = 11;
+  string created_at = 12;
+  string updated_at = 13;
+  string resolved_at = 14;
+  int64 version = 15;
+}
+
+enum HypothesisStatus {
+  HYPOTHESIS_STATUS_UNSPECIFIED = 0;
+  HYPOTHESIS_PROPOSED = 1;
+  HYPOTHESIS_INVESTIGATING = 2;
+  HYPOTHESIS_CORROBORATED = 3;
+  HYPOTHESIS_REFUTED = 4;
+  HYPOTHESIS_SUPERSEDED = 5;
+  HYPOTHESIS_WITHDRAWN = 6;
+}
+
+message CreateHypothesisRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string statement = 2;
+  string subject_reference = 3;
+  string subject_kind = 4;
+  Certainty certainty = 5;
+  double confidence = 6;
+}
+
+message GetHypothesisRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string hypothesis_id = 2;
+}
+
+message TransitionHypothesisRequest {
+  com.genealogy.platform.common.v1.Context context = 1;
+  string hypothesis_id = 2;
+  string etag = 3;
+  HypothesisStatus to_status = 4;
+}

@@ -61,6 +61,7 @@ public class ResearchCommandService {
     private final ResearchRlsTxInterceptor rls;
     private final IdGenerator idGenerator;
     private final java.time.Clock clock;
+    private final com.genealogy.platform.services.research.outbox.ResearchJdbcOutboxWriter outbox;
 
     public ResearchCommandService(
             RepositoryRepository repositoryRepository,
@@ -72,7 +73,8 @@ public class ResearchCommandService {
             ResearchAuditPublisher audit,
             ResearchRlsTxInterceptor rls,
             IdGenerator idGenerator,
-            java.time.Clock clock) {
+            java.time.Clock clock,
+            com.genealogy.platform.services.research.outbox.ResearchJdbcOutboxWriter outbox) {
         this.repositoryRepository =
                 Objects.requireNonNull(repositoryRepository, "repositoryRepository");
         this.sourceRepository =
@@ -89,6 +91,7 @@ public class ResearchCommandService {
         this.rls = Objects.requireNonNull(rls, "rls");
         this.idGenerator = Objects.requireNonNull(idGenerator, "idGenerator");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.outbox = Objects.requireNonNull(outbox, "outbox");
     }
 
     /* ---------------- Repository aggregate ---------------- */
@@ -181,6 +184,11 @@ public class ResearchCommandService {
         audit.publish("citation.create", tenantId, "citation",
                 citation.id().resourceId(), citation.version(),
                 metadataFor(citation.claimReference()));
+        enqueueCitationCreated(citation, tenantId, attrs);
+        if (citation.disposition() == com.genealogy.platform.services.research.domain.Citation.Disposition.SUPPORTS
+                && citation.certainty() == com.genealogy.platform.services.research.domain.Certainty.VERIFIED) {
+            enqueueClaimVerified(citation, tenantId, attrs);
+        }
         return toView(citation);
     }
 
@@ -233,6 +241,16 @@ public class ResearchCommandService {
         return toView(next);
     }
 
+    @Transactional
+    public Results.ResearchTaskView findResearchTask(String id) {
+        rls.bind();
+        TenantId tenantId = currentTenantId();
+        ResearchTask task = researchTaskRepository.findById(tenantId.getValue(), id)
+                .orElseThrow(() -> new ResearchTaskNotFoundException(
+                        "researchTask " + id + " not found"));
+        return toView(task);
+    }
+
     /* ---------------- Hypothesis aggregate ---------------- */
 
     @Transactional
@@ -272,6 +290,16 @@ public class ResearchCommandService {
         return toView(updated);
     }
 
+    @Transactional
+    public Results.HypothesisView findHypothesis(String id) {
+        rls.bind();
+        TenantId tenantId = currentTenantId();
+        Hypothesis hypothesis = hypothesisRepository.findById(tenantId.getValue(), id)
+                .orElseThrow(() -> new HypothesisNotFoundException(
+                        "hypothesis " + id + " not found"));
+        return toView(hypothesis);
+    }
+
     /* ---------------- Conflict aggregate ---------------- */
 
     @Transactional
@@ -286,6 +314,7 @@ public class ResearchCommandService {
         audit.publish("conflict.create", tenantId, "conflict",
                 conflict.id().resourceId(), conflict.version(),
                 metadataFor(conflict.summary()));
+        enqueueConflictDetected(conflict, tenantId, attrs);
         return toView(conflict);
     }
 
@@ -326,6 +355,16 @@ public class ResearchCommandService {
         return toView(updated);
     }
 
+    @Transactional
+    public Results.ConflictView findConflict(String id) {
+        rls.bind();
+        TenantId tenantId = currentTenantId();
+        Conflict conflict = conflictRepository.findById(tenantId.getValue(), id)
+                .orElseThrow(() -> new ConflictNotFoundException(
+                        "conflict " + id + " not found"));
+        return toView(conflict);
+    }
+
     /* ---------------- Helpers ---------------- */
 
     private TenantId currentTenantId() {
@@ -352,6 +391,86 @@ public class ResearchCommandService {
             meta.put(values[i], values[i + 1]);
         }
         return meta;
+    }
+
+    /* ---------------- Outbox enqueue helpers (E6.1d) ---------------- */
+
+    private void enqueueCitationCreated(Citation citation, TenantId tenantId,
+            ResearchAuditAttributes attrs) {
+        TrustedTenantContext ctx = TrustedTenantContext.current();
+        com.genealogy.platform.services.research.events.ResearchEventPayloads.CitationCreatedEvent payload =
+                new com.genealogy.platform.services.research.events.ResearchEventPayloads.CitationCreatedEvent(
+                        citation.id().resourceId(),
+                        tenantId.getValue(),
+                        citation.sourceId().resourceId(),
+                        citation.claimReference(),
+                        citation.claimKind(),
+                        com.genealogy.platform.services.research.events.ResearchEventPayloads
+                                .wireQuality(citation.quality()),
+                        com.genealogy.platform.services.research.events.ResearchEventPayloads
+                                .wireDisposition(citation.disposition()),
+                        com.genealogy.platform.services.research.events.ResearchEventPayloads
+                                .wireCertainty(citation.certainty()),
+                        citation.confidence(),
+                        attrs.actorPseudoId(),
+                        attrs.correlationId(),
+                        citation.createdAt());
+        outbox.enqueue(
+                citation.id().resourceId(),
+                tenantId.getValue(),
+                com.genealogy.platform.services.research.events.ResearchEventPayloads.EVENT_CITATION_CREATED,
+                payload,
+                attrs.actorPseudoId(),
+                attrs.correlationId(),
+                ctx.getCorrelationId(),
+                citation.createdAt());
+    }
+
+    private void enqueueClaimVerified(Citation citation, TenantId tenantId,
+            ResearchAuditAttributes attrs) {
+        TrustedTenantContext ctx = TrustedTenantContext.current();
+        com.genealogy.platform.services.research.events.ResearchEventPayloads.ClaimVerifiedEvent payload =
+                new com.genealogy.platform.services.research.events.ResearchEventPayloads.ClaimVerifiedEvent(
+                        citation.claimReference(),
+                        tenantId.getValue(),
+                        citation.id().resourceId(),
+                        citation.createdAt(),
+                        attrs.actorPseudoId(),
+                        attrs.correlationId());
+        outbox.enqueue(
+                citation.claimReference(),
+                tenantId.getValue(),
+                com.genealogy.platform.services.research.events.ResearchEventPayloads.EVENT_CLAIM_VERIFIED,
+                payload,
+                attrs.actorPseudoId(),
+                attrs.correlationId(),
+                ctx.getCorrelationId(),
+                citation.createdAt());
+    }
+
+    private void enqueueConflictDetected(Conflict conflict, TenantId tenantId,
+            ResearchAuditAttributes attrs) {
+        TrustedTenantContext ctx = TrustedTenantContext.current();
+        com.genealogy.platform.services.research.events.ResearchEventPayloads.ConflictDetectedEvent payload =
+                new com.genealogy.platform.services.research.events.ResearchEventPayloads.ConflictDetectedEvent(
+                        conflict.id().resourceId(),
+                        tenantId.getValue(),
+                        com.genealogy.platform.services.research.events.ResearchEventPayloads
+                                .wireConflictKind(conflict.kind()),
+                        conflict.participants() == null ? 0 : conflict.participants().size(),
+                        conflict.summary(),
+                        attrs.actorPseudoId(),
+                        attrs.correlationId(),
+                        conflict.createdAt());
+        outbox.enqueue(
+                conflict.id().resourceId(),
+                tenantId.getValue(),
+                com.genealogy.platform.services.research.events.ResearchEventPayloads.EVENT_CONFLICT_DETECTED,
+                payload,
+                attrs.actorPseudoId(),
+                attrs.correlationId(),
+                ctx.getCorrelationId(),
+                conflict.createdAt());
     }
 
     private static void ensureVersion(long current, long expected) {
