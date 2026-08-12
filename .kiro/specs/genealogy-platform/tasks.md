@@ -541,7 +541,7 @@ _Requirements: R8, R10, R14, NFR1, NFR4_
 
 ### Subtasks
 
-- [ ] E7.1 Upload lifecycle
+- [x] E7.1 Upload lifecycle
 
   - Tạo upload session, multipart signed URL, checksum, quota và MIME policy.
   - Object mới ở quarantine; metadata state machine là source of truth.

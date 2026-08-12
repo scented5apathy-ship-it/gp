@@ -1,0 +1,262 @@
+# contracts/media — Upload lifecycle policy (E7.1).
+#
+# Source of truth for the media-service upload lifecycle
+# model. Mirrors `requirements.md` R9.1 (Hệ thống SHALL hỗ
+# trợ ảnh, audio, video, PDF và tài liệu / metadata, album,
+# tag, caption, ngày, địa điểm và người liên quan), R9.2
+# (Upload SHALL dùng URL ký tạm thời; file SHALL được kiểm
+# loại/MIME, checksum, quota và quét malware trước khi phát
+# hành), `design.md` §8.2 (BFF yêu cầu media service tạo
+# upload session sau quota/permission check; client upload
+# multipart trực tiếp S3 bằng signed URL; client finalize
+# bằng checksum; media ở trạng thái QUARANTINED; worker kiểm
+# MIME, malware, metadata; tạo variant/OCR/transcode), §11
+# (ClamAV + libvips + Tika + Tesseract + FFmpeg + Gotenberg
+# trong worker Temporal deterministic), `ownership-catalog.md`
+# §2.5 (media-service owns `MediaAsset`, `MediaVariant`,
+# `Album`), and ADR-E0.5-08 (Avro + Apicurio + BACKWARD
+# evolution of closed-set vocabularies).
+#
+# The Java executor lives under
+# `services/media-service/src/main/java/com/genealogy/platform/services/media/domain/`
+# (UploadSession + MultipartPart + QuotaLedger + MimePolicy +
+# ChecksumVerifier + QuarantineGate + FinalizeOutcome +
+# AbandonedMultipartSweeper + UploadAuthorizationPort +
+# UploadAuditAttributes + MediaInvariants). The Flyway
+# migration + S3 / MinIO signed-URL adapter + jOOQ repository
+# + Kafka producer / consumer + OpenFeature wiring land in
+# the later E7.x / E11.x sub-epics.
+#
+# The chart mirror (byte-identical) lives at
+# `platform/helm/genealogy-platform/files/media-upload-lifecycle-policy.yaml`
+# and is enforced by
+# `scripts/lint-media-upload-lifecycle.mjs`.
+#
+# Closed-set vocabulary:
+#   - uploadSessionStatus: REQUESTED / SIGNED / UPLOADING /
+#                          FINALIZING / QUARANTINED / READY /
+#                          REJECTED / ABANDONED / FAILED
+#   - uploadSessionIntent: ATTACHMENT / ALBUM / PROFILE /
+#                          TREE_MEDIA / DOCUMENT_THUMBNAIL /
+#                          OCR_INPUT / DELIVERY_THUMBNAIL
+#   - mediaCategory: IMAGE / AUDIO / VIDEO / DOCUMENT / PDF /
+#                    SVG / ARCHIVE / DNA_FASTQ
+#   - mimeVerdict: ALLOW / DENY / SANDBOX_REQUIRED /
+#                  DEEP_SCAN_REQUIRED
+#   - checksumAlgorithm: SHA256 / SHA512 / BLAKE3
+#   - finalizeOutcome: READY / REJECTED / QUARANTINED / FAILED
+#   - quotaDenialReason: QUOTA_EXCEEDED_BYTES /
+#                        QUOTA_EXCEEDED_COUNT /
+#                        QUOTA_EXCEEDED_SESSION_TTL /
+#                        QUOTA_SCOPE_NOT_PERMITTED /
+#                        QUOTA_TENANT_HEADROOM_INSUFFICIENT
+#   - uploadGuardDenyReason: MIME_NOT_PERMITTED /
+#                            CHECKSUM_MISMATCH /
+#                            DECLARED_SIZE_MISMATCH /
+#                            MULTIPART_PART_NUMBER_INVALID /
+#                            MULTIPART_PART_COUNT_OVERFLOW /
+#                            MULTIPART_PART_SEQUENCE_GAP /
+#                            SESSION_NOT_OWNED_BY_CALLER /
+#                            SESSION_ABANDONED /
+#                            SESSION_ALREADY_FINALIZED /
+#                            RATE_LIMITED /
+#                            PAYLOAD_DNA_BUCKET_FORBIDDEN
+#   - abandonedMultipartReason: SESSION_TTL_EXPIRED /
+#                               CALLER_ABORTED_FINALIZE /
+#                               NO_PART_RECEIVED_IN_TTL /
+#                               CHECKSUM_FINALIZE_TIMEOUT /
+#                               QUOTA_REVOKED_MID_FLIGHT
+#   - quotaUnit: BYTES / ITEMS / SECONDS
+#   - dnaBucketAccess: FORBIDDEN
+#
+# Numeric thresholds are pinned per
+# `architecture-decisions.md` §A and
+# `glossary-and-policy-matrix.md` §2.4.
+apiVersion: v1
+kind: MediaUploadLifecyclePolicy
+metadata:
+  name: default-media-upload-lifecycle/v1
+  namespace: gp-platform
+spec:
+  policyId: default-media-upload-lifecycle/v1
+  description: >-
+    Upload lifecycle policy — every upload session is a
+    `REQUESTED -> SIGNED -> UPLOADING -> FINALIZING ->
+    QUARANTINED -> READY` state machine with explicit scope
+    (attach / album / delivery / OCR / DNA-forbidden) and
+    an authorization decision taken at construction. The
+    object is uploaded directly to S3 / MinIO via a signed
+    URL; finalize is idempotent on the same checksum;
+    abandoned multipart sessions are reaped by a Temporal
+    workflow. Mirrors `requirements.md` R9.1 + R9.2 +
+    `design.md` §8.2 + §11 + `ownership-catalog.md` §2.5 +
+    ADR-E0.5-08.
+
+  # ---------------------------------------------------------------------------
+  # Closed-set vocabulary (R9.1 + R9.2 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  uploadSessionStatuses: [REQUESTED, SIGNED, UPLOADING, FINALIZING, QUARANTINED, READY, REJECTED, ABANDONED, FAILED]
+  uploadSessionIntents: [ATTACHMENT, ALBUM, PROFILE, TREE_MEDIA, DOCUMENT_THUMBNAIL, OCR_INPUT, DELIVERY_THUMBNAIL]
+  mediaCategories: [IMAGE, AUDIO, VIDEO, DOCUMENT, PDF, SVG, ARCHIVE, DNA_FASTQ]
+  mimeVerdicts: [ALLOW, DENY, SANDBOX_REQUIRED, DEEP_SCAN_REQUIRED]
+  checksumAlgorithms: [SHA256, SHA512, BLAKE3]
+  finalizeOutcomes: [READY, REJECTED, QUARANTINED, FAILED]
+  quotaDenialReasons: [QUOTA_EXCEEDED_BYTES, QUOTA_EXCEEDED_COUNT, QUOTA_EXCEEDED_SESSION_TTL, QUOTA_SCOPE_NOT_PERMITTED, QUOTA_TENANT_HEADROOM_INSUFFICIENT]
+  uploadGuardDenyReasons: [MIME_NOT_PERMITTED, CHECKSUM_MISMATCH, DECLARED_SIZE_MISMATCH, MULTIPART_PART_NUMBER_INVALID, MULTIPART_PART_COUNT_OVERFLOW, MULTIPART_PART_SEQUENCE_GAP, SESSION_NOT_OWNED_BY_CALLER, SESSION_ABANDONED, SESSION_ALREADY_FINALIZED, RATE_LIMITED, PAYLOAD_DNA_BUCKET_FORBIDDEN]
+  abandonedMultipartReasons: [SESSION_TTL_EXPIRED, CALLER_ABORTED_FINALIZE, NO_PART_RECEIVED_IN_TTL, CHECKSUM_FINALIZE_TIMEOUT, QUOTA_REVOKED_MID_FLIGHT]
+  quotaUnits: [BYTES, ITEMS, SECONDS]
+
+  # ---------------------------------------------------------------------------
+  # MIME policy (R9.2 + design.md §8.2 + §11)
+  # ---------------------------------------------------------------------------
+
+  # Per-category MIME allow-list. Wildcards are NOT allowed; the
+  # executor must enumerate every MIME type. Adding a new MIME
+  # type requires an ADR supersession.
+  mimeAllowList:
+    IMAGE:      [image/jpeg, image/png, image/webp, image/avif, image/heic, image/tiff]
+    AUDIO:      [audio/mpeg, audio/mp4, audio/ogg, audio/wav, audio/flac, audio/aac]
+    VIDEO:      [video/mp4, video/quicktime, video/webm, video/x-matroska]
+    DOCUMENT:   [application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/plain, text/markdown]
+    PDF:        [application/pdf]
+    SVG:        [image/svg+xml]
+    ARCHIVE:    [application/zip, application/x-tar, application/gzip]
+    DNA_FASTQ:  []
+  mimeDenyList: [application/x-msdownload, application/x-msdos-program, application/x-executable, application/x-sharedlib, application/x-sh, application/x-bat, application/x-msi, application/x-apple-diskimage, application/x-dosexec]
+  mimeSandboxRequired: [image/svg+xml, application/zip, application/x-tar, application/gzip, application/pdf]
+  mimeDeepScanRequired: [application/pdf, application/zip, application/x-tar, application/gzip, image/svg+xml]
+  maxSniffBytes: 26214432
+
+  # Forbidden groupings — the executor must NEVER route an
+  # upload session directly to the DNA bucket/prefix. DNA
+  # uploads are sequenced for E7.4 (protected delivery).
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes: [dna/raw, dna/match, dna/consent]
+  dnaSensitiveMimeHints: [application/x-fasta, application/x-fastq, application/octet-stream+dna]
+
+  # ---------------------------------------------------------------------------
+  # Quota policy (R9.2 + design.md §8.2 + ownership-catalog §2.5)
+  # ---------------------------------------------------------------------------
+
+  quotaScopes: [TENANT, USER, TREE, ALBUM]
+  quotaUnits: [BYTES, ITEMS, SECONDS]
+  quotaHeadroomInBytes: 1073741824
+
+  # ---------------------------------------------------------------------------
+  # Guard rails (R9.2 + design.md §8.2 + §11 + §6.2)
+  # ---------------------------------------------------------------------------
+
+  # Finalize MUST be idempotent on the same checksum.
+  finalizeIdempotentOnChecksum: true
+
+  # The signed URL MUST be a per-part scoped URL. The same
+  # session-id MUST NOT be issued twice without an explicit
+  # re-authorization.
+  signedUrlPerPart: true
+  signedUrlReAuthorizationOnReIssue: true
+
+  # The session MUST be re-authorized at every finalize.
+  # ABAC denial closes the session as REJECTED.
+  finalizeReAuthorizationRequired: true
+  abacDenyClosesSession: true
+
+  # The session MUST be re-authorized at every multipart-part
+  # receipt so a leaked signed URL cannot be reused.
+  multipartPartReAuthorizationRequired: true
+
+  # A session created for a non-DNA intent MUST NEVER route
+  # to the DNA bucket.
+  uploadSessionIntentNeverRoutesToDnaBucket: true
+
+  # The signed URL MUST be scoped to a single HTTP method
+  # (PUT) + a single Content-Type + a single byte range.
+  signedUrlMethod: PUT
+  signedUrlMaxTtlSeconds: 3600
+  signedUrlRequiresContentType: true
+  signedUrlRequiresMaxSize: true
+
+  # ---------------------------------------------------------------------------
+  # Wire-level scopes (R9.1 + design.md §8.2)
+  # ---------------------------------------------------------------------------
+
+  uploadSessionScopes: [ATTACHMENT, ALBUM, PROFILE, TREE_MEDIA, DOCUMENT_THUMBNAIL, OCR_INPUT, DELIVERY_THUMBNAIL]
+
+  # ---------------------------------------------------------------------------
+  # Numeric bounds (architecture-decisions.md §A + glossary §2.4)
+  # ---------------------------------------------------------------------------
+
+  maxUploadSessionBytes: 1073741824
+  maxUploadSessionTtlSeconds: 86400
+  minUploadSessionTtlSeconds: 60
+  maxMultipartPartCount: 10000
+  maxMultipartPartSizeBytes: 1073741824
+  minMultipartPartSizeBytes: 5242880
+  maxUploadSessionPerUser: 64
+  maxUploadSessionPerTenant: 4096
+  maxUploadSessionMetadataKeys: 16
+  maxUploadSessionMetadataValueLength: 256
+  maxUploadSessionMetadataKeyLength: 64
+  maxUploadSessionIdLength: 128
+  maxChecksumDigestLength: 256
+  maxSignedUrlHeaders: 32
+  maxAbandonedMultipartBatchSize: 1024
+  maxAbandonedMultipartSweepConcurrency: 16
+  maxSniffBytes: 26214432
+  maxFinalizeReasonLength: 256
+  maxMimeVerdictReasonLength: 256
+
+  # ---------------------------------------------------------------------------
+  # Required audit hooks (R16.2 + NFR5 + R9.2 traceability)
+  # ---------------------------------------------------------------------------
+
+  auditActorKey: actorPseudoId
+  auditCorrelationKey: correlationId
+  auditTargetKey: targetPseudoId
+  auditRequiredKeys: [actorPseudoId, correlationId, targetPseudoId]
+  auditRequiredOnUploadSessionCreated: true
+  auditRequiredOnSignedUrlIssued: true
+  auditRequiredOnMultipartPartReceived: true
+  auditRequiredOnFinalizeAttempted: true
+  auditRequiredOnFinalizeCompleted: true
+  auditRequiredOnQuarantineGateEvaluated: true
+  auditRequiredOnQuotaDeny: true
+  auditRequiredOnAbandonedMultipartReaped: true
+  auditRequiredOnMimePolicyViolation: true
+
+  auditClassOnUploadSession: media
+  auditActionOnUploadSessionCreated: media.upload.created
+  auditActionOnSignedUrlIssued: media.upload.signed
+  auditActionOnMultipartPartReceived: media.upload.part.received
+  auditActionOnFinalizeCompleted: media.upload.finalized
+  auditActionOnFinalizeRejected: media.upload.rejected
+  auditActionOnQuarantineGateEvaluated: media.upload.quarantine
+  auditActionOnQuotaDeny: media.upload.quota.deny
+  auditActionOnAbandonedMultipartReaped: media.upload.abandoned.reaped
+  auditActionOnMimePolicyViolation: media.upload.mime.violation
+
+  # ---------------------------------------------------------------------------
+  # Invariant reason codes (R9.1 + R9.2 + NFR1 + ADR-E0.5-08)
+  # ---------------------------------------------------------------------------
+
+  invariants: [UPLOAD_SESSION_BLANK_REQUESTER, UPLOAD_SESSION_BLANK_TENANT, UPLOAD_SESSION_BLANK_INTENT, UPLOAD_SESSION_INTENT_NOT_PERMITTED, UPLOAD_SESSION_BLANK_MEDIA_CATEGORY, UPLOAD_SESSION_BLANK_CHECKSUM, UPLOAD_SESSION_CHECKSUM_ALGORITHM_NOT_PERMITTED, UPLOAD_SESSION_BODY_BYTES_OUT_OF_RANGE, UPLOAD_SESSION_TTL_OUT_OF_RANGE, UPLOAD_SESSION_TOO_MANY_PER_USER, UPLOAD_SESSION_TOO_MANY_PER_TENANT, UPLOAD_SESSION_METADATA_KEY_FORBIDDEN, UPLOAD_SESSION_METADATA_VALUE_FORBIDDEN, UPLOAD_SESSION_MULTIPART_PART_COUNT_OVERFLOW, UPLOAD_SESSION_MULTIPART_PART_SIZE_OUT_OF_RANGE, UPLOAD_SESSION_NOT_OWNED_BY_CALLER, UPLOAD_SESSION_ALREADY_FINALIZED, UPLOAD_SESSION_FORBIDDEN_TRANSITION, UPLOAD_SESSION_BLANK_SCOPE_ID, QUOTA_EXCEEDED_BYTES, QUOTA_EXCEEDED_COUNT, QUOTA_EXCEEDED_SESSION_TTL, QUOTA_SCOPE_NOT_PERMITTED, QUOTA_TENANT_HEADROOM_INSUFFICIENT, MIME_NOT_PERMITTED, MIME_DENY_LISTED, MIME_SNIFF_MISMATCH, MIME_SANDBOX_REQUIRED, MIME_DEEP_SCAN_REQUIRED, MIME_SNIFF_BYTES_OVERFLOW, CHECKSUM_MISMATCH, CHECKSUM_ALGORITHM_NOT_PERMITTED, CHECKSUM_DIGEST_LENGTH_OUT_OF_RANGE, DECLARED_SIZE_MISMATCH, MULTIPART_PART_NUMBER_INVALID, MULTIPART_PART_NUMBER_DUPLICATE, MULTIPART_PART_SEQUENCE_GAP, MULTIPART_PART_SIZE_OUT_OF_RANGE, MULTIPART_PART_NOT_AUTHORIZED, SIGNED_URL_METHOD_FORBIDDEN, SIGNED_URL_CONTENT_TYPE_FORBIDDEN, SIGNED_URL_TTL_OUT_OF_RANGE, SIGNED_URL_MAX_SIZE_MISSING, SIGNED_URL_REAUTHORIZATION_REQUIRED, ANTIMALWARE_NOT_READY, QUARANTINE_GATE_FORBIDDEN_NEXT_STATE, PAYLOAD_DNA_BUCKET_FORBIDDEN, FINALIZE_REAUTHORIZATION_REQUIRED, FINALIZE_REAUTHORIZATION_DENIED, FINALIZE_REAUTHORIZATION_ABAC_DENIED, ABANDONED_MULTIPART_REAP_DENIED, ABANDONED_MULTIPART_BATCH_OVERFLOW, AUDIT_KEY_FORBIDDEN]
+
+  # ---------------------------------------------------------------------------
+  # Forbidden payload scan (R9.2 + R13 DNA + NFR1 secret + R15 raw PII)
+  # ---------------------------------------------------------------------------
+
+  forbiddenPayloadPatterns: [credential, api[_-]?key, private[_-]?key, authorization, bearer, raw[_-]?dna, raw[_-]?ssn, raw[_-]?passport, fastq, dna[_-]?raw]
+
+  # ---------------------------------------------------------------------------
+  # Re-authorization policy (R9.2 + design.md §8.2 + ADR-E0.5-06)
+  # ---------------------------------------------------------------------------
+
+  uploadSessionReAuthorizationRequiredOnCreate: true
+  uploadSessionReAuthorizationRequiredOnSignedUrlIssue: true
+  uploadSessionReAuthorizationRequiredOnMultipartPartReceipt: true
+  uploadSessionReAuthorizationRequiredOnFinalize: true
+  quotaReAuthorizationRequiredOnFinalize: true
+  quarantineGateReAuthorizationRequiredOnAdmit: true
+  abandonedMultipartReAuthorizationRequiredOnReap: true
+  reAuthorizationDenyClosesSession: true
+  reAuthorizationAbacDenyClosesSession: true

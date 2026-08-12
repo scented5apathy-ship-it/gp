@@ -43,4 +43,45 @@ Ownership row from `ownership-catalog.md`:
 | Events published    | `gp.media.v1.{AssetUploaded, AssetScanned, AssetReady, AssetRevoked, DerivativeProduced}`                                      |
 | Events consumed     | `gp.tenant.v1.{MembershipRevoked, TenantDeleted}` (revoke delivery)                                                            |
 ```
+
 Owner: `services/media-service/OWNERS`.
+
+# E7.1 upload lifecycle
+
+`media-service` ships the E7.1 upload lifecycle domain
+under `com.genealogy.platform.services.media.domain`:
+
+- `UploadSession` — the `REQUESTED -> SIGNED -> UPLOADING
+  -> FINALIZING -> QUARANTINED -> READY / REJECTED /
+  ABANDONED / FAILED` state machine with TTL + checksum +
+  MIME + intent + scope metadata.
+- `MultipartPart` — a received multipart part with size /
+  checksum / sequence constraints.
+- `QuotaLedger` — tenant-scoped bytes / items / seconds
+  reservation ledger.
+- `MimePolicy` — closed-set MIME allow / deny list with
+  sandbox + deep-scan classification.
+- `ChecksumVerifier` — deterministic constant-time
+  checksum matcher.
+- `QuarantineGate` — admission gate from `QUARANTINED` to
+  `READY` / `REJECTED`.
+- `AbandonedMultipartSweeper` — Temporal workflow helper
+  that reaps unused sessions.
+- `UploadAuthorizer` — pure executor that maps intent +
+  media category + object key to an
+  `UploadAuthorizationDecision`.
+- `MediaInvariants` — pure invariant checker emitting
+  `DENY` / `WARN` / `INFO` findings.
+- `UploadAuthorizationPort` — port interface delegating
+  to OpenFGA + ABAC at the application layer.
+
+The contract lives at
+`contracts/media/upload-lifecycle-policy.yaml`; the
+mirror is at
+`platform/helm/genealogy-platform/files/media-upload-lifecycle-policy.yaml`.
+The linter is `scripts/lint-media-upload-lifecycle.mjs`.
+
+E7.1 ships the pure domain + invariants + executor only:
+the Flyway migration + jOOQ repository + S3 / MinIO
+signed-URL adapter + Kafka producer / consumer land in
+the later E7.x / E11.x sub-epics.
