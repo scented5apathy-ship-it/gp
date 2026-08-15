@@ -1,0 +1,483 @@
+# contracts/media — Media protected-delivery policy (E7.4).
+#
+# Source of truth for the media-service protected-delivery
+# contract that hands a `DERIVED_READY` derived asset (E7.3)
+# out to the requester with OpenFGA + ABAC checked first,
+# a short-lived signed URL, deterministic content
+# disposition, optional range support, watermark for
+# living / DNA-adjacent subjects, full audit trail and
+# immediate revocation when policy changes.
+#
+# This contract is the LAST stage of the E7 media pipeline
+# before the asset exits to the requester:
+#
+#   E7.1 upload lifecycle
+#     → upload session + multipart signed URL + quarantine
+#   E7.2 malware + metadata pipeline
+#     → READY (linkability gate)
+#   E7.3 derivative processing
+#     → DERIVED_READY (terminal linkable status)
+#   E7.4 protected delivery  ← this contract
+#     → short-lived signed URL + watermark + audit + revoke
+#
+# Per `requirements.md` R9.5 ("Download/public delivery
+# SHALL tuân thủ authorization, visibility, watermark và
+# signed URL có hạn dùng") + `design.md` §12 ("Signed URL
+# ngắn hạn, content disposition an toàn và download audit
+# cho sensitive asset") + `design.md` §11 (Temporal worker
+# in sandbox with heartbeat + retry + cancellation) +
+# `ownership-catalog.md` §2.5 (media-service owns
+# MediaAsset / MediaVariant / Album, consumes
+# gp.tenant.v1.{MembershipRevoked, TenantDeleted} for
+# revoke, emits gp.media.v1.AssetRevoked).
+#
+# The DNA bucket shield (closed-set `dnaBucketPrefixes=
+# [dna/raw, dna/match, dna/consent]`) is enforced HERE, not
+# in the E7.3 processing pipeline. The processing pipeline
+# forwards `DNA_OBJECT_REJECTED` for objects keyed under
+# `dna/`; the delivery contract refuses ANY signed URL
+# request whose target object key starts with one of those
+# prefixes — the DNA service owns its own delivery adapter
+# per ADR-E0.5-15 + `privacy-and-legal-gate.md` §5.
+#
+# Hard invariants:
+#   - deliveryLinkableStatuses=[DERIVED_READY]: only the
+#     E7.3 terminal status may be handed out. RAW `READY`
+#     assets, PENDING processing, FAILED artefacts,
+#     QUARANTINED_RETAIN buckets and DNA objects MUST NOT
+#     receive a signed URL.
+#   - deliveryDenyBeforeOpenFgaAndAbac=true: BOTH the
+#     OpenFGA relationship check (per ADR-E0.5-06,
+#     store-per-tenant, p95 ≤ 500 ms) AND the ABAC overlay
+#     (living, minor, DNA-adjacent, consent, scope) MUST
+#     pass before a signed URL is issued.
+#   - signedUrlTtlCeilingSeconds=900: no signed URL may
+#     outlive 15 minutes. Per E2.7 evidence
+#     (`media-service` / `import-export-service` TTL ≤ 15
+#     min). Range requests and watermarked deliveries
+#     inherit the ceiling.
+#   - revokePropagationSeconds=60: a policy / consent /
+#     membership / tenant change MUST propagate to in-flight
+#     deliveries within 60 s (per ADR-E0.5-15 + E2.7).
+#   - dnaBucketAccess=FORBIDDEN: any object key starting
+#     with `dna/`, `dna/match/`, or `dna/consent/` is
+#     refused with `DNA_BUCKET_DENIED`. The DNA service
+#     owns its own delivery path per ADR-E0.5-15.
+#   - watermarkRequiredForLiving=true: any subject classified
+#     as `LIVING` or `MINOR` MUST receive a watermark with
+#     the actor's `actorPseudoId` overlay before the signed
+#     URL is issued.
+#   - auditActorKey=actorPseudoId: signed URL issuance +
+#     watermark + range served + revoke events all carry
+#     `actorPseudoId` + `correlationId` only — never raw
+#     user id, email, IP or DNA.
+#   - rangeRequestMaxBytes=67108864 (64 MiB): a single
+#     range response MUST NOT exceed 64 MiB; multi-range
+#     requests are refused.
+#   - sandboxEgressAllowlist extends the E7.2 / E7.3
+#     allowlist with `openfga` + `audit-service`. The
+#     delivery worker does NOT call into the libvips /
+#     Gotenberg / FFmpeg / Tesseract pool — those are the
+#     E7.3 worker peers, not the E7.4 worker peers.
+#
+# Closed-set vocabulary:
+#   - deliverySubjects: DOWNLOAD / THUMBNAIL / PREVIEW /
+#                       OCR_TEXT / RANGE_PART / METADATA
+#   - deliveryDecisions: ALLOW / ALLOW_WATERMARKED /
+#                        ALLOW_RANGE_ONLY / DENY / REDACT
+#   - deliveryDispositions: INLINE / ATTACHMENT /
+#                           REDACTED_PLACEHOLDER
+#   - deliveryContentTypes: IMAGE_WEBP / IMAGE_AVIF /
+#                            IMAGE_JPEG / APPLICATION_PDF /
+#                            VIDEO_MP4 / TEXT_PLAIN /
+#                            APPLICATION_OCTET_STREAM
+#   - deliveryVisibilityScopes: PRIVATE / UNLISTED / PUBLIC
+#                               / INTERNAL_TENANT
+#   - deliveryFailureReasons: POLICY_DENIED / OPENFGA_DENY /
+#                             ABAC_DENY / CONSENT_REVOKED /
+#                             MEMBERSHIP_REVOKED /
+#                             TENANT_DELETED /
+#                             OBJECT_NOT_READY /
+#                             OBJECT_TAMPERED /
+#                             TTL_EXPIRED /
+#                             SIGNATURE_INVALID
+#   - deliveryAuditEvents: DELIVERY_GRANTED /
+#                          DELIVERY_WATERMARKED /
+#                          DELIVERY_DENIED /
+#                          DELIVERY_REVOKED /
+#                          DELIVERY_RANGE_SERVED
+#   - deliveryWatermarkModes: NONE / TEXT_OVERLAY /
+#                             DIAGONAL_REPEAT / VISIBLE_DOI
+#   - deliveryAbacReasons: LIVING_MINOR_REDACT /
+#                          LIVING_RESTRICTED /
+#                          DNA_BUCKET_DENIED /
+#                          CONSENT_PURPOSE_MISSING /
+#                          JURISDICTION_BLOCKED /
+#                          SCOPE_REVOKED
+#   - deliveryRevocationSources: MEMBERSHIP_REVOKED /
+#                                TENANT_DELETED /
+#                                CONSENT_REVOKED /
+#                                POLICY_VERSION_BUMPED
+#   - deliveryLinkableStatuses: DERIVED_READY
+#   - deliverySubjectVisibilityClass: LIVING / MINOR /
+#                                    HISTORICAL
+#   - dnaBucketPrefixes: dna/raw / dna/match / dna/consent
+#   - deliveryRangeUnit: BYTES / NONE
+#   - signedUrlMethods: GET / HEAD / PUT (PUT reserved for
+#                       future upload-path reuse; never
+#                       issued by the E7.4 contract today)
+#
+# The Java executor lives under
+# `services/media-service/src/main/java/com/genealogy/platform/services/media/delivery/`
+# (DeliverySubject + DeliveryDecision + DeliveryDisposition
+#  + DeliveryContentType + DeliveryVisibilityScope +
+#  DeliveryFailureReason + DeliveryAuditEvent +
+#  DeliveryWatermarkMode + DeliveryAbacReason +
+#  DeliveryRevocationSource + DeliverySubjectVisibilityClass
+#  + DeliveryRangeUnit + SignedUrlMethod +
+#  DeliveryAuthorizationRequest / Result + SignedUrlTicket
+#  + WatermarkOverlay + RangeRequest + DeliveryAuditEntry
+#  + DeliveryDecision + MediaProtectedDelivery +
+#  DeliveryDeniedException). The S3 / MinIO adapter +
+#  Kong route glue + OpenFGA SDK + watermark worker +
+#  Audit Sink land in the later E7.x / E11.x sub-epics;
+#  this contract pins the closed-set vocabulary the
+#  executor enforces so those adapters cannot silently
+#  weaken the policy.
+#
+# The chart mirror (byte-identical) lives at
+# `platform/helm/genealogy-platform/files/media-protected-delivery-policy.yaml`
+# and is enforced by
+# `scripts/lint-media-protected-delivery.mjs`.
+spec:
+  policyId: media-protected-delivery-policy/v1
+  policyVersion: 1
+  appliesTo: media-service
+  contractOwner: genealogy/platform
+  contractMirrors:
+    - contracts/media/media-protected-delivery-policy.yaml
+    - platform/helm/genealogy-platform/files/media-protected-delivery-policy.yaml
+
+  # -------------------------------------------------------------------------
+  # Closed-set vocabularies (R9.5 + ADR-E0.5-06 + ADR-E0.5-08)
+  # -------------------------------------------------------------------------
+
+  deliverySubjects:
+    - DOWNLOAD
+    - THUMBNAIL
+    - PREVIEW
+    - OCR_TEXT
+    - RANGE_PART
+    - METADATA
+
+  deliveryDecisions:
+    - ALLOW
+    - ALLOW_WATERMARKED
+    - ALLOW_RANGE_ONLY
+    - DENY
+    - REDACT
+
+  deliveryDispositions:
+    - INLINE
+    - ATTACHMENT
+    - REDACTED_PLACEHOLDER
+
+  deliveryContentTypes:
+    - IMAGE_WEBP
+    - IMAGE_AVIF
+    - IMAGE_JPEG
+    - APPLICATION_PDF
+    - VIDEO_MP4
+    - TEXT_PLAIN
+    - APPLICATION_OCTET_STREAM
+
+  deliveryVisibilityScopes:
+    - PRIVATE
+    - UNLISTED
+    - PUBLIC
+    - INTERNAL_TENANT
+
+  deliveryFailureReasons:
+    - POLICY_DENIED
+    - OPENFGA_DENY
+    - ABAC_DENY
+    - CONSENT_REVOKED
+    - MEMBERSHIP_REVOKED
+    - TENANT_DELETED
+    - OBJECT_NOT_READY
+    - OBJECT_TAMPERED
+    - TTL_EXPIRED
+    - SIGNATURE_INVALID
+
+  deliveryAuditEvents:
+    - DELIVERY_GRANTED
+    - DELIVERY_WATERMARKED
+    - DELIVERY_DENIED
+    - DELIVERY_REVOKED
+    - DELIVERY_RANGE_SERVED
+
+  deliveryWatermarkModes:
+    - NONE
+    - TEXT_OVERLAY
+    - DIAGONAL_REPEAT
+    - VISIBLE_DOI
+
+  deliveryAbacReasons:
+    - LIVING_MINOR_REDACT
+    - LIVING_RESTRICTED
+    - DNA_BUCKET_DENIED
+    - CONSENT_PURPOSE_MISSING
+    - JURISDICTION_BLOCKED
+    - SCOPE_REVOKED
+
+  deliveryRevocationSources:
+    - MEMBERSHIP_REVOKED
+    - TENANT_DELETED
+    - CONSENT_REVOKED
+    - POLICY_VERSION_BUMPED
+
+  deliveryLinkableStatuses:
+    - DERIVED_READY
+
+  deliverySubjectVisibilityClass:
+    - LIVING
+    - MINOR
+    - HISTORICAL
+
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+
+  deliveryRangeUnit:
+    - BYTES
+    - NONE
+
+  signedUrlMethods:
+    - GET
+    - HEAD
+    - PUT
+
+  # The E7.4 worker is in the `quarantine` NetworkPolicy
+  # baseline but uses an in-mesh allowlist scoped to the
+  # delivery peers. libvips / Gotenberg / FFmpeg / Tesseract
+  # are E7.3 worker peers, NOT E7.4 worker peers.
+  sandboxEgressAllowlist:
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+
+  # -------------------------------------------------------------------------
+  # Authorization decision state matrix (R9.5 + design.md §4.2 + §12)
+  # -------------------------------------------------------------------------
+
+  # The authorization decision flows:
+  #   PENDING → OPENFGA_CHECKED → ABAC_CHECKED → DECIDED
+  # DENIED / WATERMARKED / REDACTED / RANGE_ONLY are
+  # terminal; REJECTED is reserved for invalid input.
+  deliveryAuthorizationMatrix:
+    PENDING:
+      - OPENFGA_CHECKED
+      - REJECTED
+    OPENFGA_CHECKED:
+      - ABAC_CHECKED
+      - DENIED
+    ABAC_CHECKED:
+      - DECIDED
+      - WATERMARKED
+      - REDACTED
+      - RANGE_ONLY
+      - DENIED
+    DECIDED: []
+    WATERMARKED: []
+    REDACTED: []
+    RANGE_ONLY: []
+    DENIED: []
+    REJECTED: []
+
+  # -------------------------------------------------------------------------
+  # Guard rails (R9.5 + NFR1 + NFR3 + R13 + design.md §12)
+  # -------------------------------------------------------------------------
+
+  # The delivery worker MUST live in the same Istio
+  # namespace as the E7.2 / E7.3 workers but does NOT need
+  # the libvips / Gotenberg / FFmpeg / Tesseract sidecars
+  # (it's a read-only issuer, not a transcoder).
+  sandboxOnly: true
+  sandboxReadOnlyFilesystem: true
+  sandboxNonRoot: true
+
+  # Sandbox egress is the closed-set
+  # `sandboxEgressAllowlist` above. NetworkPolicy enforces
+  # the same allowlist at the cluster level.
+  egressDeniedToPublicInternet: true
+
+  # BOTH OpenFGA + ABAC MUST pass before a signed URL is
+  # issued. A fail in EITHER gate produces DENIED with the
+  # matching `DeliveryFailureReason` (OPENFGA_DENY or
+  # ABAC_DENY).
+  deliveryDenyBeforeOpenFgaAndAbac: true
+
+  # Only `DERIVED_READY` is linkable. The E7.3 terminal
+  # status carries through. RAW `READY` / PENDING /
+  # PROCESSING / VALIDATING / FAILED / QUARANTINED_RETAIN
+  # are refused with `OBJECT_NOT_READY`.
+  onlyDerivedReadyIsLinkable: true
+
+  # DNA bucket shield: the closed-set
+  # `dnaBucketPrefixes` above. ANY object key starting
+  # with one of those prefixes is refused with
+  # `DeliveryAbacReason.DNA_BUCKET_DENIED` regardless of
+  # OpenFGA verdict. The DNA service owns its own delivery
+  # path per ADR-E0.5-15.
+  dnaBucketAccess: FORBIDDEN
+
+  # Living / minor subjects MUST receive a watermark
+  # before the signed URL is issued. The watermark carries
+  # the `actorPseudoId` + the request timestamp; the raw
+  # user id is never embedded.
+  watermarkRequiredForLiving: true
+  watermarkRequiredForMinor: true
+
+  # Revocation propagation: when a `MembershipRevoked` /
+  # `TenantDeleted` / `ConsentRevoked` /
+  # `PolicyVersionBumped` event lands, every in-flight
+  # signed URL whose `correlationId` matches the event is
+  # marked REVOKED within `revokePropagationSeconds`.
+  revokePropagationSeconds: 60
+
+  # Object lock for sensitive (DNA-adjacent) buckets is
+  # `COMPLIANCE` mode for 30 days per E2.7 evidence.
+  objectLockComplianceDays: 30
+
+  # The audit actor is the `actorPseudoId`; the
+  # correlation key is the `correlationId`. Raw user id,
+  # email, IP, DNA and token are never carried in audit
+  # payloads.
+  auditActorKey: actorPseudoId
+  auditCorrelationKey: correlationId
+
+  # Range requests are bounded by `rangeRequestMaxBytes`;
+  # multi-range requests are refused with `POLICY_DENIED`.
+  rangeRequiresContentRangeHeader: true
+  multiRangeRequestsForbidden: true
+
+  # The signing method is GET for download + HEAD for
+  # metadata probes. PUT is reserved in the closed-set so
+  # a future upload-path adapter cannot silently weaken
+  # the contract — but the E7.4 contract never issues a
+  # PUT signed URL today.
+  signedUrlMethodDefault: GET
+  signedUrlRequiresPseudonymInAudit: true
+
+  # Per-resource quota: at most N in-flight signed URLs per
+  # asset; exceeding the bound forces 429-equivalent
+  # denial with `POLICY_DENIED`.
+  maxConcurrentSignedUrlsPerAsset: 32
+  maxSignedUrlsPerAuditBatch: 256
+
+  # -------------------------------------------------------------------------
+  # Numeric bounds (R9.5 + NFR2 + E2.7 evidence)
+  # -------------------------------------------------------------------------
+
+  # Signed URL TTL ceiling per E2.7 evidence: 15 minutes.
+  # Lower bound is 15 s so an issuance with sub-15 s TTL
+  # is refused (clock skew + retry safety).
+  signedUrlTtlCeilingSeconds: 900
+  signedUrlTtlMinimumSeconds: 15
+
+  # Range request size cap: 64 MiB per request. Multi-range
+  # requests are forbidden by `multiRangeRequestsForbidden`.
+  rangeRequestMaxBytes: 67108864
+  rangeRequestMinBytes: 1024
+
+  # Watermark overlay character cap. The watermark text is
+  # `actorPseudoId` + request timestamp; anything longer
+  # is refused.
+  watermarkMaxOverlayChars: 64
+
+  # Activity heartbeat contract (E7.3 carry-through).
+  activityHeartbeatSeconds: 30
+  activityHeartbeatMultiplier: 6
+
+  # Per `requirements.md` NFR2 the issuance latency target
+  # is p95 < 300 ms; the ABAC + OpenFGA round-trip must
+  # finish within that budget (cached when feasible).
+  issuanceP95BudgetMillis: 300
+
+  # Delivery key + audit attribute length caps.
+  maxDeliveryIdLength: 128
+  maxObjectKeyLength: 1024
+  maxActorPseudoIdLength: 64
+  maxCorrelationIdLength: 128
+  maxAuditExtraKeys: 16
+  maxAuditExtraKeyLength: 64
+  maxAuditExtraValueLength: 1024
+  maxAuditCorrelationReasonLength: 256
+  maxDenialReasonLength: 256
+
+  # -------------------------------------------------------------------------
+  # Required audit hooks (R9.5 + NFR5 + ADR-E0.5-08)
+  # -------------------------------------------------------------------------
+
+  auditRequiredKeys:
+    - actorPseudoId
+    - correlationId
+
+  auditRequiredOnDeliveryGranted: true
+  auditRequiredOnDeliveryWatermarked: true
+  auditRequiredOnDeliveryDenied: true
+  auditRequiredOnDeliveryRevoked: true
+  auditRequiredOnRangeServed: true
+
+  auditClassOnDeliveryGranted: media
+  auditActionOnDeliveryGranted: media.delivery.granted
+  auditClassOnDeliveryWatermarked: media
+  auditActionOnDeliveryWatermarked: media.delivery.watermarked
+  auditClassOnDeliveryDenied: media
+  auditActionOnDeliveryDenied: media.delivery.denied
+  auditClassOnDeliveryRevoked: media
+  auditActionOnDeliveryRevoked: media.delivery.revoked
+  auditClassOnRangeServed: media
+  auditActionOnRangeServed: media.delivery.range_served
+
+  # -------------------------------------------------------------------------
+  # Invariant reason codes (R9.5 + NFR1 + ADR-E0.5-08)
+  # -------------------------------------------------------------------------
+
+  invariants:
+    - DELIVERY_SANDBOX_ONLY
+    - DELIVERY_SANDBOX_EGRESS_PUBLIC_DENIED
+    - DELIVERY_SANDBOX_NON_ROOT
+    - DELIVERY_OPENFGA_AND_ABAC_REQUIRED
+    - DELIVERY_ONLY_DERIVED_READY_LINKABLE
+    - DELIVERY_DNA_BUCKET_FORBIDDEN
+    - DELIVERY_LIVING_MINOR_REQUIRES_WATERMARK
+    - DELIVERY_TTL_CEILING_ENFORCED
+    - DELIVERY_RANGE_BOUNDED
+    - DELIVERY_MULTI_RANGE_FORBIDDEN
+    - DELIVERY_PSEUDONYM_IN_AUDIT
+    - DELIVERY_OBJECT_TAMPERED_FAILS_SIGNATURE
+    - DELIVERY_REVOKE_PROPAGATION_BOUNDED
+    - DELIVERY_OBJECT_LOCK_COMPLIANCE_ENFORCED
+    - DELIVERY_SIGNATURE_INVALID_REFUSED
+    - DELIVERY_AUDIT_TRAIL_REQUIRED
+
+  # -------------------------------------------------------------------------
+  # Forbidden payload scan (R13 DNA + NFR1 secret + R15 raw PII)
+  # -------------------------------------------------------------------------
+
+  forbiddenPayloadPatterns:
+    - credential
+    - api[_-]?key
+    - private[_-]?key
+    - authorization
+    - bearer
+    - raw[_-]?dna
+    - raw[_-]?ssn
+    - raw[_-]?passport
+    - fastq
+    - dna[_-]?raw
+    - exif[_-]?gps
+    - camera[_-]?serial

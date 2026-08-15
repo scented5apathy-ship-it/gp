@@ -1,0 +1,94 @@
+{{/*
+media delivery service ConfigMap (E7.4).
+
+Spring Boot `application.yml` overlay + the E7.4
+protected-delivery numeric knobs (TTL bounds, range
+bounds, watermark bounds, audit length caps, sandbox
+egress allowlist, OpenFGA + ABAC gate). The contract
+file `contracts/media/media-protected-delivery-policy.yaml`
+is the source of truth; the chart values mirror the
+contract fields verbatim.
+*/}}
+{{- $svc := .Values.services.mediaDelivery }}
+{{- if $svc.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: media-service-delivery-config
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service-delivery
+    gp.genealogy/contract-only: "true"
+data:
+  application.yml: |
+    spring:
+      application:
+        name: media-service-delivery
+      datasource:
+        url: jdbc:postgresql://gp-data:5432/media_delivery
+      jpa:
+        hibernate:
+          ddl-auto: validate
+      flyway:
+        enabled: true
+        locations: classpath:db/migration/media-delivery
+
+    server:
+      port: 8080
+      shutdown: graceful
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,prometheus
+      endpoint:
+        health:
+          probes:
+            enabled: true
+
+    delivery:
+      policyId: media-protected-delivery-policy/v1
+      signedUrlTtlCeilingSeconds: {{ $svc.pipeline.signedUrlTtlCeilingSeconds }}
+      signedUrlTtlMinimumSeconds: {{ $svc.pipeline.signedUrlTtlMinimumSeconds }}
+      signedUrlTtlDefaultSeconds: {{ $svc.pipeline.signedUrlTtlDefaultSeconds }}
+      signedUrlMethodDefault: {{ $svc.pipeline.signedUrlMethodDefault }}
+      rangeRequestMaxBytes: {{ $svc.pipeline.rangeRequestMaxBytes }}
+      rangeRequestMinBytes: {{ $svc.pipeline.rangeRequestMinBytes }}
+      watermarkMaxOverlayChars: {{ $svc.pipeline.watermarkMaxOverlayChars }}
+      revokePropagationSeconds: {{ $svc.pipeline.revokePropagationSeconds }}
+      objectLockComplianceDays: {{ $svc.pipeline.objectLockComplianceDays }}
+      maxConcurrentSignedUrlsPerAsset: {{ $svc.pipeline.maxConcurrentSignedUrlsPerAsset }}
+      maxSignedUrlsPerAuditBatch: {{ $svc.pipeline.maxSignedUrlsPerAuditBatch }}
+      activityHeartbeatSeconds: {{ $svc.pipeline.activityHeartbeatSeconds }}
+      activityHeartbeatMultiplier: {{ $svc.pipeline.activityHeartbeatMultiplier }}
+      issuanceP95BudgetMillis: {{ $svc.pipeline.issuanceP95BudgetMillis }}
+      maxDeliveryIdLength: {{ $svc.pipeline.maxDeliveryIdLength }}
+      maxObjectKeyLength: {{ $svc.pipeline.maxObjectKeyLength }}
+      maxActorPseudoIdLength: {{ $svc.pipeline.maxActorPseudoIdLength }}
+      maxCorrelationIdLength: {{ $svc.pipeline.maxCorrelationIdLength }}
+      maxAuditExtraKeys: {{ $svc.pipeline.maxAuditExtraKeys }}
+      maxAuditExtraKeyLength: {{ $svc.pipeline.maxAuditExtraKeyLength }}
+      maxAuditExtraValueLength: {{ $svc.pipeline.maxAuditExtraValueLength }}
+      maxAuditCorrelationReasonLength: {{ $svc.pipeline.maxAuditCorrelationReasonLength }}
+      maxDenialReasonLength: {{ $svc.pipeline.maxDenialReasonLength }}
+      dnaBucketAccess: {{ $svc.pipeline.dnaBucketAccess }}
+      onlyDerivedReadyIsLinkable: {{ $svc.pipeline.onlyDerivedReadyIsLinkable }}
+      deliveryDenyBeforeOpenFgaAndAbac: {{ $svc.pipeline.deliveryDenyBeforeOpenFgaAndAbac }}
+      watermarkRequiredForLiving: {{ $svc.pipeline.watermarkRequiredForLiving }}
+      watermarkRequiredForMinor: {{ $svc.pipeline.watermarkRequiredForMinor }}
+      rangeRequiresContentRangeHeader: {{ $svc.pipeline.rangeRequiresContentRangeHeader }}
+      multiRangeRequestsForbidden: {{ $svc.pipeline.multiRangeRequestsForbidden }}
+      signedUrlRequiresPseudonymInAudit: {{ $svc.pipeline.signedUrlRequiresPseudonymInAudit }}
+      sandboxOnly: {{ $svc.pipeline.sandboxOnly }}
+      egressDeniedToPublicInternet: {{ $svc.pipeline.egressDeniedToPublicInternet }}
+      sandboxEgressAllowlist:
+        {{- range $svc.pipeline.sandboxEgressAllowlist }}
+        - {{ . | quote }}
+        {{- end }}
+      dnaBucketPrefixes:
+        {{- range $svc.pipeline.dnaBucketPrefixes }}
+        - {{ . | quote }}
+        {{- end }}
+{{- end }}

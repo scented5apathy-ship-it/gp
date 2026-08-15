@@ -1742,3 +1742,102 @@ services:
       processingIdempotentOnProcessingId: true
       dnaObjectRejected: true
       egressDeniedToPublicInternet: true
+
+  mediaDelivery:
+    enabled: true
+    replicas:
+      dev: 1
+      onprem: 2
+      saas: 3
+    image:
+      repository: genealogy/media-service-delivery
+      tag: "0.1.0"
+      registry: ghcr.io
+    resources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    probes:
+      livenessPath: /actuator/health/liveness
+      readinessPath: /actuator/health/readiness
+      startupPath: /actuator/health/readiness
+      liveness:
+        initialDelaySeconds: 20
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 10
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+      startup:
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 24
+    serviceAccount:
+      create: true
+      name: media-service-delivery
+      vaultAnnotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: media-service-delivery
+        vault.hashicorp.com/agent-image: hashicorp/vault:1.18.0
+    secretRefs:
+      clusterSecretStore: vault-backend
+      databaseVaultPath: secret/dev/data/media-service-delivery/database
+      kafkaVaultPath: secret/dev/data/media-service-delivery/kafka
+      openfgaVaultPath: secret/dev/data/media-service-delivery/openfga
+      auditServiceVaultPath: secret/dev/data/media-service-delivery/audit-service
+      s3VaultPath: secret/dev/data/media-service-delivery/s3
+      minioVaultPath: secret/dev/data/media-service-delivery/minio
+    # E7.4 protected-delivery numeric knobs. The chart
+    # values are the single source of truth for the
+    # Helm-rendered pod;
+    # `contracts/media/media-protected-delivery-policy.yaml`
+    # pins the same numbers via the linter.
+    pipeline:
+      signedUrlTtlCeilingSeconds: 900
+      signedUrlTtlMinimumSeconds: 15
+      signedUrlTtlDefaultSeconds: 300
+      signedUrlMethodDefault: GET
+      rangeRequestMaxBytes: 67108864
+      rangeRequestMinBytes: 1024
+      watermarkMaxOverlayChars: 64
+      revokePropagationSeconds: 60
+      objectLockComplianceDays: 30
+      maxConcurrentSignedUrlsPerAsset: 32
+      maxSignedUrlsPerAuditBatch: 256
+      activityHeartbeatSeconds: 30
+      activityHeartbeatMultiplier: 6
+      issuanceP95BudgetMillis: 300
+      maxDeliveryIdLength: 128
+      maxObjectKeyLength: 1024
+      maxActorPseudoIdLength: 64
+      maxCorrelationIdLength: 128
+      maxAuditExtraKeys: 16
+      maxAuditExtraKeyLength: 64
+      maxAuditExtraValueLength: 1024
+      maxAuditCorrelationReasonLength: 256
+      maxDenialReasonLength: 256
+      sandboxOnly: true
+      sandboxEgressAllowlist:
+        - apicurio
+        - vault-agent
+        - openfga
+        - audit-service
+      dnaBucketPrefixes:
+        - dna/raw
+        - dna/match
+        - dna/consent
+      dnaBucketAccess: FORBIDDEN
+      onlyDerivedReadyIsLinkable: true
+      deliveryDenyBeforeOpenFgaAndAbac: true
+      watermarkRequiredForLiving: true
+      watermarkRequiredForMinor: true
+      rangeRequiresContentRangeHeader: true
+      multiRangeRequestsForbidden: true
+      signedUrlRequiresPseudonymInAudit: true
+      egressDeniedToPublicInternet: true

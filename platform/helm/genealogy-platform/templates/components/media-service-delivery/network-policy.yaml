@@ -1,0 +1,100 @@
+{{/*
+media delivery service NetworkPolicy (E7.4).
+
+Default-deny ingress + egress. Allowed egress mirrors
+`spec.sandboxEgressAllowlist` =
+[apicurio, vault-agent, openfga, audit-service]
+in `contracts/media/media-protected-delivery-policy.yaml`.
+The E7.4 worker is in the same `gp-services` namespace
+as the E7.2 / E7.3 workers but has a tighter egress
+allowlist (NO libvips / Gotenberg / FFmpeg / Tesseract
+peers — those are E7.3 worker peers, not E7.4).
+
+Per `design.md` §11 ("Binary parser không truy cập
+Internet, chạy non-root, read-only filesystem và resource
+quota") + AGENTS.md §3 (Istio handles workload identity /
+mTLS).
+*/}}
+{{- $svc := .Values.services.mediaDelivery }}
+{{- if $svc.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-service-delivery
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service-delivery
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: media-service-delivery
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: web-bff
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - podSelector:
+            matchLabels:
+              app: apicurio-registry
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - podSelector:
+            matchLabels:
+              app: vault-agent
+      ports:
+        - protocol: TCP
+          port: 8200
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - podSelector:
+            matchLabels:
+              app: openfga
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - podSelector:
+            matchLabels:
+              app: audit-service
+      ports:
+        - protocol: TCP
+          port: 8080
+{{- end }}

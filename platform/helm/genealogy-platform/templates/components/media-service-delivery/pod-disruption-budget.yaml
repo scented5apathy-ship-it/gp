@@ -1,0 +1,28 @@
+{{/*
+media delivery service PodDisruptionBudget (E7.4).
+
+Per `agent-execution.md` §4.4 the E7.4 issuer MUST stay
+up while signed URLs are in flight (revoke propagation
+must complete within 60 s). The PDB pins
+`minAvailable = max(1, replicas - 1)` so a single pod can
+drain without violating the budget.
+*/}}
+{{- $svc := .Values.services.mediaDelivery }}
+{{- if $svc.enabled }}
+{{- $replicas := dig "saas" 3 $svc.replicas }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: media-service-delivery
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service-delivery
+    gp.genealogy/contract-only: "true"
+spec:
+  minAvailable: {{ max 1 (sub $replicas 1) }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: media-service-delivery
+{{- end }}

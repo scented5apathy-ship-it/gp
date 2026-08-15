@@ -1,0 +1,30 @@
+{{/*
+media delivery service ClusterIP Service (E7.4).
+
+Exposes port 8080 to the in-mesh service mesh. Kong is
+NOT aware of this workload; the public REST path goes
+through the web-bff / public-api per `design.md` §4.1
+(edge components live in `services/web-bff/` + Kong).
+*/}}
+{{- $svc := .Values.services.mediaDelivery }}
+{{- if $svc.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-service-delivery
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service-delivery
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service-delivery
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+{{- end }}

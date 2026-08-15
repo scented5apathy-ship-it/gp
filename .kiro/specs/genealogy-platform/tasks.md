@@ -559,7 +559,7 @@ _Requirements: R8, R10, R14, NFR1, NFR4_
   - Tesseract OCR theo language packs; Gotenberg cho PDF/preview.
   - Output key deterministic, processor versioned và retry idempotent.
 
-- [ ] E7.4 Protected delivery
+- [x] E7.4 Protected delivery
 
   - Kiểm OpenFGA+ABAC trước signed URL; TTL, range, disposition và watermark.
   - Bucket/prefix/key riêng cho DNA, không dùng media preview pipeline.
