@@ -1,0 +1,369 @@
+# contracts/dna/dna-revoke-export-delete-policy.yaml
+#
+# E10.5 — DNA revoke / export / delete contract.
+#
+# Single source of truth for the DNA revocation workflow, derived
+# data cleanup, retention / legal-hold handling, evidence generation
+# and signed short-lived export URL with step-up auth. Mirrors
+# R13 + NFR3 + NFR4 + NFR7 + NFR8 and `privacy-and-legal-gate.md`
+# §3 / §9 / §11. Compatibility policy = BACKWARD per ADR-E0.5-08.
+
+policyVersion: "1.0.0"
+owner: dna
+domain: genealogy.platform.dna.revoke.v1
+contract: "E10.5 DNA revoke / export / delete"
+doc: |
+  DNA revoke / export / delete. Defines the revocation workflow,
+  derived-data cleanup, retention / legal-hold handling, evidence
+  generation rules and signed short-lived export URL contract with
+  step-up auth.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+dnaRevokeTriggers:
+  doc: "Closed-set triggers that start a revoke workflow."
+  values:
+    - CONSENT_REVOKED
+    - MEMBERSHIP_REVOKED
+    - DATA_SUBJECT_DELETION_REQUEST
+    - DATA_SUBJECT_PORTABILITY_REQUEST
+    - LEGAL_HOLD_RELEASED
+    - JURISDICTION_BAN_TRIGGERED
+    - PROVIDER_TERMINATION_TRIGGERED
+    - ADMIN_REVOKE_WITH_LEGAL_APPROVAL
+
+dnaRevokePhases:
+  doc: "Closed-set phases the revoke workflow traverses."
+  values:
+    - TRIGGERED
+    - IN_FLIGHT_CANCELLED
+    - SHARING_REVOKED
+    - DERIVED_PURGED
+    - RAW_DELETED
+    - LEGAL_HOLD_OVERRIDE
+    - EVIDENCE_ISSUED
+    - REVOKE_COMPLETED
+    - REVOKE_FAILED
+
+dnaRevokeStatuses:
+  doc: "Closed-set run statuses emitted by the revoke workflow."
+  values:
+    - QUEUED
+    - RUNNING
+    - AWAITING_STEP_UP
+    - AWAITING_LEGAL_APPROVAL
+    - COMPLETED
+    - FAILED
+    - BLOCKED
+    - CANCELLED
+
+dnaRevokeCompensationActions:
+  doc: "Closed-set compensation actions the revoke workflow may invoke."
+  values:
+    - CANCEL_IN_FLIGHT_MATCHES
+    - REVOKE_KIT_SHARING_LINKS
+    - DELETE_MATCH_SEGMENTS
+    - DELETE_KINSHIP_ESTIMATES
+    - DELETE_RELATIVE_DISCOVERY_ROWS
+    - DELETE_NOTES_FOR_KIT
+    - DELETE_KIT_REGISTRATION
+    - DELETE_RAW_ENCRYPTED_OBJECT
+    - PURGE_DNA_BUCKET_PREFIX
+    - REVOKE_SIGNED_EXPORT_URL
+    - ROTATE_DEK
+    - DEACTIVATE_DATA_KEY
+
+dnaExportFormats:
+  doc: "Closed-set export formats the dna-service supports."
+  values:
+    - JSON_OPAQUE_AGGREGATES
+    - CSV_OPAQUE_AGGREGATES
+    - PDF_REDACTED_SUMMARY
+    - PDF_LEGAL_HOLD_REPORT
+    - MEDIA_BUNDLE_REDACTED
+    - SELF_PORTABILITY_ZIP
+
+dnaExportRedactionLevels:
+  doc: "Closed-set export redaction levels per R13 / E10.5."
+  values:
+    - NONE
+    - LIVING_ONLY
+    - MINOR_ONLY
+    - LIVING_AND_MINOR
+    - SENSITIVE_FULL
+    - DNA_DEFAULT_OFF
+    - CONSENT_REQUIRED
+
+dnaExportRetentionPolicies:
+  doc: "Closed-set retention policies for generated export bundles."
+  values:
+    - SINGLE_DOWNLOAD
+    - TIME_BOXED
+    - LEGAL_HOLD_BLOCKED
+    - IMMEDIATE_REVOKE
+
+dnaRevokeFailureReasons:
+  doc: "Closed-set failure reasons emitted by the revoke / export / delete pipeline."
+  values:
+    - DNA_REVOKE_NOT_FOUND
+    - DNA_REVOKE_TENANT_MISMATCH
+    - DNA_REVOKE_TRIGGER_UNKNOWN
+    - DNA_REVOKE_KIT_NOT_FOUND
+    - DNA_REVOKE_STEP_UP_AUTH_REQUIRED
+    - DNA_REVOKE_STEP_UP_AUTH_FAILED
+    - DNA_REVOKE_LEGAL_HOLD_BLOCKED
+    - DNA_REVOKE_LEGAL_HOLD_OVERRIDE_INVALID
+    - DNA_REVOKE_DERIVED_PURGE_FAILED
+    - DNA_REVOKE_RAW_DELETE_FAILED
+    - DNA_REVOKE_SIGNED_URL_REVOKE_FAILED
+    - DNA_REVOKE_DEK_ROTATION_FAILED
+    - DNA_REVOKE_EVIDENCE_INCOMPLETE
+    - DNA_REVOKE_DEADLINE_EXCEEDED
+
+dnaRevokeAuditEvents:
+  doc: "Closed-set audit hooks emitted by the revoke / export / delete pipeline."
+  values:
+    - DNA_REVOKE_TRIGGERED
+    - DNA_REVOKE_MATCHES_CANCELLED
+    - DNA_REVOKE_SHARING_REVOKED
+    - DNA_REVOKE_DERIVED_PURGED
+    - DNA_REVOKE_RAW_DELETED
+    - DNA_REVOKE_LEGAL_HOLD_APPLIED
+    - DNA_REVOKE_LEGAL_HOLD_RELEASED
+    - DNA_REVOKE_EVIDENCE_ISSUED
+    - DNA_REVOKE_COMPLETED
+    - DNA_REVOKE_FAILED
+    - DNA_EXPORT_SIGNED_URL_ISSUED
+    - DNA_EXPORT_SIGNED_URL_REVOKED
+    - DNA_EXPORT_DOWNLOAD_COMPLETED
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist (DNA namespace)
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the dna-service sandbox."
+  values:
+    - postgres-dna
+    - vault-agent-dna
+    - s3-dna
+    - openfga-dna
+    - audit-service
+    - kafka-dna
+    - temporal-frontend-dna
+
+# ---------------------------------------------------------------------------
+# 3. State matrices
+# ---------------------------------------------------------------------------
+
+dnaRevokeStateMatrix:
+  doc: "Revoke state machine — every status reachable from QUEUED unless terminal."
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [RUNNING, AWAITING_STEP_UP, AWAITING_LEGAL_APPROVAL, CANCELLED, FAILED]
+    - status: RUNNING
+      transitions: [AWAITING_STEP_UP, AWAITING_LEGAL_APPROVAL, COMPLETED, FAILED, CANCELLED]
+    - status: AWAITING_STEP_UP
+      transitions: [RUNNING, CANCELLED, FAILED]
+    - status: AWAITING_LEGAL_APPROVAL
+      transitions: [RUNNING, BLOCKED, CANCELLED, FAILED]
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: BLOCKED
+      transitions: [RUNNING, FAILED]
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+
+dnaExportStateMatrix:
+  doc: "Export state machine — every status reachable from REQUESTED unless terminal."
+  initialStatus: REQUESTED
+  statuses:
+    - status: REQUESTED
+      transitions: [SIGNED, REJECTED, EXPIRED]
+    - status: SIGNED
+      transitions: [DOWNLOADED, REVOKED, EXPIRED]
+    - status: DOWNLOADED
+      transitions: []
+      terminal: true
+    - status: REVOKED
+      transitions: []
+      terminal: true
+    - status: EXPIRED
+      transitions: []
+      terminal: true
+    - status: REJECTED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  revokeWorkflowMandatory: true
+  revokeCancelsInFlightMatches: true
+  revokeCancelsInFlightUploads: true
+  revokeRevokesSharing: true
+  revokePurgesDerivedData: true
+  revokeDeletesRawData: true
+  revokeRespectsLegalHold: true
+  revokeLegalHoldOverridesExpiry: true
+  revokeEvidenceExcludesDeletedContent: true
+  exportRequiresStepUpAuth: true
+  exportRequiresConsentPurpose: true
+  exportUsesSignedShortLivedUrl: true
+  exportRevocableBeforeExpiry: true
+  exportRedactionByDefault: true
+  exportRedactionFloorLivingOrDnaOff: true
+  exportDnaDefaultOff: true
+  exportLegalHoldBlocksBundle: true
+  deletionUsesObjectLockRelease: true
+  deletionRevokesSignedUrl: true
+  deletionRotatesDek: true
+  deletionGeneratesEvidence: true
+  revocationPropagationBounded: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  tenantBoundaryOnEveryRepository: true
+  auditHookOnEveryRevoke: true
+  auditHookOnEveryExport: true
+  auditHookOnEveryDelete: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  revokeTerminationGraceSeconds: 60
+  revokePropagationDeadlineSeconds: 300
+  revokeMaxConcurrentJobsPerTenant: 4
+  revokeMaxDurationSeconds: 3600
+  exportSignedUrlTtlSeconds: 3600
+  exportRevocationPropagationSeconds: 30
+  exportBundleMaxBytes: 524288000
+  exportEvidenceMaxBytes: 1048576
+  deletionHardDeleteTimeoutSeconds: 600
+  deletionLegalHoldMinRetentionSeconds: 63072000
+  revokeCompensationMaxRetries: 5
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  revokeTerminationGraceSeconds: 60
+  revokePropagationDeadlineSeconds: 300
+  revokeDeadlineToGraceMultiplier: 5
+  exportSignedUrlTtlSeconds: 3600
+  exportRevocationPropagationSeconds: 30
+  exportSignedUrlToRevocationMultiplier: 120
+  exportBundleMaxBytes: 524288000
+  exportEvidenceMaxBytes: 1048576
+  exportEvidenceToBundleMultiplier: 500
+  deletionLegalHoldMinRetentionSeconds: 63072000
+  deletionHardDeleteTimeoutSeconds: 600
+  deletionTimeoutToRetentionMultiplier: 105120
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the revoke / export / delete pipeline."
+  items:
+    - type: gp.dna.v1.ConsentRevoked
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.dna.v1.KitDeleted
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - DNA_REVOKE_TRIGGERED
+    - DNA_REVOKE_MATCHES_CANCELLED
+    - DNA_REVOKE_SHARING_REVOKED
+    - DNA_REVOKE_DERIVED_PURGED
+    - DNA_REVOKE_RAW_DELETED
+    - DNA_REVOKE_LEGAL_HOLD_APPLIED
+    - DNA_REVOKE_LEGAL_HOLD_RELEASED
+    - DNA_REVOKE_EVIDENCE_ISSUED
+    - DNA_REVOKE_COMPLETED
+    - DNA_REVOKE_FAILED
+    - DNA_EXPORT_SIGNED_URL_ISSUED
+    - DNA_EXPORT_SIGNED_URL_REVOKED
+    - DNA_EXPORT_DOWNLOAD_COMPLETED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - rawAlleleList
+  - rawSnpTable
+  - rawGenotype
+  - rawHaplogroup
+  - rawChromosomeMap
+  - rawSegmentSummary
+  - rawCentiMorganEstimate
+  - rawMatchAlgorithmTrace
+  - rawIdDocument
+  - rawSignatureImage
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - rawMedicalRecord
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom durable queue (Temporal namespace + task queue is enough)"
+    - "Cross-service aggregation into DNA (use Kafka events + publisher resolution)"
+    - "Custom deletion scheduler (use Temporal with object-lock release)"
+    - "Re-derivation of DNA data after revocation"
+    - "Permanent public export link for DNA data"
+    - "Medical interpretation engine (per privacy-and-legal-gate.md §14 #3)"
+    - "Bypass of legal hold for DNA deletion"

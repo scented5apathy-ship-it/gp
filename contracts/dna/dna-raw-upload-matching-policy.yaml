@@ -1,0 +1,373 @@
+# contracts/dna/dna-raw-upload-matching-policy.yaml
+#
+# E10.4 — DNA raw upload and matching contract.
+#
+# Single source of truth for the raw-DNA upload, quarantine, format
+# validation, envelope encryption and matching pipeline. Defines:
+#   - provider / format catalogue + format validation guards;
+#   - quarantine, format validation, envelope encryption through
+#     Vault/cloud KMS;
+#   - isolated Temporal worker for match / segment / estimate with
+#     algorithm version pinned per run;
+#   - explicit rules forbidding raw genotype in Kafka, log, trace,
+#     search, media preview or public API payload.
+# Compatibility policy = BACKWARD per ADR-E0.5-08.
+
+policyVersion: "1.0.0"
+owner: dna
+domain: genealogy.platform.dna.rawupload.v1
+contract: "E10.4 DNA raw upload and matching"
+doc: |
+  DNA raw upload and matching. Defines the quarantine + envelope
+  encryption envelope, provider / format catalogue, isolated match
+  worker pool contract and the rules forbidding raw genotype in
+  Kafka, log, trace, search, media preview or public API.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+dnaProviders:
+  doc: "Closed-set providers the dna-service accepts raw uploads from."
+  values:
+    - ANCESTRYDNA
+    - TWENTY_THREE_AND_ME
+    - MYHERITAGE
+    - FAMILY_TREE_DNA
+    - LIVING_DNA
+    - SELF_UPLOAD_PROVIDED
+    - RESEARCH_PARTNER
+
+dnaFormats:
+  doc: "Closed-set raw-DNA formats the upload pipeline accepts."
+  values:
+    - CSV_ANCESTRYDNA
+    - CSV_TWENTY_THREE_AND_ME
+    - CSV_MYHERITAGE
+    - CSV_FAMILY_TREE_DNA
+    - FASTQ_ILLUMINA
+    - BAM_ILLUMINA
+    - VCF_GENEVA
+    - VCF_ANCESTRY
+
+dnaMatchAlgorithms:
+  doc: "Closed-set matching algorithms the dna-service supports."
+  values:
+    - IBD_SEGMENT_V1
+    - IBD_SEGMENT_V2
+    - IBD_SEGMENT_V2_OPAQUE
+    - KINSHIP_ESTIMATE_V1
+    - KINSHIP_ESTIMATE_V2_OPAQUE
+    - RELATIVE_DISCOVERY_V1
+
+dnaMatchStages:
+  doc: "Closed-set stages the matching pipeline traverses."
+  values:
+    - QUARANTINED
+    - FORMAT_VALIDATED
+    - ENVELOPE_ENCRYPTED
+    - DECRYPTED_IN_MEMORY
+    - SEGMENTED
+    - ESTIMATED
+    - ANNOTATED
+    - COMMITTED
+
+dnaMatchStatuses:
+  doc: "Closed-set run statuses emitted by the matching pipeline."
+  values:
+    - QUEUED
+    - RUNNING
+    - AWAITING_CONSENT
+    - AWAITING_INPUT
+    - COMPLETED
+    - FAILED
+    - REVOKED
+    - CANCELLED
+    - BLOCKED
+
+dnaMatchFailureReasons:
+  doc: "Closed-set failure reasons emitted by the raw-upload and matching pipeline."
+  values:
+    - DNA_UPLOAD_QUARANTINE_TIMEOUT
+    - DNA_FORMAT_UNSUPPORTED
+    - DNA_FORMAT_VALIDATION_FAILED
+    - DNA_ENVELOPE_DECRYPT_FAILED
+    - DNA_ENVELOPE_KEY_REVOKED
+    - DNA_UPLOAD_PAYLOAD_TOO_LARGE
+    - DNA_UPLOAD_PAYLOAD_ENCODING_INVALID
+    - DNA_UPLOAD_PAYLOAD_DEPTH_EXCEEDED
+    - DNA_MATCH_ALGORITHM_VERSION_UNKNOWN
+    - DNA_MATCH_KIT_NOT_FOUND
+    - DNA_MATCH_TENANT_MISMATCH
+    - DNA_MATCH_CONSENT_REVOKED
+    - DNA_MATCH_CONSENT_EXPIRED
+    - DNA_MATCH_WORKER_POOL_VIOLATED
+    - DNA_RAW_DNA_LEAK_DETECTED
+    - DNA_PUBLIC_PREVIEW_FORBIDDEN
+
+dnaMatchAuditEvents:
+  doc: "Closed-set audit hooks emitted by the raw-upload and matching pipeline."
+  values:
+    - DNA_UPLOAD_RECEIVED
+    - DNA_UPLOAD_QUARANTINED
+    - DNA_UPLOAD_FORMAT_VALIDATED
+    - DNA_UPLOAD_ENCRYPTED
+    - DNA_UPLOAD_REJECTED
+    - DNA_MATCH_REQUESTED
+    - DNA_MATCH_STARTED
+    - DNA_MATCH_SEGMENTED
+    - DNA_MATCH_ESTIMATED
+    - DNA_MATCH_COMPLETED
+    - DNA_MATCH_FAILED
+    - DNA_MATCH_CONSENT_REVOKED
+    - DNA_RAW_DNA_LEAK_BLOCKED
+    - DNA_PUBLIC_PREVIEW_BLOCKED
+
+dnaMatchEventTypes:
+  doc: "Closed-set Kafka event types emitted by the DNA pipeline."
+  values:
+    - gp.dna.v1.KitUploaded
+    - gp.dna.v1.MatchProduced
+    - gp.dna.v1.MatchRevoked
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist (DNA namespace)
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the dna-service sandbox."
+  values:
+    - postgres-dna
+    - vault-agent-dna
+    - s3-dna
+    - openfga-dna
+    - audit-service
+    - kafka-dna
+    - temporal-frontend-dna
+
+# ---------------------------------------------------------------------------
+# 3. State matrices
+# ---------------------------------------------------------------------------
+
+dnaMatchStateMatrix:
+  doc: "Match state machine — every status reachable from QUEUED unless terminal."
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [RUNNING, AWAITING_CONSENT, CANCELLED, FAILED]
+    - status: RUNNING
+      transitions: [AWAITING_INPUT, COMPLETED, FAILED, REVOKED, CANCELLED, BLOCKED]
+    - status: AWAITING_CONSENT
+      transitions: [RUNNING, CANCELLED, FAILED, REVOKED]
+    - status: AWAITING_INPUT
+      transitions: [RUNNING, CANCELLED, FAILED, REVOKED]
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: REVOKED
+      transitions: []
+      terminal: true
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+    - status: BLOCKED
+      transitions: []
+      terminal: true
+
+dnaUploadStateMatrix:
+  doc: "Upload state machine — every status reachable from QUARANTINED unless terminal."
+  initialStatus: QUARANTINED
+  statuses:
+    - status: QUARANTINED
+      transitions: [FORMAT_VALIDATED, REJECTED]
+    - status: FORMAT_VALIDATED
+      transitions: [ENVELOPE_ENCRYPTED, REJECTED]
+    - status: ENVELOPE_ENCRYPTED
+      transitions: [DECRYPTED_IN_MEMORY, REJECTED]
+    - status: DECRYPTED_IN_MEMORY
+      transitions: [SEGMENTED, REJECTED]
+    - status: SEGMENTED
+      transitions: [ESTIMATED, REJECTED]
+    - status: ESTIMATED
+      transitions: [ANNOTATED, REJECTED]
+    - status: ANNOTATED
+      transitions: [COMMITTED, REJECTED]
+    - status: COMMITTED
+      transitions: []
+      terminal: true
+    - status: REJECTED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  uploadQuarantineMandatory: true
+  formatValidationRequired: true
+  envelopeEncryptionRequired: true
+  kmsDekPerUpload: true
+  workerPoolIsolation: true
+  workerPoolLabelRequired: true
+  taskQueueIsolation: true
+  algorithmVersionPinned: true
+  algorithmVersionVisibleOnlyAsLabel: true
+  rawDnaInKafkaForbidden: true
+  rawDnaInLogsForbidden: true
+  rawDnaInTracesForbidden: true
+  rawDnaInMetricsForbidden: true
+  rawDnaInSearchForbidden: true
+  rawDnaInMediaPreviewForbidden: true
+  rawDnaInPublicApiForbidden: true
+  rawDnaInNotificationPayloadForbidden: true
+  rawDnaInOutboxForbidden: true
+  rawDnaInWebhookForbidden: true
+  rawDnaInSitemapForbidden: true
+  matchOutputIsOpaque: true
+  matchSegmentPrivacyRedacted: true
+  consentReauthorizeAtActivityTime: true
+  workerPoolAdmissionControllerRequired: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  tenantBoundaryOnEveryRepository: true
+  auditHookOnEveryUpload: true
+  auditHookOnEveryMatch: true
+  auditHookOnEveryRevoke: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  uploadMaxPayloadBytes: 26214400
+  uploadQuarantineTtlSeconds: 3600
+  uploadEnvelopeDecryptTimeoutSeconds: 300
+  matchMaxConcurrentAlgorithms: 8
+  matchMaxKitsPerRequest: 1000
+  matchMaxSegmentsPerKit: 50000
+  matchWorkerPoolSizeMinimum: 2
+  matchWorkerPoolMaxNodes: 16
+  matchAlgorithmVersionLabelMaxBytes: 64
+  matchSegmentMinCentimorgans: 7
+  matchSegmentMinSnps: 500
+  matchEstimateConfidenceFloorPercent: 50
+  rawDnaPayloadBytesAllowed: 0
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  uploadMaxPayloadBytes: 26214400
+  uploadQuarantineTtlSeconds: 3600
+  uploadEnvelopeDecryptTimeoutSeconds: 300
+  uploadDecryptToQuarantineMultiplier: 12
+  matchMaxConcurrentAlgorithms: 8
+  matchMaxKitsPerRequest: 1000
+  matchMaxSegmentsPerKit: 50000
+  matchSegmentsToKitsMultiplier: 50
+  matchSegmentMinCentimorgans: 7
+  matchSegmentMinSnps: 500
+  matchSegmentMinSnpsToCentiMultiplier: 71
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the raw-upload and matching pipeline."
+  items:
+    - type: gp.dna.v1.KitUploaded
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.dna.v1.MatchProduced
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - DNA_UPLOAD_RECEIVED
+    - DNA_UPLOAD_QUARANTINED
+    - DNA_UPLOAD_FORMAT_VALIDATED
+    - DNA_UPLOAD_ENCRYPTED
+    - DNA_UPLOAD_REJECTED
+    - DNA_MATCH_REQUESTED
+    - DNA_MATCH_STARTED
+    - DNA_MATCH_SEGMENTED
+    - DNA_MATCH_ESTIMATED
+    - DNA_MATCH_COMPLETED
+    - DNA_MATCH_FAILED
+    - DNA_MATCH_CONSENT_REVOKED
+    - DNA_RAW_DNA_LEAK_BLOCKED
+    - DNA_PUBLIC_PREVIEW_BLOCKED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - rawAlleleList
+  - rawSnpTable
+  - rawGenotype
+  - rawHaplogroup
+  - rawChromosomeMap
+  - rawSegmentSummary
+  - rawCentiMorganEstimate
+  - rawMatchAlgorithmTrace
+  - rawIdDocument
+  - rawSignatureImage
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - rawMedicalRecord
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom durable queue (Temporal namespace + task queue is enough)"
+    - "Cross-service aggregation into DNA (use Kafka events + publisher resolution)"
+    - "Custom matching algorithm outside dna-service sandbox"
+    - "Self-hosted raw-genotype interpreter (per privacy-and-legal-gate.md §14 #2)"
+    - "Medical interpretation engine (per privacy-and-legal-gate.md §14 #3)"
+    - "Raw DNA in Kafka / log / trace / metrics / search / preview / public API / notification / webhook / sitemap"
+    - "Tree-role grant of matching access (requires explicit consent subject)"
+    - "Cross-region matching without jurisdiction + residency check"

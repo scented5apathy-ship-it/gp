@@ -1,0 +1,368 @@
+# contracts/dna/dna-consent-policy.yaml
+#
+# E10.3 — DNA consent engine contract.
+#
+# Single source of truth for the consent ledger, consent receipt,
+# consent re-authorization and consent race conditions. Mirrors the
+# R13 + NFR3 + NFR4 + NFR7 + NFR8 rules in `requirements.md` and the
+# §9 DPIA for DNA in `privacy-and-legal-gate.md`. Compatibility
+# policy = BACKWARD per ADR-E0.5-08.
+#
+# Conventions mirror E9 import/export contracts (closed-set
+# vocabularies, boolean guards, numeric bounds, invariants,
+# state machines, forbidden payload patterns, sandbox egress
+# allowlist, audit hook catalogue, outbox envelope, capability
+# boundaries). The sandbox egress allowlist mirrors E10.2 (the
+# consent engine lives inside the same `dna-service` sandbox).
+
+policyVersion: "1.0.0"
+owner: dna
+domain: genealogy.platform.dna.consent.v1
+contract: "E10.3 DNA consent engine"
+doc: |
+  DNA consent engine. Defines subject/guardian/purpose/action/policy
+  version/effective/expiry/revoked time model; consent receipt;
+  append-only audit for grant/revoke/access/export; re-authorization
+  at activity time (not just at submit time).
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+consentSubjects:
+  doc: "Closed-set subjects a consent record binds."
+  values:
+    - SELF
+    - GUARDIAN_ON_BEHALF_OF_MINOR
+    - GUARDIAN_ON_BEHALF_OF_INCAPACITATED
+    - COURT_APPOINTED_REPRESENTATIVE
+    - DECEASED_DATA_SUBJECT_NEXT_OF_KIN
+
+consentPurposes:
+  doc: "Closed-set purposes a consent authorises."
+  values:
+    - DNA_KIT_REGISTRATION
+    - DNA_RAW_UPLOAD
+    - DNA_MATCHING
+    - DNA_RELATIVE_DISCOVERY
+    - DNA_RESEARCH_OPT_IN
+    - DNA_EXPORT_RAW
+    - DNA_EXPORT_MATCHES
+    - DNA_PORTABILITY_REQUEST
+    - DNA_DELETION_REQUEST
+    - DNA_LEGAL_HOLD_OVERRIDE
+
+consentActions:
+  doc: "Closed-set actions a consent permits or denies."
+  values:
+    - ALLOW
+    - ALLOW_ONCE
+    - DENY
+    - DENY_PERMANENT
+    - REQUIRE_GUARDIAN
+    - REQUIRE_STEP_UP_AUTH
+    - REQUIRE_LEGAL_HOLD
+    - REQUIRE_NOTIFICATION
+
+consentLegalBases:
+  doc: "Closed-set legal bases declared in `privacy-and-legal-gate.md` §3."
+  values:
+    - GDPR_ART_9_2_A_EXPLICIT_CONSENT
+    - GDPR_ART_9_2_G_SUBSTANTIAL_PUBLIC_INTEREST
+    - CCPA_SENSITIVE_PI_OPT_IN
+    - GINA_FEDERAL
+    - GINA_FLORIDA
+    - GIPA_ILLINOIS
+    - CCPA_CPRA_SENSITIVE_PI
+
+consentPolicyVersions:
+  doc: "Closed-set policy-version labels the consent ledger supports."
+  values:
+    - DNA_POLICY_V1_2026
+    - DNA_POLICY_V1_2026_GUARDIAN
+    - DNA_POLICY_V1_2026_RESEARCH
+
+consentStates:
+  doc: "Closed-set lifecycle states a consent record traverses."
+  values:
+    - DRAFT
+    - PENDING
+    - EFFECTIVE
+    - EXPIRED
+    - REVOKED
+    - SUPERSEDED
+    - LEGAL_HOLD
+    - REJECTED
+
+consentReceiptEvents:
+  doc: "Closed-set consent receipt events the engine emits."
+  values:
+    - CONSENT_GRANT_REQUESTED
+    - CONSENT_GRANTED
+    - CONSENT_GRANT_REJECTED
+    - CONSENT_REVOKE_REQUESTED
+    - CONSENT_REVOKED
+    - CONSENT_REAUTHORIZED
+    - CONSENT_EXPIRED
+    - CONSENT_LEGAL_HOLD_PLACED
+    - CONSENT_LEGAL_HOLD_RELEASED
+    - CONSENT_SUPERSEDED
+    - CONSENT_RECEIPT_ISSUED
+    - CONSENT_ACCESS_GRANTED
+    - CONSENT_EXPORT_GRANTED
+    - CONSENT_RACE_DETECTED
+
+consentRaceOutcomes:
+  doc: "Closed-set outcomes when concurrent writes hit the same consent record."
+  values:
+    - FIRST_WRITER_WINS
+    - LAST_WRITER_WINS
+    - REJECT_CONFLICTING
+    - QUEUE_FOR_REVIEW
+    - NOTIFY_GUARDIAN
+
+consentFailureReasons:
+  doc: "Closed-set failure reasons emitted by the consent engine."
+  values:
+    - CONSENT_NOT_FOUND
+    - CONSENT_TENANT_MISMATCH
+    - CONSENT_VERSION_MISMATCH
+    - CONSENT_SUBJECT_MISMATCH
+    - CONSENT_PURPOSE_DENIED
+    - CONSENT_EXPIRED
+    - CONSENT_REVOKED
+    - CONSENT_GUARDIAN_REQUIRED
+    - CONSENT_MINOR_WORKFLOW_MISSING
+    - CONSENT_STEP_UP_AUTH_REQUIRED
+    - CONSENT_LEGAL_HOLD_REQUIRED
+    - CONSENT_RACE_REJECTED
+    - CONSENT_POLICY_VERSION_UNKNOWN
+
+consentAuditEvents:
+  doc: "Closed-set audit hooks emitted by the consent engine."
+  values:
+    - CONSENT_ENGINE_OK
+    - CONSENT_ENGINE_VIOLATION
+    - CONSENT_GRANTED
+    - CONSENT_REVOKED
+    - CONSENT_REAUTHORIZED
+    - CONSENT_ACCESS_GRANTED
+    - CONSENT_EXPORT_GRANTED
+    - CONSENT_RACE_DETECTED
+    - CONSENT_RECEIPT_ISSUED
+    - CONSENT_LEGAL_HOLD_APPLIED
+    - CONSENT_LEGAL_HOLD_RELEASED
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist (DNA namespace)
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the dna-service sandbox."
+  values:
+    - postgres-dna
+    - vault-agent-dna
+    - s3-dna
+    - openfga-dna
+    - audit-service
+    - kafka-dna
+    - temporal-frontend-dna
+
+# ---------------------------------------------------------------------------
+# 3. State matrices
+# ---------------------------------------------------------------------------
+
+consentStateMatrix:
+  doc: "Consent state machine — every status reachable from DRAFT unless terminal."
+  initialStatus: DRAFT
+  statuses:
+    - status: DRAFT
+      transitions: [PENDING, REJECTED]
+    - status: PENDING
+      transitions: [EFFECTIVE, REJECTED, REVOKED]
+    - status: EFFECTIVE
+      transitions: [EXPIRED, REVOKED, SUPERSEDED, LEGAL_HOLD]
+    - status: EXPIRED
+      transitions: []
+      terminal: true
+    - status: REVOKED
+      transitions: []
+      terminal: true
+    - status: SUPERSEDED
+      transitions: []
+      terminal: true
+    - status: LEGAL_HOLD
+      transitions: [EFFECTIVE]
+    - status: REJECTED
+      transitions: []
+      terminal: true
+
+consentReauthorizeStateMatrix:
+  doc: "Re-authorize state machine — every status reachable from REQUESTED unless terminal."
+  initialStatus: REQUESTED
+  statuses:
+    - status: REQUESTED
+      transitions: [GRANTED, DENIED, REJECTED]
+    - status: GRANTED
+      transitions: [DENIED]
+    - status: DENIED
+      transitions: []
+      terminal: true
+    - status: REJECTED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  consentLedgerAppendOnly: true
+  consentReceiptSigned: true
+  consentReauthorizeOnActivity: true
+  consentReauthorizeOnExport: true
+  consentReauthorizeOnRevoke: true
+  consentVersioningRequired: true
+  consentLegalBasisRequired: true
+  consentGuardianRequiredForMinor: true
+  consentGuardianRequiredForIncapacitated: true
+  consentStepUpAuthRequiredForExport: true
+  consentStepUpAuthRequiredForDeletion: true
+  consentLegalHoldOverridesExpiry: true
+  consentLegalHoldDoesNotExtendExpiry: true
+  consentExpiryRequired: true
+  consentEffectiveTimeRequired: true
+  consentRaceDetectionEnabled: true
+  consentRaceFirstWriterWinsByDefault: true
+  consentCannotBeGrantedByTreeRole: true
+  consentCannotBeRevokedByTreeRole: true
+  rawConsentDocumentForbiddenInPayload: true
+  rawConsentReceiptForbiddenInLogs: true
+  rawConsentReceiptForbiddenInTraces: true
+  rawConsentReceiptForbiddenInEvents: true
+  rawConsentReceiptForbiddenInSearch: true
+  rawConsentReceiptForbiddenInPublicApi: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  tenantBoundaryOnEveryRepository: true
+  auditHookOnEveryGrant: true
+  auditHookOnEveryRevoke: true
+  auditHookOnEveryAccess: true
+  auditHookOnEveryExport: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  consentMaxPurposesPerSubject: 16
+  consentReceiptMaxBytes: 65536
+  consentRetentionSeconds: 63072000
+  consentMinVersionLength: 1
+  consentMaxVersionLength: 32
+  consentReauthorizeTimeoutMs: 250
+  consentRaceDetectionWindowMs: 1000
+  consentGuardianWindowSeconds: 86400
+  consentStepUpAuthTtlSeconds: 900
+  consentLegalHoldMinRetentionSeconds: 63072000
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  consentRetentionSeconds: 63072000
+  consentLegalHoldMinRetentionSeconds: 63072000
+  consentLegalHoldToRetentionMultiplier: 1
+  consentRaceDetectionWindowMs: 1000
+  consentReauthorizeTimeoutMs: 250
+  consentReauthorizeToRaceWindowMultiplier: 4
+  consentGuardianWindowSeconds: 86400
+  consentStepUpAuthTtlSeconds: 900
+  consentGuardianWindowToStepUpMultiplier: 96
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the consent engine."
+  items:
+    - type: gp.dna.v1.ConsentGranted
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.dna.v1.ConsentRevoked
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - CONSENT_ENGINE_OK
+    - CONSENT_ENGINE_VIOLATION
+    - CONSENT_GRANTED
+    - CONSENT_REVOKED
+    - CONSENT_REAUTHORIZED
+    - CONSENT_ACCESS_GRANTED
+    - CONSENT_EXPORT_GRANTED
+    - CONSENT_RACE_DETECTED
+    - CONSENT_RECEIPT_ISSUED
+    - CONSENT_LEGAL_HOLD_APPLIED
+    - CONSENT_LEGAL_HOLD_RELEASED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - rawConsentDocument
+  - rawSignatureImage
+  - rawIdDocument
+  - rawFacePhoto
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawMedicalRecord
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom durable queue (Temporal namespace + task queue is enough)"
+    - "Cross-service aggregation into DNA (use Kafka events + publisher resolution)"
+    - "Custom policy engine for consent (use consent ledger + ABAC overlay)"
+    - "Mutable consent record (consent ledger is append-only)"
+    - "Tree role grant/revoke of DNA consent (requires explicit consent subject)"
+    - "Background re-authorization (must run inside activity time per R13)"

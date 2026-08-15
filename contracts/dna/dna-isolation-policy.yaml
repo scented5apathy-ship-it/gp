@@ -1,0 +1,392 @@
+# contracts/dna/dna-isolation-policy.yaml
+#
+# E10.2 — DNA service isolation contract.
+#
+# Single source of truth for the isolation boundary of the
+# `dna-service`. Defines:
+#   - dedicated Postgres role + schema;
+#   - dedicated S3 bucket prefixes (raw / match / consent) and
+#     bucket policy rules that block cross-account / cross-VPC
+#     reads;
+#   - dedicated Vault policy + KMS key rings (envelope encryption
+#     KEK + per-tenant DEK);
+#   - dedicated OpenFGA permission namespace `dna.*` — tree roles
+#     MUST NOT grant DNA access by default;
+#   - Istio / NetworkPolicy egress allowlist and node pool +
+#     task-queue + namespace label contract;
+#   - Boolean guards, numeric bounds, state matrices and
+#     invariants that all `dna-service` workloads MUST honour.
+#
+# The contract mirrors the conventions used by the E9 import/export
+# contracts (closed-set vocabularies, boolean guards, numeric
+# bounds, invariants, state machines, sandbox egress allowlist,
+# audit hook catalogue, outbox envelope, capability boundaries)
+# and is enforced by `scripts/lint-dna-isolation.mjs`. Sandbox
+# egress allowlist reflects the E10 sandbox: postgres-dna +
+# vault-agent-dna + s3-dna + openfga-dna + audit-service + kafka-dna
+# + temporal-frontend-dna (DNA task queue MUST go through the
+# namespace's dedicated temporal-frontend sidecar that bears the
+# `dna-worker=true` label — no shared sidecars per `privacy-and-legal-gate.md`
+# §9 D-02).
+
+policyVersion: "1.0.0"
+owner: dna
+domain: genealogy.platform.dna.isolation.v1
+contract: "E10.2 DNA service isolation"
+doc: |
+  DNA service isolation. Defines the database, object-storage, KMS,
+  Vault, OpenFGA, Istio and worker-pool boundaries that keep DNA
+  data and DNA workflows physically separate from the rest of the
+  genealogy platform. Compatibility policy = BACKWARD per
+  ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+dnaDatabaseRoles:
+  doc: "Closed-set Postgres roles the dna-service database owns."
+  values:
+    - dna_app_ro
+    - dna_app_rw
+    - dna_admin
+    - dna_readonly_replica
+
+dnaDatabaseSchemas:
+  doc: "Closed-set Postgres schemas owned by dna-service."
+  values:
+    - dna_kit
+    - dna_consent
+    - dna_match
+    - dna_audit
+
+dnaBucketPrefixes:
+  doc: "Closed-set S3 prefix namespaces used by the DNA bucket."
+  values:
+    - dna/raw
+    - dna/match
+    - dna/consent
+
+dnaBucketPolicies:
+  doc: "Closed-set bucket policy rules enforced on the DNA bucket."
+  values:
+    - DENY_CROSS_ACCOUNT
+    - DENY_PUBLIC_ACCESS
+    - DENY_NON_VPC_ENDPOINT
+    - DENY_PLAINTEXT_LIST
+    - DENY_OBJECT_LOCK_DISABLED
+    - REQUIRE_OBJECT_LOCK
+    - REQUIRE_SSE_KMS_DNA
+    - REQUIRE_VERSIONING
+
+dnaVaultPolicies:
+  doc: "Closed-set Vault policies bound to dna-service identities."
+  values:
+    - dna-read-dek
+    - dna-rotate-dek
+    - dna-issue-data-key
+    - dna-revoke-data-key
+    - dna-bootstrap-envelope
+
+dnaKmsKeyRings:
+  doc: "Closed-set KMS key rings the dna-service uses."
+  values:
+    - dna/raw-kek
+    - dna/match-kek
+    - dna/consent-kek
+
+dnaOpenfgaNamespaces:
+  doc: "Closed-set OpenFGA namespaces dedicated to DNA."
+  values:
+    - dna.kits
+    - dna.consent
+    - dna.match
+    - dna.segment
+    - dna.research
+
+dnaOpenfgaRelations:
+  doc: "Closed-set OpenFGA relations that MUST be evaluated against dna.* namespaces."
+  values:
+    - owner
+    - guardian
+    - delegated_admin
+    - researcher
+    - audit_reader
+
+dnaTreeRolesNotGrantedByDefault:
+  doc: "Closed-set tree roles that MUST NOT carry DNA access by default."
+  values:
+    - tree.viewer
+    - tree.editor
+    - tree.contributor
+    - tree.co_owner
+    - tree.public_viewer
+
+dnaNodePoolLabels:
+  doc: "Closed-set node-pool / pod labels that gate DNA workloads."
+  values:
+    - dna-worker=true
+    - dna-tier=genetic
+    - dna-bucket-bound=true
+    - dna-vault-bound=true
+
+dnaTaskQueues:
+  doc: "Closed-set Temporal task queues reserved for DNA workflows."
+  values:
+    - dna.upload
+    - dna.match
+    - dna.revoke
+    - dna.export
+
+dnaFailureReasons:
+  doc: "Closed-set failure reasons emitted by isolation guards."
+  values:
+    - DNA_DATABASE_ROLE_FORBIDDEN
+    - DNA_DATABASE_SCHEMA_FORBIDDEN
+    - DNA_BUCKET_PREFIX_FORBIDDEN
+    - DNA_BUCKET_POLICY_VIOLATION
+    - DNA_VAULT_POLICY_DENIED
+    - DNA_KMS_KEY_FORBIDDEN
+    - DNA_OPENFGA_NAMESPACE_FORBIDDEN
+    - DNA_TREE_ROLE_BYPASS_DENIED
+    - DNA_NODE_POOL_LABEL_MISSING
+    - DNA_TASK_QUEUE_FORBIDDEN
+    - DNA_EGRESS_DENIED
+    - DNA_TENANT_MISMATCH
+    - DNA_FEATURE_FLAG_DISABLED
+
+dnaAuditEvents:
+  doc: "Closed-set audit hooks emitted by isolation guards."
+  values:
+    - DNA_ISOLATION_GUARD_OK
+    - DNA_ISOLATION_GUARD_VIOLATION
+    - DNA_BUCKET_DENIED
+    - DNA_VAULT_DENIED
+    - DNA_KMS_DENIED
+    - DNA_OPENFGA_NAMESPACE_DENIED
+    - DNA_TREE_ROLE_BYPASS_DENIED
+    - DNA_NODE_POOL_LABEL_MISSING
+    - DNA_TASK_QUEUE_REJECTED
+    - DNA_EGRESS_REJECTED
+    - DNA_FEATURE_FLAG_REJECTED
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist (DNA namespace)
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the dna-service sandbox."
+  values:
+    - postgres-dna
+    - vault-agent-dna
+    - s3-dna
+    - openfga-dna
+    - audit-service
+    - kafka-dna
+    - temporal-frontend-dna
+
+# ---------------------------------------------------------------------------
+# 3. State matrices
+# ---------------------------------------------------------------------------
+
+dnaIsolationStateMatrix:
+  doc: "Isolation state machine — every status reachable from GUARD_OK unless terminal."
+  initialStatus: GUARD_OK
+  statuses:
+    - status: GUARD_OK
+      transitions: [GUARD_VIOLATION, NODE_POOL_DRAINING]
+    - status: GUARD_VIOLATION
+      transitions: [GUARD_OK, NODE_POOL_DRAINING, REJECTED]
+    - status: NODE_POOL_DRAINING
+      transitions: [GUARD_OK, REJECTED]
+    - status: REJECTED
+      transitions: []
+      terminal: true
+
+dnaNodePoolStateMatrix:
+  doc: "Node-pool state machine — every status reachable from ADMITTED unless terminal."
+  initialStatus: ADMITTED
+  statuses:
+    - status: ADMITTED
+      transitions: [DRAINING, REJECTED]
+    - status: DRAINING
+      transitions: [REJECTED]
+    - status: REJECTED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  dedicatedDatabase: true
+  dedicatedDatabaseRole: true
+  dedicatedDatabaseSchema: true
+  dedicatedBucket: true
+  dedicatedBucketPrefix: true
+  dedicatedVaultPolicy: true
+  dedicatedKmsKeyRing: true
+  dedicatedOpenfgaNamespace: true
+  treeRolesDoNotGrantDna: true
+  dedicatedNodePool: true
+  dedicatedTaskQueue: true
+  dedicatedTemporalFrontend: true
+  istioEgressAllowlistOnly: true
+  networkPolicyDefaultDeny: true
+  bucketPublicAccessBlocked: true
+  bucketCrossAccountBlocked: true
+  bucketSseKmsRequired: true
+  bucketVersioningRequired: true
+  bucketObjectLockRequired: true
+  envelopeEncryptionRequired: true
+  kmsKeyRotationIntervalRequired: true
+  vaultPolicyAuditRequired: true
+  openfgaAuthorizationLocal: true
+  rawDnaAccessOutsideDnaServiceForbidden: true
+  rawDnaInLogsForbidden: true
+  rawDnaInTracesForbidden: true
+  rawDnaInMetricsForbidden: true
+  rawDnaInEventsForbidden: true
+  rawDnaInSearchForbidden: true
+  rawDnaInPublicApiForbidden: true
+  rawDnaInMediaPreviewForbidden: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  tenantBoundaryOnEveryRepository: true
+  featureFlagDefaultOff: true
+  legalJurisdictionCheckRequired: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  dnaDatabaseRoleMinimum: 4
+  dnaDatabaseSchemaMinimum: 4
+  dnaBucketPrefixMinimum: 3
+  dnaVaultPolicyMinimum: 5
+  dnaKmsKeyRingMinimum: 3
+  dnaOpenfgaNamespaceMinimum: 5
+  dnaTreeRoleNotGrantedByDefaultMinimum: 5
+  dnaNodePoolLabelMinimum: 4
+  dnaTaskQueueMinimum: 4
+  dnaSandboxEgressMinimum: 7
+  kmsKeyRotationIntervalDays: 90
+  vaultPolicyAuditIntervalSeconds: 86400
+  openfgaTupleCacheTtlSeconds: 300
+  openfgaAuthorizationTimeoutMs: 500
+  nodePoolAdmissionTimeoutSeconds: 30
+  taskQueueHeartbeatIntervalSeconds: 30
+  isolationGuardEvaluationTimeoutMs: 250
+  isolationGuardMaxEvaluationsPerRequest: 16
+  legalJurisdictionCheckTimeoutMs: 250
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  kmsRotationIntervalDays: 90
+  vaultPolicyAuditIntervalSeconds: 86400
+  vaultAuditToRotationMultiplier: 90
+  openfgaTupleCacheTtlSeconds: 300
+  openfgaAuthTimeoutToCacheTtlMultiplier: 600
+  nodePoolAdmissionTimeoutSeconds: 30
+  taskQueueHeartbeatIntervalSeconds: 30
+  admissionToHeartbeatMultiplier: 1
+  isolationGuardTimeoutMs: 250
+  isolationGuardEvaluationsPerRequest: 16
+  isolationGuardEvaluationsToTimeoutMultiplier: 64
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by DNA isolation guards."
+  items:
+    - type: gp.dna.v1.IsolationGuardOk
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.dna.v1.IsolationGuardViolation
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - DNA_ISOLATION_GUARD_OK
+    - DNA_ISOLATION_GUARD_VIOLATION
+    - DNA_BUCKET_DENIED
+    - DNA_VAULT_DENIED
+    - DNA_KMS_DENIED
+    - DNA_OPENFGA_NAMESPACE_DENIED
+    - DNA_TREE_ROLE_BYPASS_DENIED
+    - DNA_NODE_POOL_LABEL_MISSING
+    - DNA_TASK_QUEUE_REJECTED
+    - DNA_EGRESS_REJECTED
+    - DNA_FEATURE_FLAG_REJECTED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - rawSocialSecurityNumber
+  - rawPassport
+  - rawDriverLicense
+  - rawTaxId
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - rawMedicalRecord
+  - rawPaymentInstrument
+  - productionPii
+  - treeViewerBypass
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom durable queue (Temporal namespace + task queue is enough)"
+    - "Cross-service aggregation into DNA (use Kafka events + publisher resolution)"
+    - "Custom policy engine for consent (use consent ledger + ABAC overlay)"
+    - "DNA feature default-on (must stay behind legal.dna.enabled per ADR-E0.5-15)"
+    - "Cross-account or public bucket policy for DNA bucket"
+    - "Shared KMS key with non-DNA service (envelope key isolation)"

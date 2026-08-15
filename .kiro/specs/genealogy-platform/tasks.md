@@ -678,28 +678,30 @@ _Requirements: R4, R8, R12, R13, R16, NFR1, NFR3, NFR4, NFR8_
   - Duyệt database/bucket/KMS/task queue/node pool isolation.
   - Flag DNA mặc định off cho mọi tenant/environment.
 
-- [ ] E10.2 DNA service isolation
+- [x] E10.2 DNA service isolation
 
   - Tạo database role/schema, S3 prefix/bucket, Vault policy và encryption key riêng.
   - OpenFGA permission namespace riêng; tree role không mặc nhiên cấp DNA access.
   - Istio/NetworkPolicy giới hạn egress và service callers.
 
-- [ ] E10.3 Consent engine
+- [x] E10.3 Consent engine
 
   - Model subject/guardian, purpose, action, policy version, effective/expiry/revoked time.
   - Sinh consent receipt; append-only audit cho grant/revoke/access/export.
   - Re-authorize và kiểm consent tại thời điểm activity chạy, không chỉ lúc submit.
 
-- [ ] E10.4 Raw upload và matching
+- [x] E10.4 Raw upload và matching
 
   - Quarantine, format validation và envelope encryption qua Vault/cloud KMS.
   - Temporal worker cô lập tạo match/segment/estimate với algorithm version.
   - Không đưa raw genotype vào Kafka, log, trace, search, media preview hoặc public API.
 
-- [ ] E10.5 Revoke/export/delete
+- [x] E10.5 Revoke/export/delete
   - Temporal workflow dừng processing, revoke sharing và xóa derived data.
   - Tôn trọng legal hold/retention; tạo evidence không chứa dữ liệu đã xóa.
   - Export yêu cầu step-up auth, consent phù hợp và signed short-lived URL.
+
+**Epic status: PARTIAL** — E10.1 stays `[ ]` until ADR-E0.5-15 closes; E10.2 — E10.5 contracts, linters, Java guardrails and tests are wired (see `evidence/E10.{1..5}.md`).
 
 **Đầu ra:** DNA service, consent ledger, isolated workflows và privacy controls.
 
