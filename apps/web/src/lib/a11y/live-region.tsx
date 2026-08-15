@@ -1,29 +1,43 @@
 /**
  * apps/web/src/lib/a11y/live-region.tsx
  *
- * Visual wrapper for the live-region announcer element. Separated
- * from `use-live-region-announcer.ts` because the hook lives in a
- * `.ts` module (so the Node `node --test` runner can import it
- * without a TSX loader) while the element is JSX and must be a
- * `.tsx` module.
+ * E12.4 — Live region announcer. The runtime wires the
+ * announcer into every async operation (selection, save,
+ * conflict, error, sync). The component is intentionally
+ * visually hidden via `sr-only.tsx` and uses ARIA polite
+ * politeness.
  */
-import type { LiveRegionAnnouncer } from "./use-live-region-announcer";
+"use client";
+
+import { useLiveRegionAnnouncer } from "./use-live-region-announcer";
+
+const SR_ONLY_STYLE: Readonly<Record<string, string>> = {
+  position: "absolute",
+  width: "1px",
+  height: "1px",
+  padding: "0",
+  margin: "-1px",
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  whiteSpace: "nowrap",
+  borderWidth: "0",
+};
 
 export interface LiveRegionProps {
-  readonly announcer: LiveRegionAnnouncer;
+  readonly id?: string;
+  readonly ariaLive?: "polite" | "assertive";
   readonly message: string;
+  readonly announcer?: { readonly announce: (message: string) => void };
 }
 
-export function LiveRegion({ message }: LiveRegionProps): JSX.Element {
+export function LiveRegion({ id, ariaLive = "polite", message }: LiveRegionProps) {
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-      data-a11y-live-region="polite"
-      className="sr-only"
-    >
+    <div id={id} role="status" aria-live={ariaLive} style={SR_ONLY_STYLE}>
       {message}
     </div>
   );
+}
+
+export function useAnnouncer(coalesceMs?: number) {
+  return useLiveRegionAnnouncer(coalesceMs);
 }

@@ -1,0 +1,359 @@
+# E12.3 — Globalization hardening contract.
+#
+# Source of truth: requirements.md R10, R18, design.md §10.4
+# (internationalisation), ownership-catalog.md §2.10.
+#
+# Validated by scripts/lint-globalization.mjs and enforced at
+# runtime by:
+#   - apps/web/src/lib/i18n/icu-message.ts (full ICU support)
+#   - apps/web/src/lib/i18n/transliterator.ts (script transforms)
+#   - apps/web/src/lib/i18n/locale-fallback.ts (BCP-47 chain)
+#   - apps/web/src/lib/calendar/index.ts (Gregorian + non-Gregorian)
+#   - apps/web/src/lib/timezone/index.ts (IANA + DST)
+#   - apps/web/src/lib/date/ambiguous-date.ts (GEDCOM round-trip)
+#   - apps/web/src/lib/print/glossary.ts (PDF/email/report glossary)
+#
+# Hard invariants (E12.3 — Globalization hardening):
+#   * All BCP-47 tags MUST resolve via a documented fallback chain;
+#     unknown locales MUST NOT throw (locale-fallback.ts).
+#   * Pseudolocales (en-XA, ar-XB) are QA-only and MUST NOT
+#     ship to production (already enforced by `lint:a11yI18n`).
+#   * Every string the user can read MUST be wrapped with an
+#     ICU MessageFormat compatible template OR a literal that
+#     passes the `forbiddenHardcodedString` scan.
+#   * The platform MUST support at minimum these
+#     non-Gregorian calendars: `JULIAN`, `HEBREW`, `ISLAMIC_CIVIL`,
+#     `ETHIOPIC`, plus the default `GREGORIAN`.
+#   * All date outputs MUST include calendar + IANA timezone; the
+#     `(calendar, year, month, day, hour, minute, second,
+#     timezone)` tuple is the single source of truth.
+#   * All date inputs MUST round-trip: a GEDCOM-style
+#     `BET 1850 AND 1860` MUST serialise back to the same
+#     ambiguous form on display.
+#   * Email/PDF/report pipelines MUST call
+#     `glossary.apply(locale, rawString)` before sending so the
+#     glossary (R18.7) is applied consistently across surfaces.
+#   * All translators MUST handle the same set of named placeholders
+#     (`{name}`, `{count}`, etc.) as the source locale; missing
+#     placeholders MUST fail the catalogue test (already enforced
+#     by `lint:a11yI18n`).
+#   * DST transitions: dates inside a DST gap MUST be rejected by
+#     the runtime; dates inside an overlap MUST be disambiguated
+#     via the user's stored `preferredOffsetMinutes`.
+#   * Script transliteration (Cyrillic ↔ Latin, Arabic ↔ Latin,
+#     Han ↔ Latin) MUST go through the `transliterator.ts`
+#     adapter — no string manipulation outside it.
+policyVersion: 1.0.0
+owner: pwa
+scope: globalization
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R10
+  design: .kiro/specs/genealogy-platform/design.md#10.4
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#2.10
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+localeFallbackChain:
+  description: >
+    The fallback chain the runtime walks when a BCP-47 tag is
+    unknown. Each link MUST exist in `supportedLocales`; the
+    runtime MUST fall back to `defaultLocale` at the end of the
+    chain. Pseudolocales MUST NOT participate in production
+    chains.
+  defaultLocale: en
+  chains:
+    - tag: en-US
+      fallback: en
+    - tag: en-GB
+      fallback: en
+    - tag: vi-VN
+      fallback: vi
+    - tag: fr-FR
+      fallback: fr
+    - tag: de-DE
+      fallback: de
+    - tag: es-ES
+      fallback: es
+    - tag: ja-JP
+      fallback: ja
+    - tag: ar-SA
+      fallback: ar
+    - tag: he-IL
+      fallback: he
+
+supportedLocales:
+  description: BCP-47 base tags the platform supports.
+  values:
+    - en
+    - vi
+    - fr
+    - de
+    - es
+    - ja
+    - ar
+    - he
+    - fa
+    - ur
+    - zh
+    - ru
+    - th
+    - ko
+    - id
+    - ms
+    - tr
+    - pl
+    - nl
+    - it
+
+pseudoLocales:
+  description: QA-only pseudolocales; never used in production.
+  values:
+    - en-XA
+    - ar-XB
+
+calendarSystems:
+  description: >
+    Calendar systems the platform understands. The runtime MUST
+    serialise every date with its calendar id.
+  values:
+    - GREGORIAN
+    - JULIAN
+    - HEBREW
+    - ISLAMIC_CIVIL
+    - ETHIOPIC
+    - INDIAN_SAKA
+
+timezoneSources:
+  description: >
+    Sources of truth for timezones. IANA is the only source —
+    abbreviations like "EST" are FORBIDDEN at the boundary.
+  values:
+    - IANA
+
+dateAmbiguityKinds:
+  description: >
+    How a date can be ambiguous. The runtime MUST serialise each
+    form back to the same string the user typed.
+  values:
+    - EXACT
+    - ABOUT
+    - BEFORE
+    - AFTER
+    - BETWEEN
+    - POSSIBLE_BETWEEN
+    - UNKNOWN_DAY
+    - UNKNOWN_MONTH
+    - UNKNOWN_YEAR
+    - APPROXIMATE
+    - CALCULATED
+
+transliterationScripts:
+  description: Script pairs the transliterator must support.
+  values:
+    - CYRILLIC_TO_LATIN
+    - LATIN_TO_CYRILLIC
+    - ARABIC_TO_LATIN
+    - LATIN_TO_ARABIC
+    - HAN_TO_LATIN
+    - LATIN_TO_HAN
+    - DEVANAGARI_TO_LATIN
+    - LATIN_TO_DEVANAGARI
+    - HEBREW_TO_LATIN
+    - LATIN_TO_HEBREW
+
+nameOrders:
+  description: Name order policies the runtime must support.
+  values:
+    - GIVEN_FIRST
+    - FAMILY_FIRST
+    - FAMILY_ONLY
+    - GIVEN_FAMILY_COMMA
+
+glossaryDomains:
+  description: >
+    Glossary domains the translator workflow MUST keep in sync
+    between email, PDF and in-app copy.
+  values:
+    - PERSON
+    - RELATIONSHIP
+    - EVENT
+    - PLACE
+    - SOURCE
+    - CITATION
+    - CONSENT
+    - DNA
+    - PRIVACY
+    - PRINT
+    - TIMELINE
+    - TREE
+    - ALBUM
+    - COLLABORATION
+
+globalizationAuditEvents:
+  description: Audit events emitted by the globalization pipeline.
+  values:
+    - i18n.localeNegotiated
+    - i18n.localeFallback
+    - i18n.fallbackMiss
+    - i18n.transliterationApplied
+    - i18n.calendarConverted
+    - i18n.timezoneResolved
+    - i18n.dstGapDetected
+    - i18n.dstOverlapResolved
+    - i18n.ambiguousDateRoundTripped
+    - i18n.glossaryApplied
+    - i18n.glossaryMiss
+    - i18n.pseudolocaleActivated
+    - i18n.pseudolocaleBlocked
+
+globalizationFailureReasons:
+  description: Reason codes for globalization failures.
+  values:
+    - LOCALE_UNKNOWN
+    - FALLBACK_CHAIN_BROKEN
+    - CALENDAR_UNKNOWN
+    - TIMEZONE_UNKNOWN
+    - DST_GAP
+    - DST_OVERLAP_AMBIGUOUS
+    - AMBIGUOUS_DATE_LOSS
+    - PLACEHOLDER_MISSING
+    - PLACEHOLDER_TYPE_MISMATCH
+    - TRANSLITERATION_UNAVAILABLE
+    - GLOSSARY_KEY_MISSING
+    - PSEUDOLOCALE_IN_PRODUCTION
+
+globalizationForbiddenPayloadKeys:
+  description: >
+    Keys that MUST NOT appear in the localized payload the
+    runtime ships (defence against leaking internal hints).
+  values:
+    - rawDna
+    - rawMedia
+    - dnaRawBytes
+    - dnaMatchResult
+    - signedUrlSecret
+    - oidcAccessToken
+    - oidcRefreshToken
+    - oidcIdToken
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - rawKmsKey
+    - rawVaultToken
+    - rawSessionCookie
+    - rawPin
+    - rawBiometric
+    - rawDnaConsentToken
+    - rawExportToken
+    - rawS3AccessKey
+    - rawS3Secret
+    - treeViewerBypass
+    - rawGuardianReason
+    - rawSupportReason
+    - rawDeletionReason
+    - rawOnboardingToken
+    - rawOidcClientSecret
+
+egressAllowlist:
+  description: Hosts the globalization pipeline is allowed to call.
+  values:
+    - api.genealogy-platform.example
+    - cdn.genealogy-platform.example
+
+numericBounds:
+  minIanaVersion: 2024a
+  maxPlaceholderCount: 16
+  maxGlossaryKeyLength: 128
+  maxLocaleTagLength: 35
+  transliterationCacheTtlSeconds: 86400
+  glossaryCacheTtlSeconds: 3600
+  ambiguousDateToleranceSeconds: 1
+  dstGapWindowSeconds: 7200
+  placeholderNameMaxLength: 64
+
+invariants:
+  fallbackChainTerminates: true
+  pseudolocaleProductionForbidden: true
+  everyStringIcuCompatible: true
+  forbiddenHardcodedStringsRejected: true
+  dateIncludesCalendar: true
+  dateIncludesTimezone: true
+  ambiguousDateRoundTripsCleanly: true
+  glossaryAppliedBeforeSend: true
+  placeholderSetParityEnforced: true
+  dstGapRejected: true
+  dstOverlapDisambiguated: true
+  transliterationViaAdapter: true
+  tenantBoundaryEnforced: true
+  forbiddenPayloadKeysEnforced: true
+
+stateMatrices: {}
+
+localeNegotiationStateMatrix:
+  doc: "Lifecycle of a single Accept-Language negotiation."
+  initialStatus: NEGOTIATING
+  statuses:
+    - status: NEGOTIATING
+      transitions: [EXACT_MATCH, FALLBACK_CHAIN_WALK, DEFAULT_LOCALE, UNKNOWN]
+    - status: EXACT_MATCH
+      transitions: [PSEUDOLOCALE_BLOCKED]
+    - status: FALLBACK_CHAIN_WALK
+      transitions: [EXACT_MATCH, DEFAULT_LOCALE]
+    - status: DEFAULT_LOCALE
+      transitions: []
+      terminal: true
+    - status: PSEUDOLOCALE_BLOCKED
+      transitions: [DEFAULT_LOCALE]
+    - status: UNKNOWN
+      transitions: [DEFAULT_LOCALE]
+
+ambiguousDateStateMatrix:
+  doc: "Lifecycle of an ambiguous-date parse round trip."
+  initialStatus: PARSING
+  statuses:
+    - status: PARSING
+      transitions: [EXACT, APPROXIMATE, BETWEEN, BEFORE, AFTER, UNKNOWN_DAY, UNKNOWN_MONTH, UNKNOWN_YEAR, REJECTED]
+    - status: EXACT
+      transitions: [CALENDAR_CONVERTED]
+    - status: APPROXIMATE
+      transitions: [CALENDAR_CONVERTED, LOSSY]
+    - status: BETWEEN
+      transitions: [CALENDAR_CONVERTED, LOSSY]
+    - status: BEFORE
+      transitions: [CALENDAR_CONVERTED, LOSSY]
+    - status: AFTER
+      transitions: [CALENDAR_CONVERTED, LOSSY]
+    - status: UNKNOWN_DAY
+      transitions: [CALENDAR_CONVERTED, LOSSY]
+    - status: UNKNOWN_MONTH
+      transitions: [CALENDAR_CONVERTED, LOSSY]
+    - status: UNKNOWN_YEAR
+      transitions: [CALENDAR_CONVERTED, LOSSY]
+    - status: CALENDAR_CONVERTED
+      transitions: [LOSSY]
+    - status: LOSSY
+      transitions: []
+      terminal: true
+    - status: REJECTED
+      transitions: []
+      terminal: true
+
+forbiddenHardcodedStrings:
+  description: >
+    Tokens that must NEVER appear as a literal in a
+    translator-visible string (the runtime flags any string in
+    production code that is not wrapped in `format(...)` or
+    `t(...)` AND contains one of these tokens).
+  values:
+    - "Sign in"
+    - "Save"
+    - "Cancel"
+    - "Delete"
+    - "Edit"
+    - "Loading"
+    - "Error"
+    - "Confirm"
+    - "Continue"
+    - "Submit"
+    - "Send"
+    - "OK"
+    - "Yes"
+    - "No"

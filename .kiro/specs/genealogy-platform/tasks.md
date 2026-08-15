@@ -762,28 +762,30 @@ _Requirements: R1, R14, R15, R16, R18, NFR1, NFR5, NFR6, NFR8_
 
 ### Subtasks
 
-- [ ] E12.1 Offline data classification
+- [x] E12.1 Offline data classification
 
   - Xác định resource được cache, TTL, encryption capability và opt-in UI.
   - Không cache raw DNA/media hoặc sensitive living data mặc định.
   - Purge khi logout, revoke, tenant switch hoặc permission version đổi.
 
-- [ ] E12.2 Mutation queue
+- [x] E12.2 Mutation queue
 
   - IndexedDB queue có operation ID, base version và state rõ ràng.
   - Resume sync, idempotent submit và conflict-resolution UX.
-  - Không giả định Background Sync luôn tồn tại.
+  - Không giả sử Background Sync luôn tồn tại.
 
-- [ ] E12.3 Globalization tests
+- [x] E12.3 Globalization tests
 
   - Pseudolocalization, RTL, long text, Unicode/script/transliteration và locale fallback.
   - DST, IANA timezone, non-Gregorian date và ambiguous/approximate date round-trip.
   - Email/report/PDF dùng cùng glossary và locale rules.
 
-- [ ] E12.4 Accessibility hardening
+- [x] E12.4 Accessibility hardening
   - axe CI và manual keyboard/screen-reader cho onboarding, tree, edit, review, import và consent.
   - Kiểm focus, contrast, reduced motion, zoom và touch targets.
   - Lập defect severity/SLA cho accessibility regression.
+
+**Epic status: DONE**
 
 **Đầu ra:** Offline queue/cache policies, globalization suite và accessibility report.
 

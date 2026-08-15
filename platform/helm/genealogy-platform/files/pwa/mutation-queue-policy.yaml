@@ -1,0 +1,330 @@
+# E12.2 — Mutation queue contract.
+#
+# Source of truth: requirements.md R6.5, R12, design.md §10.8
+# (offline-first mutation queue), ownership-catalog.md §2.10.
+#
+# Validated by scripts/lint-mutation-queue.mjs and enforced at
+# runtime by:
+#   - apps/web/src/lib/pwa/mutation-queue.ts (queue engine)
+#   - apps/web/src/lib/pwa/idempotency.ts (operation id)
+#   - apps/web/src/lib/pwa/conflict-resolution.ts (UX hooks)
+#   - apps/web/src/lib/pwa/sync-runner.ts (resume semantics)
+#
+# Hard invariants (E12.2 — Mutation queue):
+#   * Every queued mutation MUST carry:
+#       - `operationId` (UUIDv7) generated client-side
+#       - `baseVersion` (the entity version the user edited)
+#       - `entityKind` ∈ `mutationEntityKinds`
+#       - `mutationKind` ∈ `mutationKinds`
+#       - `tenantId` (never empty)
+#       - `submittedAt` (RFC-3339 ms)
+#       - `attempts` (>=0)
+#       - `status` ∈ `mutationStates`
+#   * The queue MUST persist to IndexedDB only (LocalStorage is
+#     FORBIDDEN — quota is too small for tree projections).
+#   * Background Sync API MUST NOT be assumed available; the
+#     runtime MUST retry on `online`, `visibilitychange`,
+#     `pageshow`, and a 30-second `setTimeout` fallback.
+#   * Submit to the server MUST use the existing idempotency
+#     key header (`Idempotency-Key` per E1.3) set to
+#     `operationId` so a re-submit never duplicates the server
+#     side effect.
+#   * The conflict resolution UX MUST distinguish:
+#       - VERSION_CONFLICT (server has a newer version)
+#       - REDACTION_DENIED (server rejected because redaction
+#         changed between offline edit and online submit)
+#       - TENANT_MISMATCH (cache served the wrong tenant)
+#       - PERMISSION_REVOKED (support-jit issued during sync)
+#   * Conflicts MUST surface the local copy, the server copy and
+#     a three-way diff UI (R6.5).
+#   * Failed mutations MUST NOT be silently dropped — they live
+#     in the DLQ subtree and the UI MUST surface them with a
+#     "Retry / Discard / Open conflict" action.
+#   * The queue MUST apply the same rate-limit guard rails as
+#     the live request path: tenant boundary, permission
+#     version, OpenFGA relationship.
+#   * Eager server-side validation is FORBIDDEN — the client
+#     sends the patch as-is and the server is the source of
+#     truth (R12.3).
+policyVersion: 1.0.0
+owner: pwa
+scope: mutation-queue
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R6.5
+  design: .kiro/specs/genealogy-platform/design.md#10.8
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#2.10
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+mutationKinds:
+  description: >
+    Domain mutation kinds the queue is allowed to carry. Anything
+    outside this list MUST be rejected at the helper boundary.
+  values:
+    - PERSON_PATCH
+    - RELATIONSHIP_PATCH
+    - NAME_APPEND
+    - NAME_REPLACE
+    - EVENT_APPEND
+    - EVENT_REPLACE
+    - CITATION_APPEND
+    - CITATION_REPLACE
+    - ALBUM_LINK
+    - ALBUM_UNLINK
+    - NOTE_APPEND
+    - NOTE_REPLACE
+    - COMMENT_POST
+    - COMMENT_EDIT
+    - COMMENT_RESOLVE
+    - COLLABORATION_APPROVE
+    - COLLABORATION_REJECT
+    - COLLABORATION_REQUEST
+    - DRAFT_TREE_CREATE
+    - DRAFT_PERSON_CREATE
+
+mutationEntityKinds:
+  description: >
+    Entity kinds the queue can target. Each entity MUST be
+    identifiable by `(entityKind, entityId)`.
+  values:
+    - person
+    - relationship
+    - name
+    - event
+    - citation
+    - album
+    - note
+    - comment
+    - collaboration_request
+    - draft_tree
+    - draft_person
+
+mutationStates:
+  description: Lifecycle of a queued mutation.
+  values:
+    - DRAFT
+    - QUEUED
+    - SUBMITTING
+    - ACCEPTED
+    - CONFLICTING
+    - REJECTED
+    - DLQ
+    - DISCARDED
+    - PURGED
+
+mutationConflictReasons:
+  description: >
+    Reasons the server may reject an offline-submitted mutation.
+    Each reason drives a distinct UX.
+  values:
+    - VERSION_CONFLICT
+    - REDACTION_DENIED
+    - TENANT_MISMATCH
+    - PERMISSION_REVOKED
+    - SCHEMA_STALE
+    - RATE_LIMITED
+    - LIVING_RULE_CHANGED
+    - DNA_RULE_CHANGED
+    - CONSENT_REVOKED
+    - ENTITY_DELETED
+    - DUPLICATE_OPERATION_ID
+    - VALIDATION_FAILED
+    - ENCRYPTION_KEY_ROTATED
+
+syncTriggers:
+  description: >
+    Events that cause the runtime to attempt a sync. Background
+    Sync API is OPT-IN — the helper MUST work without it.
+  values:
+    - online
+    - visibilitychange
+    - pageshow
+    - periodic-timer
+    - manual-user
+    - mutation-queued
+    - app-foreground
+
+syncStrategies:
+  description: >
+    How a queued mutation is sent to the server. The runtime
+    MUST apply the same ABAC + tenant guard rails as the live
+    path.
+  values:
+    - IDEMPOTENT_SUBMIT
+    - CONFLICT_PRESERVE_LOCAL
+    - CONFLICT_PRESERVE_SERVER
+    - CONFLICT_THREE_WAY_MERGE
+
+mutationAuditEvents:
+  description: >
+    Append-only audit events emitted by the mutation queue.
+  values:
+    - mutation.enqueue
+    - mutation.dequeue
+    - mutation.submit
+    - mutation.accept
+    - mutation.conflict
+    - mutation.reject
+    - mutation.retry
+    - mutation.dlq
+    - mutation.discard
+    - mutation.purge
+    - mutation.idempotencyReplay
+    - mutation.versionMismatch
+    - mutation.permissionRevoked
+
+mutationFailureReasons:
+  description: >
+    Reason codes for client-side queue failures. Server-side
+    errors map onto `mutationConflictReasons`.
+  values:
+    - QUEUE_FULL
+    - OPERATION_ID_MISSING
+    - BASE_VERSION_MISSING
+    - ENTITY_KIND_UNKNOWN
+    - MUTATION_KIND_UNKNOWN
+    - TENANT_ID_MISSING
+    - INDEXED_DB_UNAVAILABLE
+    - SERIALIZATION_FAILED
+    - SYNC_ALREADY_RUNNING
+    - OFFLINE_BACKOFF_ACTIVE
+    - PERMISSION_VERSION_STALE
+
+mutationForbiddenPayloadKeys:
+  description: >
+    Keys that must NEVER appear in a queued mutation payload.
+    The runtime MUST refuse to enqueue any operation whose
+    patch carries one of these keys.
+  values:
+    - rawDna
+    - rawMedia
+    - dnaRawBytes
+    - dnaMatchResult
+    - signedUrlSecret
+    - oidcAccessToken
+    - oidcRefreshToken
+    - oidcIdToken
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - rawKmsKey
+    - rawVaultToken
+    - rawSessionCookie
+    - rawPin
+    - rawBiometric
+    - rawDnaConsentToken
+    - rawExportToken
+    - rawS3AccessKey
+    - rawS3Secret
+    - treeViewerBypass
+    - rawGuardianReason
+    - rawSupportReason
+    - rawDeletionReason
+    - rawOnboardingToken
+    - rawOidcClientSecret
+
+egressAllowlist:
+  description: Hosts the queue is allowed to submit to.
+  values:
+    - api.genealogy-platform.example
+    - bff.genealogy-platform.example
+
+storageTargets:
+  description: >
+    Storage backends the runtime is allowed to persist the queue
+    into. Anything outside this list is FORBIDDEN.
+  values:
+    - indexeddb
+
+numericBounds:
+  maxQueueSize: 5000
+  maxMutationBytes: 65536
+  maxAttempts: 8
+  baseBackoffSeconds: 2
+  maxBackoffSeconds: 600
+  jitterRatio: 0.2
+  periodicTimerSeconds: 30
+  onlineDebounceMs: 500
+  visibilityDebounceMs: 250
+  idempotencyReplayTtlSeconds: 86400
+  dlqRetentionDays: 30
+  conflictResolutionTimeoutSeconds: 900
+
+invariants:
+  operationIdRequired: true
+  baseVersionRequired: true
+  tenantIdRequired: true
+  indexeddbOnly: true
+  localStorageForbidden: true
+  backgroundSyncAssumed: false
+  idempotencyHeaderMandatory: true
+  rateLimitHonored: true
+  tenantBoundaryEnforced: true
+  permissionVersionEnforced: true
+  openfgaRelationshipRecheck: true
+  abacRecheckAtSubmit: true
+  threeWayMergeOffered: true
+  dlqNotSilentlyDropped: true
+  auditEveryTransition: true
+  forbiddenPayloadKeysEnforced: true
+  foregroundRetry: true
+  serverSourceOfTruth: true
+
+stateMatrices: {}
+
+mutationQueueStateMatrix:
+  doc: "Lifecycle of a queued mutation entry."
+  initialStatus: DRAFT
+  statuses:
+    - status: DRAFT
+      transitions: [QUEUED, DISCARDED]
+    - status: QUEUED
+      transitions: [SUBMITTING, DLQ, PURGED]
+    - status: SUBMITTING
+      transitions: [ACCEPTED, CONFLICTING, REJECTED, DLQ]
+    - status: ACCEPTED
+      transitions: []
+      terminal: true
+    - status: CONFLICTING
+      transitions: [QUEUED, DISCARDED, DLQ]
+    - status: REJECTED
+      transitions: [DISCARDED, DLQ]
+    - status: DLQ
+      transitions: [QUEUED, DISCARDED, PURGED]
+    - status: DISCARDED
+      transitions: []
+      terminal: true
+    - status: PURGED
+      transitions: []
+      terminal: true
+
+syncRunnerStateMatrix:
+  doc: "Lifecycle of the sync runner."
+  initialStatus: IDLE
+  statuses:
+    - status: IDLE
+      transitions: [DEBOUNCING, RUNNING, COOLDOWN]
+    - status: DEBOUNCING
+      transitions: [RUNNING, IDLE]
+    - status: RUNNING
+      transitions: [IDLE, BACKING_OFF, FAILED, COOLDOWN]
+    - status: BACKING_OFF
+      transitions: [IDLE, SUSPENDED]
+    - status: COOLDOWN
+      transitions: [IDLE, SUSPENDED]
+    - status: SUSPENDED
+      transitions: [RUNNING, IDLE]
+    - status: FAILED
+      transitions: [IDLE, SUSPENDED]
+
+forbiddenKeywords:
+  description: Tokens that must NEVER appear in a queued mutation.
+  values:
+    - AKIA
+    - BEGIN PRIVATE KEY
+    - BEGIN RSA PRIVATE KEY
+    - BEGIN OPENSSH PRIVATE KEY
+    - "password="
+    - "token="
+    - "secret="
+    - "postgres://"
+    - "mongodb://"
+    - "redis://"

@@ -43,6 +43,7 @@
   --radius-lg: 14px;
   --radius-xl: 24px;
   --focus-ring-width: 2px;
+  --focus-ring-color: rgb(31 58 95);
 
   /* Motion — honours `prefers-reduced-motion` automatically when the
    * global stylesheet overrides `animation-duration` to 0.001ms. */

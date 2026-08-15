@@ -1,0 +1,391 @@
+# E12.1 — Offline data classification contract.
+#
+# Source of truth: requirements.md R6, R17, R18, design.md §10.7
+# (offline cache), ownership-catalog.md §2.10.
+#
+# Validated by scripts/lint-offline-classification.mjs and enforced at
+# runtime by:
+#   - apps/web/src/lib/pwa/offline-cache.ts (cache selection)
+#   - apps/web/src/lib/pwa/purge.ts (logout / revoke / tenant switch)
+#   - apps/web/src/lib/pwa/permission-version.ts (Etag gate)
+#   - apps/web/src/lib/pwa/storage-classifier.ts (decision matrix)
+#
+# Hard invariants (E12.1 — Offline data classification):
+#   * The PWA cache MUST be opt-in: by default, the shell ships
+#     ZERO runtime data (manifest + design tokens + skeletons).
+#   * Raw DNA payloads, DNA match results, raw media bytes, signed
+#     URLs and OIDC tokens are FORBIDDEN from every cache tier
+#     (cacheable=false in every entry of `cacheableResources`).
+#   * Living-person redaction MUST be re-applied at every offline
+#     read — cached projections are keyed by permissionVersion and
+#     MUST be discarded when permissionVersion moves (R6.4).
+#   * Sensitive living fields (LIVING + privacyLevel=PRIVATE) MUST
+#     be classified as `cacheable=false` unless the user has a
+#     SHARE grant on the person.
+#   * Cached entries MUST respect tenant boundary — a cache scoped
+#     to tenant A MUST NOT serve tenant B.
+#   * Cached entries MUST respect permission version — bumping
+#     `permissionVersion` invalidates the entry on next read.
+#   * Opt-in UI MUST live in a dedicated `pwa.*` namespace and
+#     MUST default to OFF; toggling ON emits `audit.pwaCacheOptIn`.
+#   * Purge triggers: logout, session revoke, tenant switch,
+#     permissionVersion bump, support-jit-issued re-auth, plan
+#     downgrade that disables offline tier.
+#   * TTL: each cacheable entry declares `ttlSeconds`; the runtime
+#     MUST evict expired entries on next read or on app foreground.
+#   * Storage quotas are enforced — when the browser reports
+#     `navigator.storage.estimate()` approaching the
+#     `quotaWarningBytes` threshold the runtime MUST trigger
+#     eviction of lowest-priority cacheable entries first.
+#   * The cache is FORBIDDEN in Private Browsing mode when
+#     `navigator.storage.estimate` reports persistent=false
+#     (the runtime MUST surface a non-blocking toast and refuse
+#     to write).
+#   * The classification table is the only source of truth for
+#     "what can be cached"; no code path may hard-code a
+#     `caches.open(name).add(...)` outside the helper.
+policyVersion: 1.0.0
+owner: pwa
+scope: offline-classification
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R6
+  design: .kiro/specs/genealogy-platform/design.md#10.7
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#2.10
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+sensitivityClasses:
+  description: >
+    Coarse sensitivity buckets that drive the cacheability decision.
+    The classifier MUST be the only path consulted; no component
+    may bypass it.
+  values:
+    - PUBLIC_READONLY
+    - PUBLIC_CACHEABLE
+    - PRIVATE_PERSONAL
+    - PRIVATE_LIVING
+    - PRIVATE_DNA
+    - PRIVATE_MEDIA
+    - SECRET_OIDC
+    - SECRET_SIGNED_URL
+
+cacheableResources:
+  description: >
+    Resource kinds that the PWA is *allowed* to put in a Cache
+    Storage bucket. The classifier returns cacheable=false for
+    every resource NOT listed here. Each entry declares the
+    sensitivity bucket it falls into and the TTL (R6.4).
+  entries:
+    - kind: shell-manifest
+      sensitivity: PUBLIC_READONLY
+      ttlSeconds: 604800
+      maxAgeSeconds: 2592000
+      optIn: false
+    - kind: design-tokens
+      sensitivity: PUBLIC_READONLY
+      ttlSeconds: 604800
+      maxAgeSeconds: 2592000
+      optIn: false
+    - kind: locale-catalogue
+      sensitivity: PUBLIC_READONLY
+      ttlSeconds: 86400
+      maxAgeSeconds: 2592000
+      optIn: false
+    - kind: skeleton-icons
+      sensitivity: PUBLIC_READONLY
+      ttlSeconds: 604800
+      maxAgeSeconds: 2592000
+      optIn: false
+    - kind: tree-snapshot
+      sensitivity: PRIVATE_PERSONAL
+      ttlSeconds: 900
+      maxAgeSeconds: 3600
+      optIn: true
+      redactionOnRead: true
+      tenantScoped: true
+    - kind: person-summary
+      sensitivity: PRIVATE_LIVING
+      ttlSeconds: 900
+      maxAgeSeconds: 3600
+      optIn: true
+      redactionOnRead: true
+      tenantScoped: true
+    - kind: living-person-fields
+      sensitivity: PRIVATE_LIVING
+      ttlSeconds: 0
+      maxAgeSeconds: 0
+      optIn: false
+      notes: "FORBIDDEN — sensitive living fields NEVER cached."
+    - kind: dna-kit
+      sensitivity: PRIVATE_DNA
+      ttlSeconds: 0
+      maxAgeSeconds: 0
+      optIn: false
+      notes: "FORBIDDEN — DNA never cached."
+    - kind: raw-dna
+      sensitivity: PRIVATE_DNA
+      ttlSeconds: 0
+      maxAgeSeconds: 0
+      optIn: false
+      notes: "FORBIDDEN — raw DNA bytes never cached."
+    - kind: media-original
+      sensitivity: PRIVATE_MEDIA
+      ttlSeconds: 0
+      maxAgeSeconds: 0
+      optIn: false
+      notes: "FORBIDDEN — original media bytes never cached."
+    - kind: media-thumb
+      sensitivity: PRIVATE_MEDIA
+      ttlSeconds: 3600
+      maxAgeSeconds: 86400
+      optIn: true
+      tenantScoped: true
+      redactionOnRead: false
+    - kind: signed-url
+      sensitivity: SECRET_SIGNED_URL
+      ttlSeconds: 0
+      maxAgeSeconds: 0
+      optIn: false
+      notes: "FORBIDDEN — signed URLs never cached."
+    - kind: oidc-token
+      sensitivity: SECRET_OIDC
+      ttlSeconds: 0
+      maxAgeSeconds: 0
+      optIn: false
+      notes: "FORBIDDEN — tokens never cached."
+
+cacheTiers:
+  description: >
+    Cache tiers the runtime maintains. Each tier has its own
+    Cache Storage bucket, its own eviction policy, and its own
+    purge handler. The runtime MUST refuse to write to a tier
+    that is NOT in `cacheableTiers` for the active
+    `optInState`.
+  values:
+    - SHELL
+    - LOCALE
+    - PROJECTION
+    - MEDIA_THUMB
+
+cacheableTiers:
+  description: >
+    The set of tiers available under each opt-in state. Tiers
+    NOT listed for the active opt-in state MUST refuse writes.
+  defaultOptIn: false
+  whenOptedOut:
+    values:
+      - SHELL
+      - LOCALE
+  whenOptedIn:
+    values:
+      - SHELL
+      - LOCALE
+      - PROJECTION
+      - MEDIA_THUMB
+
+purgeTriggers:
+  description: >
+    Events that force a full purge of every cache tier for the
+    active tenant. The runtime MUST register handlers for every
+    event in this list.
+  values:
+    - LOGOUT
+    - SESSION_REVOKE
+    - TENANT_SWITCH
+    - PERMISSION_VERSION_BUMP
+    - SUPPORT_JIT_REAUTH
+    - PLAN_DOWNGRADE
+    - DNA_REVOKE
+    - EXPORT_DELETE_REQUESTED
+
+optInStates:
+  description: Per-user preference for offline cache opt-in.
+  values:
+    - OPTED_OUT
+    - OPTED_IN_OPTIONAL
+    - OPTED_IN_REQUIRED
+  defaults:
+    onPublicDevice: OPTED_OUT
+    onPrivateDevice: OPTED_IN_OPTIONAL
+    onSharedKiosk: OPTED_OUT
+    notes: >
+      OPTED_IN_REQUIRED is reserved for the future "offline-only"
+      plan tier (R17.3); when set, the runtime MUST refuse to
+      disable the cache and the UI hides the toggle.
+
+pwaAuditEvents:
+  description: >
+    Append-only audit events emitted by the PWA cache. Every
+    write, read, eviction and purge emits one event.
+  values:
+    - pwa.cache.optIn
+    - pwa.cache.optOut
+    - pwa.cache.write
+    - pwa.cache.read
+    - pwa.cache.evict
+    - pwa.cache.purge
+    - pwa.cache.quotaWarning
+    - pwa.cache.privateModeRefusal
+    - pwa.cache.permissionVersionMismatch
+    - pwa.cache.tenantMismatch
+
+pwaFailureReasons:
+  description: Reason codes for cache failure responses.
+  values:
+    - OPT_OUT
+    - SENSITIVITY_FORBIDDEN
+    - QUOTA_EXCEEDED
+    - TENANT_MISMATCH
+    - PERMISSION_VERSION_STALE
+    - SIGNED_URL_FORBIDDEN
+    - DNA_FORBIDDEN
+    - MEDIA_RAW_FORBIDDEN
+    - LIVING_FIELD_FORBIDDEN
+    - PRIVATE_MODE_PERSISTENT_FALSE
+    - TIER_NOT_ALLOWED
+    - TTL_EXPIRED
+    - UNKNOWN_RESOURCE_KIND
+
+pwaForbiddenPayloadKeys:
+  description: >
+    Keys that must NEVER appear in a cache entry's metadata or
+    value. The runtime's `purge` and `classify` helpers MUST
+    refuse any entry whose metadata carries one of these keys.
+  values:
+    - rawDna
+    - rawMedia
+    - dnaRawBytes
+    - dnaMatchResult
+    - signedUrlSecret
+    - oidcAccessToken
+    - oidcRefreshToken
+    - oidcIdToken
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - rawKmsKey
+    - rawVaultToken
+    - rawSessionCookie
+    - rawPin
+    - rawBiometric
+    - rawDnaConsentToken
+    - rawExportToken
+    - rawS3AccessKey
+    - rawS3Secret
+    - treeViewerBypass
+    - rawGuardianReason
+    - rawSupportReason
+    - rawDeletionReason
+    - rawOnboardingToken
+    - rawOidcClientSecret
+
+egressAllowlist:
+  description: >
+    Hosts the runtime is allowed to populate the cache from.
+    Anything outside the allowlist MUST be refused even if the
+    resource kind would otherwise be cacheable (defence in depth
+    against CSRF / cross-origin attacks).
+  values:
+    - same-origin
+    - cdn.genealogy-platform.example
+    - api.genealogy-platform.example
+
+numericBounds:
+  defaultTtlSeconds: 900
+  maxTtlSeconds: 604800
+  maxProjectionBytes: 5242880
+  maxMediaThumbBytes: 2097152
+  maxLocaleCatalogueBytes: 524288
+  quotaWarningBytes: 52428800
+  quotaHardLimitBytes: 104857600
+  purgeDebounceMs: 250
+  permissionVersionHeaderMaxLength: 128
+  optInToggleDebounceMs: 600
+
+invariants:
+  dnaBucketAccess: FORBIDDEN
+  dnaCacheableKinds: []
+  rawDnaCacheable: false
+  rawMediaCacheable: false
+  signedUrlCacheable: false
+  oidcTokenCacheable: false
+  tenantBoundaryEnforced: true
+  permissionVersionEnforced: true
+  optInDefault: false
+  privateBrowsingRefusal: true
+  redactionReappliedOnRead: true
+  auditEveryWrite: true
+  forbiddenPayloadKeysEnforced: true
+  cacheHelperSoleEntryPoint: true
+
+stateMatrices: {}
+
+pwaCacheLifecycleStateMatrix:
+  doc: "Lifecycle of a single cache entry. The classifier moves entries through these states."
+  initialStatus: UNINITIALIZED
+  statuses:
+    - status: UNINITIALIZED
+      transitions: [CLASSIFYING]
+    - status: CLASSIFYING
+      transitions: [CLASSIFIED_ALLOWED, CLASSIFIED_DENIED]
+    - status: CLASSIFIED_ALLOWED
+      transitions: [WRITING, EVICTING]
+    - status: CLASSIFIED_DENIED
+      transitions: [PURGING]
+    - status: WRITING
+      transitions: [READY, QUOTA_DENIED]
+    - status: READY
+      transitions: [READING, EVICTING, PURGING]
+    - status: READING
+      transitions: [SERVED, REDACTING, STALE, TENANT_MISMATCH, PERMISSION_STALE]
+    - status: REDACTING
+      transitions: [SERVED]
+    - status: SERVED
+      transitions: [READY]
+    - status: STALE
+      transitions: [EVICTING]
+    - status: EVICTING
+      transitions: [EVICTED, READY]
+    - status: EVICTED
+      transitions: []
+      terminal: true
+    - status: PURGING
+      transitions: [PURGED]
+    - status: PURGED
+      transitions: []
+      terminal: true
+    - status: QUOTA_DENIED
+      transitions: [EVICTING]
+    - status: PERMISSION_STALE
+      transitions: [EVICTING]
+    - status: TENANT_MISMATCH
+      transitions: [EVICTING]
+
+optInStateMatrix:
+  doc: "Lifecycle of the user's opt-in preference."
+  initialStatus: OPTED_OUT
+  statuses:
+    - status: OPTED_OUT
+      transitions: [OPTED_IN_OPTIONAL, REVOKED]
+    - status: OPTED_IN_OPTIONAL
+      transitions: [OPTED_OUT, OPTED_IN_REQUIRED, REVOKED, LOCKED]
+    - status: OPTED_IN_REQUIRED
+      transitions: [OPTED_OUT, REVOKED, LOCKED]
+    - status: REVOKED
+      transitions: []
+      terminal: true
+    - status: LOCKED
+      transitions: [OPTED_IN_OPTIONAL, OPTED_IN_REQUIRED, REVOKED]
+
+forbiddenKeywords:
+  description: Tokens that must NOT appear in any cache entry payload.
+  values:
+    - "AKIA"
+    - "BEGIN PRIVATE KEY"
+    - "BEGIN RSA PRIVATE KEY"
+    - "BEGIN OPENSSH PRIVATE KEY"
+    - "password="
+    - "token="
+    - "secret="
+    - postgres-protocol-marker
+    - mongodb-protocol-marker
+    - redis-protocol-marker
+    - slack-webhook-marker

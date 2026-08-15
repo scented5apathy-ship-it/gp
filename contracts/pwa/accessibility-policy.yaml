@@ -1,0 +1,407 @@
+# E12.4 — Accessibility hardening contract.
+#
+# Source of truth: requirements.md R6, R17, R18, NFR7, design.md
+# §10.5 (accessibility), ownership-catalog.md §2.10.
+#
+# Validated by scripts/lint-accessibility.mjs and enforced at
+# runtime by:
+#   - apps/web/src/lib/a11y/keyboard-tree.ts (keyboard helpers)
+#   - apps/web/src/lib/a11y/focus-trap.ts (modal focus)
+#   - apps/web/src/lib/a11y/live-region.tsx (status messages)
+#   - apps/web/src/lib/a11y/use-prefers-reduced-motion.ts
+#   - apps/web/src/lib/a11y/contrast.ts (token color guard)
+#   - apps/web/test/a11y/axe.test.ts (axe-core CI gate)
+#
+# Hard invariants (E12.4 — Accessibility hardening):
+#   * All interactive surfaces MUST be reachable via keyboard
+#     alone — the `<TreeView>`, profile editor, comment thread,
+#     import dialog and consent dialog are the canonical flows.
+#   * axe-core CI gate MUST pass with zero violations on each
+#     canonical flow; severity/SLA matrix below is enforced.
+#   * Focus MUST be visible on every interactive element; tokens
+#     MUST declare a `--focus-ring-width` AND a `--focus-ring-color`
+#     that yields a contrast ratio >= 3:1 against the surface.
+#   * `prefers-reduced-motion: reduce` MUST collapse every
+#     animation to <= 0.001ms (R18.4 / WCAG 2.2 SC 2.3.3).
+#   * Touch targets MUST be >= 24x24 CSS px (WCAG 2.2 SC 2.5.8).
+#   * Page zoom MUST remain readable up to 200%; the runtime MUST
+#     not clip content beyond 200% zoom.
+#   * Live regions MUST be wired on every async operation
+#     (selection, save, conflict, error, sync) — see
+#     `a11y.statusAnnounce` in en catalogue.
+#   * Color contrast for body text MUST be >= 4.5:1 (AA) and
+ *     >= 7:1 for "important" copy; tokens are validated by
+#     `scripts/lint-accessibility.mjs` at lint time.
+#   * A defect severity/SLA matrix is enforced:
+#       - critical: 0 days, blocks release
+#       - serious: 1 day to acknowledge, 7 days to fix
+#       - moderate: 7 days to acknowledge, 30 days to fix
+#       - minor: 30 days to acknowledge, next quarter to fix
+policyVersion: 1.0.0
+owner: pwa
+scope: accessibility
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R17
+  design: .kiro/specs/genealogy-platform/design.md#10.5
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#2.10
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+a11yFlows:
+  description: >
+    The canonical user flows the axe-core CI gate MUST cover.
+    Each flow declares the URL, the keyboard interactions, the
+    live-region announcer and the touch targets.
+  values:
+    - flow: onboarding
+      path: /[locale]/onboarding
+      keyboardShortcuts:
+        - tab
+        - shift+tab
+        - enter
+        - escape
+        - space
+      liveRegion: a11y.statusAnnounce
+      touchTargets: ["continue-button", "language-toggle", "theme-toggle"]
+    - flow: tree-list
+      path: /[locale]/trees
+      keyboardShortcuts:
+        - arrow-down
+        - arrow-up
+        - home
+        - end
+        - page-up
+        - page-down
+        - enter
+        - space
+      liveRegion: a11y.treeListHelp
+      touchTargets: ["tree-row", "create-tree-button"]
+    - flow: tree-canvas
+      path: /[locale]/trees/[treeId]/pedigree
+      keyboardShortcuts:
+        - tab
+        - shift+tab
+        - enter
+        - escape
+        - space
+      liveRegion: a11y.selectedAnnounce
+      touchTargets: ["viewport-canvas", "minimap", "zoom-controls"]
+    - flow: profile-edit
+      path: /[locale]/persons/[treeId]/[personId]?edit=true
+      keyboardShortcuts:
+        - tab
+        - shift+tab
+        - enter
+        - escape
+        - space
+      liveRegion: a11y.statusAnnounce
+      touchTargets: ["edit-save", "edit-cancel", "edit-revert", "field-input"]
+    - flow: timeline
+      path: /[locale]/persons/[treeId]/[personId]?tab=timeline
+      keyboardShortcuts:
+        - tab
+        - shift+tab
+        - enter
+        - escape
+      liveRegion: a11y.timelineAnnounce
+      touchTargets: ["timeline-range", "timeline-event"]
+    - flow: import-dialog
+      path: /[locale]/trees/[treeId]?action=import
+      keyboardShortcuts:
+        - tab
+        - shift+tab
+        - enter
+        - escape
+      liveRegion: a11y.statusAnnounce
+      touchTargets: ["dropzone", "submit-button", "cancel-button"]
+    - flow: consent-dialog
+      path: /[locale]/consent
+      keyboardShortcuts:
+        - tab
+        - shift+tab
+        - enter
+        - escape
+      liveRegion: a11y.statusAnnounce
+      touchTargets: ["consent-accept", "consent-reject", "consent-defer"]
+
+wcagSuccessCriteria:
+  description: WCAG 2.2 success criteria the platform commits to.
+  values:
+    - id: 1.1.1
+      title: Non-text Content
+      level: A
+    - id: 1.3.1
+      title: Info and Relationships
+      level: A
+    - id: 1.4.3
+      title: Contrast Minimum
+      level: AA
+    - id: 1.4.6
+      title: Contrast Enhanced
+      level: AAA
+    - id: 1.4.11
+      title: Non-text Contrast
+      level: AA
+    - id: 2.1.1
+      title: Keyboard
+      level: A
+    - id: 2.1.2
+      title: No Keyboard Trap
+      level: A
+    - id: 2.4.1
+      title: Bypass Blocks
+      level: A
+    - id: 2.4.3
+      title: Focus Order
+      level: A
+    - id: 2.4.7
+      title: Focus Visible
+      level: AA
+    - id: 2.5.8
+      title: Target Size Minimum
+      level: AA
+    - id: 2.3.3
+      title: Animation from Interactions
+      level: AAA
+    - id: 3.3.1
+      title: Error Identification
+      level: A
+    - id: 3.3.2
+      title: Labels or Instructions
+      level: A
+    - id: 4.1.2
+      title: Name, Role, Value
+      level: A
+    - id: 4.1.3
+      title: Status Messages
+      level: AA
+
+defectSeverityMatrix:
+  description: >
+    Severity classification for accessibility defects with
+    response/fix SLAs. The CI gate MUST fail on any critical
+    finding.
+  severities:
+    - severity: critical
+      maxAcknowledgementHours: 0
+      maxFixDays: 0
+      blocksRelease: true
+    - severity: serious
+      maxAcknowledgementHours: 24
+      maxFixDays: 7
+      blocksRelease: true
+    - severity: moderate
+      maxAcknowledgementHours: 168
+      maxFixDays: 30
+      blocksRelease: false
+    - severity: minor
+      maxAcknowledgementHours: 720
+      maxFixDays: 90
+      blocksRelease: false
+
+contrastTokens:
+  description: >
+    Token pairs the runtime MUST validate for contrast ratio
+    against the surface. Each pair must satisfy the ratio in
+    `minimumRatio`.
+  entries:
+    - pair: [--color-on-surface, --color-surface]
+      minimumRatio: 7
+      kind: text-on-surface
+    - pair: [--color-on-surface-muted, --color-surface]
+      minimumRatio: 4.5
+      kind: muted-text-on-surface
+    - pair: [--color-on-primary, --color-primary]
+      minimumRatio: 7
+      kind: text-on-primary
+    - pair: [--color-on-accent, --color-accent]
+      minimumRatio: 4.5
+      kind: text-on-accent
+    - pair: [--focus-ring-color, --color-surface]
+      minimumRatio: 3
+      kind: focus-ring
+
+focusRingSpec:
+  description: >
+    Spec for the focus ring token. The runtime MUST apply the
+    ring on every interactive element on `:focus-visible`.
+  widthToken: --focus-ring-width
+  colorToken: --focus-ring-color
+  minWidthCssPx: 2
+  minContrastRatio: 3
+
+touchTargetSpec:
+  description: Spec for touch target sizes.
+  minWidthCssPx: 24
+  minHeightCssPx: 24
+  minSpacingCssPx: 8
+  exceptions:
+    - inline-link-within-prose
+    - icon-only-with-tooltip
+
+reducedMotionSpec:
+  description: Reduced motion behaviour.
+  mediaQuery: "(prefers-reduced-motion: reduce)"
+  animationDurationOverrideMs: 0.001
+  transitionDurationOverrideMs: 0.001
+  scrollBehavior: auto
+  notes: >
+    The global stylesheet must collapse every
+    `animation-duration` and `transition-duration` to 0.001ms
+    when the media query matches (R18.4 / WCAG 2.2 SC 2.3.3).
+
+zoomSpec:
+  description: Page zoom behaviour.
+  minScale: 1
+  maxScale: 2
+  reflow: required
+  horizontalScrollForbidden: true
+  textSpacingOverrideRequired: true
+
+a11yAuditEvents:
+  description: Audit events emitted by the accessibility layer.
+  values:
+    - a11y.focusTrapEntered
+    - a11y.focusTrapExited
+    - a11y.focusReturned
+    - a11y.liveRegionAnnounce
+    - a11y.reducedMotionDetected
+    - a11y.zoomAdjusted
+    - a11y.contrastViolationDetected
+    - a11y.touchTargetViolation
+    - a11y.keyboardTrapDetected
+    - a11y.axeGateResult
+
+a11yFailureReasons:
+  description: Reason codes for accessibility failures.
+  values:
+    - AXE_CRITICAL_FINDING
+    - AXE_SERIOUS_FINDING
+    - FOCUS_NOT_VISIBLE
+    - FOCUS_TRAP_NO_RETURN
+    - KEYBOARD_UNREACHABLE
+    - LIVE_REGION_MISSING
+    - TOUCH_TARGET_TOO_SMALL
+    - CONTRAST_BELOW_MINIMUM
+    - ZOOM_BEYOND_LIMIT
+    - REDUCED_MOTION_NOT_RESPECTED
+    - ROLE_MISSING
+    - LABEL_MISSING
+    - HEADING_ORDER_SKIPPED
+
+a11yForbiddenPayloadKeys:
+  description: >
+    Keys that MUST NOT appear in accessibility audit payloads
+    (the runtime MUST scrub these before emit).
+  values:
+    - rawDna
+    - rawMedia
+    - dnaRawBytes
+    - dnaMatchResult
+    - signedUrlSecret
+    - oidcAccessToken
+    - oidcRefreshToken
+    - oidcIdToken
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - rawKmsKey
+    - rawVaultToken
+    - rawSessionCookie
+    - rawPin
+    - rawBiometric
+    - rawDnaConsentToken
+    - rawExportToken
+    - rawS3AccessKey
+    - rawS3Secret
+    - treeViewerBypass
+    - rawGuardianReason
+    - rawSupportReason
+    - rawDeletionReason
+    - rawOnboardingToken
+    - rawOidcClientSecret
+
+egressAllowlist:
+  description: Hosts the accessibility pipeline is allowed to call.
+  values:
+    - api.genealogy-platform.example
+
+numericBounds:
+  focusRingMinWidthCssPx: 2
+  touchTargetMinWidthCssPx: 24
+  touchTargetMinHeightCssPx: 24
+  zoomMax: 2
+  textSpacingOverrideScale: 1.5
+  axeTimeoutMs: 30000
+  liveRegionCoalesceMs: 250
+  contrastRatioNormalText: 4.5
+  contrastRatioLargeText: 3
+  contrastRatioEnhanced: 7
+
+invariants:
+  keyboardAloneReachable: true
+  focusAlwaysVisible: true
+  reducedMotionHonoured: true
+  touchTargetMinSize: true
+  zoomUpTo200Percent: true
+  liveRegionsOnAsyncOps: true
+  contrastBodyText: 4.5
+  contrastEnhancedText: 7
+  axeZeroCritical: true
+  axeZeroSeriousOnCanonical: true
+  tenantBoundaryEnforced: true
+  forbiddenPayloadKeysEnforced: true
+
+stateMatrices: {}
+
+axeGateStateMatrix:
+  doc: "Lifecycle of an axe-core CI gate run."
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [RUNNING, SKIPPED]
+    - status: RUNNING
+      transitions: [PASS, FAIL_CRITICAL, FAIL_SERIOUS, FAIL_MODERATE, FAIL_MINOR, ERROR]
+    - status: PASS
+      transitions: []
+      terminal: true
+    - status: FAIL_CRITICAL
+      transitions: []
+      terminal: true
+    - status: FAIL_SERIOUS
+      transitions: []
+      terminal: true
+    - status: FAIL_MODERATE
+      transitions: []
+      terminal: true
+    - status: FAIL_MINOR
+      transitions: []
+      terminal: true
+    - status: ERROR
+      transitions: [RUNNING, SKIPPED]
+    - status: SKIPPED
+      transitions: []
+      terminal: true
+
+focusTrapStateMatrix:
+  doc: "Lifecycle of a focus trap (modal / dialog)."
+  initialStatus: IDLE
+  statuses:
+    - status: IDLE
+      transitions: [ENTERING]
+    - status: ENTERING
+      transitions: [ACTIVE, EXITED]
+    - status: ACTIVE
+      transitions: [RESTORING]
+    - status: RESTORING
+      transitions: [EXITED]
+    - status: EXITED
+      transitions: []
+      terminal: true
+
+forbiddenKeywords:
+  description: Tokens that must NEVER appear in accessibility code.
+  values:
+    - onClick without role
+    - onClick without keyboard handler
+    - role="presentation" on interactive element
+    - aria-hidden="true" on focusable element
+    - tabindex="-1" on focusable element without justification
