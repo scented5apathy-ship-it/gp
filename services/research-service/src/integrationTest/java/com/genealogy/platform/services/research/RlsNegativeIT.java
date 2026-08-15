@@ -122,6 +122,25 @@ class RlsNegativeIT {
     }
 
     @Test
+    @DisplayName("V4 migration creates the consumer_inbox table with RLS FORCE")
+    void consumerInboxAppliedWithRlsForce() throws SQLException {
+        try (Connection c = DriverManager.getConnection(ownerUrl, ownerUser, ownerPassword);
+                Statement s = c.createStatement()) {
+            try (ResultSet rs = s.executeQuery(
+                    "SELECT relrowsecurity, relforcerowsecurity "
+                            + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                            + "WHERE n.nspname = 'research_service' "
+                            + "  AND c.relname = 'consumer_inbox'")) {
+                assertThat(rs.next()).as("consumer_inbox table must exist").isTrue();
+                assertThat(rs.getBoolean(1))
+                        .as("RLS must be enabled on consumer_inbox").isTrue();
+                assertThat(rs.getBoolean(2))
+                        .as("FORCE RLS must be on for consumer_inbox").isTrue();
+            }
+        }
+    }
+
+    @Test
     @DisplayName("V2 also creates the five bridge tables")
     void bridgeTablesApply() throws SQLException {
         try (Connection c = DriverManager.getConnection(ownerUrl, ownerUser, ownerPassword);
@@ -348,6 +367,80 @@ class RlsNegativeIT {
                 assertThat(rs.getLong(1))
                         .as("tenant-bbbb session must NOT see tenant-aaaa "
                                 + "conflicts")
+                        .isZero();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("E6.1e: workspace_projection rows are tenant-isolated for SELECT")
+    void workspaceProjectionCrossTenantBlocked() throws SQLException {
+        try (Connection c = newRuntimeSession("tenant-bbbb-2222");
+                PreparedStatement ps = c.prepareStatement(
+                        "SELECT count(*) FROM research_service.workspace_projection")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getLong(1))
+                        .as("tenant-bbbb session must NOT see tenant-aaaa "
+                                + "workspace projections")
+                        .isZero();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("E6.1e: consumer_inbox enforces tenant isolation on SELECT")
+    void consumerInboxCrossTenantBlocked() throws SQLException {
+        try (Connection c = newRuntimeSession("tenant-bbbb-2222");
+                PreparedStatement ps = c.prepareStatement(
+                        "SELECT count(*) FROM research_service.consumer_inbox")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getLong(1))
+                        .as("tenant-bbbb session must NOT see tenant-aaaa "
+                                + "consumer inbox rows")
+                        .isZero();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("E6.1e: consumer_inbox WITH CHECK rejects cross-tenant INSERT")
+    void consumerInboxCrossTenantInsertRejected() throws SQLException {
+        try (Connection c = newRuntimeSession("tenant-aaaa-1111");
+                PreparedStatement ps = c.prepareStatement(
+                        "INSERT INTO research_service.consumer_inbox "
+                                + "(tenant_id, source_topic, event_id, event_type, "
+                                + " payload_hash) "
+                                + "VALUES (?, ?, ?, ?, ?)")) {
+            ps.setString(1, "tenant-bbbb-2222"); // wrong tenant
+            ps.setString(2, "genealogy.tree-visibility.v1.v1");
+            ps.setString(3, "evt-cross-" + UUID.randomUUID());
+            ps.setString(4, "gp.genealogy.v1.TreeVisibilityChanged");
+            ps.setString(5, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+            SQLException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                    SQLException.class, ps::executeUpdate);
+            assertThat(ex.getSQLState() == null || ex.getSQLState().startsWith("42")
+                    || ex.getMessage().toLowerCase().contains("row-level")
+                    || ex.getMessage().toLowerCase().contains("policy"))
+                    .as("WITH CHECK must reject a cross-tenant INSERT into "
+                            + "consumer_inbox. Actual SQLState=%s, message=%s",
+                            ex.getSQLState(), ex.getMessage())
+                    .isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("E6.1e: outbox row visibility remains tenant-scoped")
+    void outboxCrossTenantSelectReturnsZeroRows() throws SQLException {
+        try (Connection c = newRuntimeSession("tenant-bbbb-2222");
+                PreparedStatement ps = c.prepareStatement(
+                        "SELECT count(*) FROM research_service.outbox")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getLong(1))
+                        .as("tenant-bbbb session must NOT see tenant-aaaa "
+                                + "outbox rows")
                         .isZero();
             }
         }

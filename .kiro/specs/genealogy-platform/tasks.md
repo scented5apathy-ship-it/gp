@@ -497,7 +497,7 @@ _Requirements: R4, R6, R7, R15, R17, R18, NFR2, NFR7_
     - `ReAuthorizationPort` adapter (Spring bean) gọi OpenFGA
       + ABAC overlay (FlagChip) cho submit / approve / partial-merge.
 
-  - [ ] E6.1e Testcontainers + Helm chart + smoke
+  - [x] E6.1e Testcontainers + Helm chart + smoke
 
     - Testcontainers integration tests: Postgres + Kafka +
       OpenFGA + Apicurio spin-up; verify RLS prevents cross-tenant

@@ -1399,3 +1399,142 @@ backups:
     enabled: true
     schedule: "0 5 * * *"
     destinationRef: backup-vault
+
+# ---------------------------------------------------------------------------
+# Domain services — research-service is the first E6.1e workload rendered
+# into the umbrella chart. Each domain service keeps its own sub-section
+# so the per-service values can be overridden per environment without
+# disturbing the platform baseline above.
+#
+# Per `agent-execution.md` §4.4 the workload template is intentionally
+# explicit (replica, PDB, probes, NetworkPolicy, Vault annotations,
+# OpenFeature sidecar) so no implicit capability is borrowed from a
+# generic "service" template. The chart linter
+# (`scripts/lint-helm.mjs`) requires the canonical key set.
+#
+# IMPORTANT: helm's template parser treats `.Values.<x>-<y>` as the
+# arithmetic expression `<x> - <y>`, so map keys MUST NOT contain
+# hyphens. The `research` sub-map is the canonical values key for
+# the research-service workload.
+# ---------------------------------------------------------------------------
+services:
+  research:
+    # Toggle the workload from the per-env values files.
+    # Default `true` so `helm template --validate-only`
+    # succeeds from day one; per-env values can disable for
+    # dev clusters that don't run the service yet.
+    enabled: true
+    # Per `ownership-catalog.md` §2.1 the research-service
+    # replica count is the platform default until E13.3 wires
+    # per-service scale tuning. The `replicas` map lets
+    # per-env values files (`values-saas.yaml` /
+    # `values-onprem.yaml` / `values-dev.yaml`) override the
+    # count without touching the chart default.
+    replicas:
+      dev: 1
+      onprem: 2
+      saas: 3
+    image:
+      repository: genealogy/research-service
+      tag: "0.1.0"
+      registry: ghcr.io
+    resources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # The probe contract follows the Spring Boot Actuator
+    # convention baked into the platform starter (see
+    # `services/research-service/src/main/resources/application.yml`):
+    #   - `/actuator/health/liveness` — liveness (livenessState)
+    #   - `/actuator/health/readiness` — readiness (readinessState + db)
+    # The chart's `_probes.tpl` uses `/healthz/*` for the platform
+    # components; research-service intentionally deviates because the
+    # Spring Boot starter owns the actuator mapping, not the
+    # umbrella chart.
+    probes:
+      livenessPath: /actuator/health/liveness
+      readinessPath: /actuator/health/readiness
+      startupPath: /actuator/health/readiness
+      liveness:
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 15
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+      startup:
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 24
+    # ServiceAccount is the Vault Agent Injector anchor. The
+    # annotation set follows the platform E2.6 contract; the
+    # role name `research-service` must match the policy in
+    # `platform/vault/policies.yaml`.
+    serviceAccount:
+      create: true
+      name: research-service
+      vaultAnnotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-revoke-on-shutdown: "true"
+        vault.hashicorp.com/role: research-service
+        vault.hashicorp.com/agent-inject-template-database: |
+          {{- with secret "secret/data/research-service/database" -}}
+          SPRING_DATASOURCE_PASSWORD={{ .Data.data.password }}
+          {{- end }}
+        vault.hashicorp.com/agent-inject-template-kafka: |
+          {{- with secret "secret/data/research-service/kafka" -}}
+          KAFKA_SASL_PASSWORD={{ .Data.data.password }}
+          {{- end }}
+    # The OpenFeature sidecar is the platform's Flagsmith
+    # provider host (per E2.8). The research-service workload
+    # declares it as an opt-in container; the sidecar is
+    # shipped only when `openfeature.enabled` is true.
+    openfeature:
+      enabled: true
+      image:
+        repository: flagsmith/flagsmith-feature-flags
+        tag: "1.0.0"
+        registry: ghcr.io
+    # PDB is the platform default (see baseline/pod-disruption-budgets.yaml).
+    # Per-service override only flips `minAvailable` if a workload needs
+    # tighter guarantees.
+    podDisruptionBudget:
+      minAvailable: 1
+    # NetworkPolicy: default-deny Ingress + Egress (matches the
+    # Istio contract stub) + an explicit allow-list for the
+    # in-mesh callers (Kong via gp-edge, the relay runner
+    # peers via gp-services, the OTel Collector via
+    # gp-observability).
+    networkPolicy:
+      enabled: true
+      ingressAllowedNamespaces:
+        - gp-edge
+        - gp-services
+        - gp-bff
+        - gp-observability
+      egressAllowedNamespaces:
+        - gp-data
+        - gp-platform
+        - gp-observability
+        - kube-system
+    # ExternalSecret refs — never literal credentials. Each
+    # per-env values file overrides `secretRefs.clusterSecretStore`
+    # + the Vault paths; the chart default ships the dev
+    # cluster-store + dev Vault paths so `helm template
+    # --validate-only` succeeds from day one.
+    secretRefs:
+      clusterSecretStore: vault-backend
+      databaseVaultPath: secret/dev/data/research-service/database
+      kafkaVaultPath: secret/dev/data/research-service/kafka
+    # Outbox relay cron — the relay driver (the
+    # `ResearchOutboxRelayRunner` @Scheduled bean) is wired
+    # on the same pod as the service. The cron expression
+    # matches the application.yml default; per-env values
+    # files can override.
+    relayCron: "0/15 * * * * *"

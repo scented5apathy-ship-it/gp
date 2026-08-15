@@ -1,0 +1,202 @@
+{{/*
+research service Deployment (E6.1e).
+
+This is the FIRST domain-service Deployment rendered into the
+umbrella chart. Per `agent-execution.md` §4.4 the workload is
+intentionally explicit:
+
+  - replica count (per-env override)
+  - canonical probe paths (/actuator/health/*)
+  - Vault Agent Injector annotations
+  - OpenFeature sidecar (opt-in via values)
+  - serviceAccount tied to the Vault policy
+  - containerSecurityContext (non-root, read-only FS where possible)
+  - podAntiAffinity (one pod per node — the workload is read-only
+    on Postgres + a Kafka consumer; running two pods on the
+    same node buys nothing)
+
+The umbrella's `_probes.tpl` is intentionally NOT used here
+because the research service workload surfaces the Spring Boot
+Actuator contract (the platform starter maps /actuator/health/*
+to the readinessState + livenessState health groups), while
+the platform-component workload templates use the /healthz/*
+contract exposed by the platform starter's HttpFilterChain.
+
+Domain authorization lives in the application (OpenFGA + ABAC)
+per design.md §5 / §13; this template MUST NOT add an Istio
+AuthorizationPolicy or Kong route.
+*/}}
+{{- $svc := .Values.services.research }}
+{{- if $svc.enabled }}
+{{- $replicas := dig "saas" 3 $svc.replicas }}
+{{- $sa := $svc.serviceAccount }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: research-service
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: research-service
+    app.kubernetes.io/version: {{ $svc.image.tag }}
+    gp.genealogy/contract-only: "true"
+spec:
+  replicas: {{ $replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: research-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: research-service
+        app.kubernetes.io/version: {{ $svc.image.tag }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+        {{- range $k, $v := $sa.vaultAnnotations }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $sa.name }}
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: genealogy-platform
+                    app.kubernetes.io/component: research-service
+      containers:
+        - name: research-service
+          image: {{ include "genealogy-platform.image" (dict "image" $svc.image) }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+            - name: actuator
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: research-service-config
+            - secretRef:
+                name: research-service-database
+            - secretRef:
+                name: research-service-kafka
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseG1GC -XX:MaxRAMPercentage=75.0"
+            - name: SPRING_PROFILES_ACTIVE
+              value: production
+            - name: SERVER_PORT
+              value: "8080"
+            - name: GRPC_SERVER_PORT
+              value: "9090"
+            - name: OTEL_SERVICE_NAME
+              value: research-service
+          livenessProbe:
+            httpGet:
+              path: {{ $svc.probes.livenessPath }}
+              port: actuator
+            initialDelaySeconds: {{ $svc.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $svc.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $svc.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $svc.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ $svc.probes.readinessPath }}
+              port: actuator
+            initialDelaySeconds: {{ $svc.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $svc.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $svc.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $svc.probes.readiness.failureThreshold }}
+          startupProbe:
+            httpGet:
+              path: {{ $svc.probes.startupPath }}
+              port: actuator
+            periodSeconds: {{ $svc.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ $svc.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ $svc.probes.startup.failureThreshold }}
+          resources:
+            requests:
+              cpu: {{ $svc.resources.requests.cpu }}
+              memory: {{ $svc.resources.requests.memory }}
+            limits:
+              cpu: {{ $svc.resources.limits.cpu }}
+              memory: {{ $svc.resources.limits.memory }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      {{- if $svc.openfeature.enabled }}
+        - name: openfeature-sidecar
+          image: {{ include "genealogy-platform.image" (dict "image" $svc.openfeature.image) }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--provider=flagsmith"
+            - "--listen=0.0.0.0:9100"
+            - "--safe-defaults"
+          ports:
+            - name: openfeature
+              containerPort: 9100
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: openfeature
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: openfeature
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 64Mi
+            limits:
+              cpu: "200m"
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

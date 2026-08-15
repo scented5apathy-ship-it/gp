@@ -1,0 +1,26 @@
+{{/*
+research service PodDisruptionBudget (E6.1e).
+
+Default-deny voluntary disruption to keep the SLO budget
+intact. The PDB keeps at least one pod available during
+node drains / cluster upgrades so the in-flight gRPC
+streams + the @Scheduled relay runner never lose their
+claim.
+*/}}
+{{- $svc := .Values.services.research }}
+{{- if $svc.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: research-service
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: research-service
+spec:
+  minAvailable: {{ $svc.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: research-service
+{{- end }}

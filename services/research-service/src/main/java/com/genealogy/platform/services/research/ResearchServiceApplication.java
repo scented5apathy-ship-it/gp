@@ -3,6 +3,7 @@ package com.genealogy.platform.services.research;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Entry point for {@code research-service}. The
@@ -15,10 +16,13 @@ import org.springframework.scheduling.annotation.EnableAsync;
  *
  * <p>{@code @EnableAsync} is wired so the outbox relay (E6.1d) can
  * run on the platform's default executor without re-annotating
- * each service later.
+ * each service later. E6.1e adds {@code @EnableScheduling} so the
+ * {@code ResearchOutboxRelayRunner} can drive the relay via
+ * {@code @Scheduled} per ADR-E0.5-08 + {@code design.md} §7.3.
  */
 @SpringBootApplication
 @EnableAsync
+@EnableScheduling
 public class ResearchServiceApplication {
 
     public static void main(String[] args) {

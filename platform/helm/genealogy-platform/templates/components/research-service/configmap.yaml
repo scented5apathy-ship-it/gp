@@ -1,0 +1,55 @@
+{{/*
+research service ConfigMap (E6.1e).
+
+Non-secret workload configuration. Secrets are intentionally
+NOT inlined here — see `external-secret.yaml` for the
+Vault-backed ExternalSecret refs.
+*/}}
+{{- $svc := .Values.services.research }}
+{{- if $svc.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: research-service-config
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: research-service
+data:
+  SPRING_APPLICATION_NAME: "research-service"
+  SERVER_PORT: "8080"
+  GRPC_SERVER_PORT: "9090"
+  SERVER_SHUTDOWN: "graceful"
+  SERVER_FORWARD_HEADERS_STRATEGY: "framework"
+  SERVER_COMPRESSION_ENABLED: "true"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres.gp-data.svc.cluster.local:5432/research_service"
+  SPRING_DATASOURCE_USERNAME: "research_service_app"
+  SPRING_FLYWAY_ENABLED: "true"
+  SPRING_FLYWAY_LOCATIONS: "classpath:db/migration"
+  SPRING_FLYWAY_SCHEMAS: "research_service"
+  SPRING_JOOQ_SQL_DIALECT: "POSTGRES"
+  MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,prometheus"
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: "never"
+  MANAGEMENT_HEALTH_LIVENESSSTATE_ENABLED: "true"
+  MANAGEMENT_HEALTH_READINESSSTATE_ENABLED: "true"
+  MANAGEMENT_HEALTH_DB_ENABLED: "true"
+  MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
+  PLATFORM_SECURITY_REQUIRE_BEARER_TOKEN: "true"
+  PLATFORM_AUDIT_ENABLED: "true"
+  PLATFORM_AUDIT_METRIC_NAME: "platform.audit.events"
+  PLATFORM_OPENFEATURE_PROVIDER: "flagsmith"
+  PLATFORM_OPENFEATURE_CACHE_TTL_MILLIS: "30000"
+  PLATFORM_SHUTDOWN_TIMEOUT_SECONDS: "30"
+  PLATFORM_OTEL_SERVICE_NAME: "research-service"
+  PLATFORM_OTEL_EXPORTER_ENDPOINT: "http://otel-collector.gp-observability:4317"
+  PLATFORM_OTEL_ALWAYS_SAMPLE: "false"
+  RESEARCH_SERVICE_OUTBOX_RELAY_POLL_BATCH_SIZE: "50"
+  RESEARCH_SERVICE_OUTBOX_RELAY_POLL_INTERVAL_MS: "5000"
+  RESEARCH_SERVICE_OUTBOX_RELAY_CLAIM_LEASE_MS: "30000"
+  RESEARCH_SERVICE_OUTBOX_RELAY_MAX_ATTEMPTS: "5"
+  PLATFORM_RESEARCH_OUTBOX_RELAY_CRON: "{{ $svc.relayCron }}"
+  KEYCLOAK_ISSUER_URI: "http://keycloak.gp-edge:8081/realms/genealogy-shared"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.gp-data.svc.cluster.local:9092"
+  SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: "30s"
+{{- end }}

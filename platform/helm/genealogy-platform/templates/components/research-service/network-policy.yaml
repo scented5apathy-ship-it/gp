@@ -1,0 +1,86 @@
+{{/*
+research service NetworkPolicy (E6.1e).
+
+Default-deny Ingress + Egress, then an explicit allow-list
+for the workload identities that legitimately call the
+service:
+
+  Ingress:
+    - gp-edge     (Kong public + partner routes)
+    - gp-bff      (web-bff proxy calls)
+    - gp-services (in-mesh domain calls; gRPC)
+    - gp-observability (Prometheus scrape)
+
+  Egress:
+    - gp-data     (Postgres + Kafka)
+    - gp-platform (Keycloak JWKS, OpenFGA, OpenFeature)
+    - gp-observability (OTel Collector)
+    - kube-system (DNS)
+
+Domain authorization is at the application layer
+(OpenFGA + ABAC); this policy only gates network reach.
+*/}}
+{{- $svc := .Values.services.research }}
+{{- if and $svc.enabled $svc.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: research-service-default-deny
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: research-service
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: research-service
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: research-service-allow-callers
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: research-service
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: research-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    {{- range $svc.networkPolicy.ingressAllowedNamespaces }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9090
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- range $svc.networkPolicy.egressAllowedNamespaces }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+    {{- end }}
+{{- end }}

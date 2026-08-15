@@ -1,0 +1,39 @@
+{{/*
+E6.1e: Service for the research workload.
+
+Two ports: HTTP (8080) for the REST + actuator surface, and
+gRPC (9090) for the gp.research.v1.* services. The Kong
+route resolves to the `http` port; the in-cluster gRPC
+callers (genealogy-service, search-service, audit-service)
+resolve to the `grpc` port via the canonical headless
+Service.
+*/}}
+{{- $svc := .Values.services.research }}
+{{- if $svc.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: research-service
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: research-service
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: research-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+      protocol: TCP
+    - name: actuator
+      port: 8081
+      targetPort: actuator
+      protocol: TCP
+{{- end }}

@@ -66,6 +66,25 @@ public class ResearchOutboxRelayWiring {
                 maxAttempts);
     }
 
+    /**
+     * Production JdbcTemplate-backed outbox repository.
+     * E6.1d shipped the {@code InMemoryOutboxRepository} inside
+     * the relay for unit-test path; E6.1e (this commit) adds
+     * the production bean. The relay uses the JdbcTemplate
+     * variant in production and the in-memory fake in unit
+     * tests.
+     */
+    @Bean
+    public ResearchJdbcOutboxRepository researchOutboxRepository(
+            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
+        return new ResearchJdbcOutboxRepository(jdbcTemplate);
+    }
+
+    @Bean
+    public ResearchOutboxRelayRunner.RelayRunMetrics researchOutboxRelayRunMetrics() {
+        return new ResearchOutboxRelayRunner.RelayRunMetrics();
+    }
+
     @Bean
     public ResearchOutboxAuditHook researchOutboxAuditHook(
             com.genealogy.platform.spring.audit.AuditPublisher publisher) {
