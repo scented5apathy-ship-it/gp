@@ -1,0 +1,491 @@
+# E13.4 — Resilience / chaos contract.
+#
+# Source of truth: requirements.md NFR3, NFR4, NFR5, NFR7,
+# design.md §13 (resilience), ownership-catalog.md §3,
+# architecture-decisions.md.
+#
+# Validated by scripts/lint-resilience-chaos.mjs and enforced
+# at runtime by:
+#   - services/operations-service/src/main/java/.../resilience/ResilienceGuard.java
+#   - platform/argocd/canary/abort-rules.yaml (Argo Rollouts
+#     abortOnErrorBudgetBurn wired to E13.4 invariants)
+#   - tools/chaos/scenarios/*.yaml (Litmus / chaos-mesh
+#     scenario library wired to the closed-set faultClasses)
+#   - runbook/resilience.md (operator runbook for game day)
+#
+# Hard invariants (E13.4 — Resilience / chaos):
+#   * Every resilience scenario MUST declare a closed-set
+#     `faultClass` (pod_kill / network_latency / kafka_lag /
+#     temporal_restart / openfga_outage / db_failover /
+#     otel_collector_down / dns_failure / clock_skew /
+#     cpu_pressure / memory_pressure / disk_pressure /
+#     tls_rotation). 13 mandatory scenarios; the linter
+#     enforces the closed-set.
+#   * Retry budget MUST be wired (closed-set retry policies
+#     `none / linear / exponential / decorrelated_jitter`).
+#     Exponential retries MUST cap at 6 attempts and total
+#     wall time MUST NOT exceed `maxRetryBudgetSeconds`.
+#   * Circuit breaker MUST trip after `circuitBreakerThreshold`
+#     consecutive failures and stay open for at least
+#     `circuitBreakerOpenSeconds`; half-open trial MUST send
+#     one probe request and trip back to OPEN on the first
+#     failure.
+#   * Graceful degradation matrix declares what the runtime
+#     does when each dependency is unreachable (8 dependencies
+     * + 4 degradation modes = 32 cells).
+#   * Idempotency keys MUST be bound to a UUIDv7 + base
+#     version; the runtime MUST reject duplicate side effects.
+#   * Argo Rollouts MUST abort the canary when the synthetic
+#     regression (5xx > 1 % OR p95 > 2× baseline OR
+ *     errorRate > 0.5 %) is observed for `forSeconds`
+ *     consecutive.
+#   * Game day MUST be run at least once per quarter; each
+#     game day MUST declare `injects`, `observers`, `rollback`
+ *     and a `postmortem` artefact under
+ *     `.kiro/specs/genealogy-platform/evidence/game-day/`.
+#   * Restore drill MUST be run at least once per quarter;
+#     each drill MUST declare `dataset`, `rto`, `rpo`,
+ *     `restoreTooling` and a `restore_evidence` artefact.
+#   * Resilience tests MUST run on every commit
+ *     (CI gate); the `scripts/check-resilience-coverage.mjs`
+ *     helper verifies the scenario library is complete.
+#   * No-duplicate-side-effect invariant: any retry MUST
+#     reuse the same idempotency key; the runtime MUST NOT
+#     emit a Kafka event with the same eventId twice.
+policyVersion: 1.0.0
+owner: sre-primary
+scope: resilience-chaos
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR3
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+faultClasses:
+  description: >
+    The closed-set of fault classes the resilience library
+    MUST be able to inject. Each class maps to a chaos
+    experiment (Litmus / chaos-mesh / fault-injector).
+  values:
+    - name: pod_kill
+      description: Kubernetes pod terminated abruptly; PDB + HPA restore traffic.
+      durationSeconds: 300
+      blastRadius: per_pod
+      recoveryAction: pdb_hpa
+    - name: network_latency
+      description: Istio fault injection adds 250 ms p99 latency for 5 minutes.
+      durationSeconds: 300
+      blastRadius: per_service
+      recoveryAction: istio_fault_filter_off
+    - name: kafka_lag
+      description: Pause consumer for 10 minutes; verify DLQ retry.
+      durationSeconds: 600
+      blastRadius: per_topic
+      recoveryAction: resume_consumer
+    - name: temporal_restart
+      description: Restart Temporal frontend + history pods.
+      durationSeconds: 300
+      blastRadius: per_namespace
+      recoveryAction: pod_restart
+    - name: openfga_outage
+      description: Block egress to OpenFGA for 2 minutes; verify deny-by-default.
+      durationSeconds: 120
+      blastRadius: per_service
+      recoveryAction: restore_egress
+    - name: db_failover
+      description: Promote Postgres replica; verify connection pool re-resolves.
+      durationSeconds: 240
+      blastRadius: global
+      recoveryAction: replica_promoted
+    - name: otel_collector_down
+      description: Kill OTel Collector pods; verify circuit breaker + ring buffer.
+      durationSeconds: 600
+      blastRadius: per_namespace
+      recoveryAction: collector_restart
+    - name: dns_failure
+      description: CoreDNS returns SERVFAIL; verify client retry.
+      durationSeconds: 180
+      blastRadius: global
+      recoveryAction: dns_recovery
+    - name: clock_skew
+      description: NTP skew of 30 s; verify client clock tolerance.
+      durationSeconds: 300
+      blastRadius: global
+      recoveryAction: ntp_resync
+    - name: cpu_pressure
+      description: Stress CPU on 1 pod; verify HPA scale-up.
+      durationSeconds: 300
+      blastRadius: per_pod
+      recoveryAction: hpa_scale_up
+    - name: memory_pressure
+      description: Stress memory; verify OOMKilled and reschedule.
+      durationSeconds: 300
+      blastRadius: per_pod
+      recoveryAction: pod_reschedule
+    - name: disk_pressure
+      description: Fill disk to 90 %; verify eviction / cleanup.
+      durationSeconds: 240
+      blastRadius: per_node
+      recoveryAction: gc_old_metrics
+    - name: tls_rotation
+      description: Rotate Vault-managed certs; verify cert re-issue.
+      durationSeconds: 600
+      blastRadius: global
+      recoveryAction: cert_reissue
+
+retryPolicies:
+  description: >
+    The closed-set of retry policies the runtime is allowed
+    to use. Manual retry / unbounded retry is forbidden.
+  values:
+    - name: none
+      maxAttempts: 1
+      maxWallSeconds: 0
+      jitter: false
+      description: Single attempt; no retry.
+    - name: linear
+      maxAttempts: 3
+      maxWallSeconds: 30
+      jitter: false
+      description: Fixed delay between attempts.
+    - name: exponential
+      maxAttempts: 6
+      maxWallSeconds: 60
+      jitter: false
+      description: Exponential backoff (base 100 ms, factor 2).
+    - name: decorrelated_jitter
+      maxAttempts: 6
+      maxWallSeconds: 60
+      jitter: true
+      description: AWS-style decorrelated jitter.
+
+circuitBreakerDefaults:
+  description: >
+    Mandatory circuit breaker defaults. The runtime library
+    MUST instantiate a CB with these parameters whenever it
+    wraps an outbound dependency.
+  values:
+    - name: threshold
+      value: 5
+    - name: openSeconds
+      value: 30
+    - name: halfOpenProbeMax
+      value: 1
+    - name: rollingWindowSeconds
+      value: 60
+    - name: minimumCalls
+      value: 10
+
+gracefulDegradation:
+  description: >
+    Per-dependency graceful degradation matrix. For each
+    of the 8 critical dependencies, declare what the runtime
+    does when the dependency is unreachable (4 modes).
+  dependencies:
+    - postgres
+    - kafka
+    - openfga
+    - temporal
+    - vault
+    - otel_collector
+    - kong
+    - s3
+  modes:
+    - name: fail_closed
+      description: Refuse the request with 503 + Retry-After.
+    - name: fail_open
+      description: Continue with a safe default; emit degraded telemetry.
+    - name: read_only
+      description: Reads continue from cache; writes are queued.
+    - name: cached
+      description: Serve from local cache; no upstream call.
+
+degradationMatrix:
+  description: >
+    Closed-set degradation policy table. Each cell MUST
+    declare exactly one mode from `gracefulDegradation.modes`.
+  values:
+    - dependency: postgres
+      readMode: cached
+      writeMode: read_only
+    - dependency: kafka
+      readMode: read_only
+      writeMode: cached
+    - dependency: openfga
+      readMode: fail_closed
+      writeMode: fail_closed
+    - dependency: temporal
+      readMode: fail_closed
+      writeMode: cached
+    - dependency: vault
+      readMode: fail_closed
+      writeMode: fail_closed
+    - dependency: otel_collector
+      readMode: fail_open
+      writeMode: fail_open
+    - dependency: kong
+      readMode: fail_closed
+      writeMode: fail_closed
+    - dependency: s3
+      readMode: cached
+      writeMode: read_only
+
+idempotencyRules:
+  description: >
+    Mandatory idempotency rules. Any outbound call MUST use
+    a UUIDv7 idempotency key bound to a base version.
+  keyFormat: UUIDv7
+  baseVersionRequired: true
+  duplicateSideEffectForbidden: true
+  duplicateEventIdForbidden: true
+  keyTtlSeconds: 86400
+
+canaryAbortRules:
+  description: >
+    Mandatory Argo Rollouts `abortOnErrorBudgetBurn` rules.
+    The canary is aborted when ANY of these conditions
+    is observed for `forSeconds` consecutive.
+  values:
+    - name: fiveXxRatioExceeded
+      threshold: 0.01
+      comparator: greater_than
+      forSeconds: 120
+      action: ABORT_CANARY
+    - name: p95LatencyRegression
+      threshold: 2.0
+      comparator: times_baseline
+      forSeconds: 180
+      action: ABORT_CANARY
+    - name: errorRateSpike
+      threshold: 0.005
+      comparator: greater_than
+      forSeconds: 180
+      action: ABORT_CANARY
+    - name: privacyFindingDetected
+      threshold: 1
+      comparator: equal_or_greater
+      forSeconds: 0
+      action: ABORT_CANARY_AND_FREEZE
+
+gameDayCadence:
+  description: >
+    Game day cadence per environment.
+  frequencyDays: 90
+  mandatoryScenarios:
+    - pod_kill
+    - db_failover
+    - kafka_lag
+    - openfga_outage
+    - tls_rotation
+  requiredArtifacts:
+    - injects
+    - observers
+    - rollback
+    - postmortem
+
+restoreDrillCadence:
+  description: >
+    Restore drill cadence.
+  frequencyDays: 90
+  mandatoryComponents:
+    - postgres
+    - kafka
+    - s3
+    - keycloak
+    - openfga
+    - temporal
+    - vault
+  requiredArtifacts:
+    - dataset
+    - rto
+    - rpo
+    - restoreTooling
+    - restoreEvidence
+
+scenarioStateMatrix:
+  description: >
+    Closed-set state matrix for the chaos scenario
+    lifecycle. Initial = SCHEDULED. Terminal statuses:
+    PASSED / FAILED / ABORTED.
+  initialStatus: SCHEDULED
+  statuses:
+    - status: SCHEDULED
+      transitions: [INJECTING, CANCELLED, ABORTED]
+    - status: INJECTING
+      transitions: [OBSERVING, FAILED, ABORTED]
+    - status: OBSERVING
+      transitions: [RECOVERING, FAILED, ABORTED]
+    - status: RECOVERING
+      transitions: [PASSED, FAILED, ABORTED]
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+    - status: PASSED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: ABORTED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric bounds.
+  values:
+    - name: maxRetryAttempts
+      value: 6
+    - name: maxRetryBudgetSeconds
+      value: 60
+    - name: circuitBreakerThreshold
+      value: 5
+    - name: circuitBreakerOpenSeconds
+      value: 30
+    - name: circuitBreakerRollingWindowSeconds
+      value: 60
+    - name: circuitBreakerMinimumCalls
+      value: 10
+    - name: halfOpenProbeMax
+      value: 1
+    - name: idempotencyKeyTtlSeconds
+      value: 86400
+    - name: canaryAbortFiveXxRatio
+      value: 0.01
+    - name: canaryAbortP95LatencyMultiplier
+      value: 2.0
+    - name: canaryAbortErrorRateSpike
+      value: 0.005
+    - name: canaryAbortFiveXxForSeconds
+      value: 120
+    - name: canaryAbortP95ForSeconds
+      value: 180
+    - name: canaryAbortErrorRateForSeconds
+      value: 180
+    - name: gameDayFrequencyDays
+      value: 90
+    - name: restoreDrillFrequencyDays
+      value: 90
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - allFaultClassesHaveScenario
+    - allRetryPoliciesRespectMaxAttempts
+    - allRetryPoliciesRespectMaxWallSeconds
+    - circuitBreakerDefaultsApplyToOutboundCalls
+    - gracefulDegradationMatrixCoversAllDependencies
+    - idempotencyKeysAreUuidV7
+    - duplicateSideEffectForbidden
+    - duplicateEventIdForbidden
+    - canaryAbortRulesWiredToArgoRollouts
+    - gameDayMandatoryScenarios
+    - restoreDrillMandatoryComponents
+    - scenarioStateMatrixReachable
+    - numericBoundsRespected
+    - noManualRetry
+    - noUnboundedRetry
+    - noDuplicateSideEffects
+    - tenantBoundaryRespectedUnderFailure
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    chaos / resilience / circuit breaker tooling.
+  values:
+    - name: chaosExperiments
+      spec: litmus_or_chaos_mesh_only
+    - name: canaryController
+      spec: argo_rollouts_only
+    - name: circuitBreaker
+      spec: resilience4j_only
+    - name: retryLibrary
+      spec: spring_retry_or_resilience4j_only
+    - name: gameDay
+      spec: gameday_runbook_only
+    - name: noCustomChaosEngine
+      spec: forbidden
+    - name: noCustomCircuitBreaker
+      spec: forbidden
+    - name: noCustomRetryLibrary
+      spec: forbidden
+    - name: noCustomCanaryController
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain.
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers.
+  values:
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/resilience/ResilienceGuard.java
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/resilience/E13ResilienceLimits.java
+    - tools/chaos/scenarios/pod-kill.yaml
+    - platform/argocd/canary/abort-rules.yaml
+    - runbook/resilience.md
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/reliability/resilience-chaos-policy.yaml
+
+requiredScenarios:
+  description: >
+    Mandatory chaos scenarios the resilience library MUST
+    ship. The runtime MUST register every scenario below.
+  values:
+    - faultClass: pod_kill
+      scenarioFile: tools/chaos/scenarios/pod-kill.yaml
+    - faultClass: network_latency
+      scenarioFile: tools/chaos/scenarios/network-latency.yaml
+    - faultClass: kafka_lag
+      scenarioFile: tools/chaos/scenarios/kafka-lag.yaml
+    - faultClass: temporal_restart
+      scenarioFile: tools/chaos/scenarios/temporal-restart.yaml
+    - faultClass: openfga_outage
+      scenarioFile: tools/chaos/scenarios/openfga-outage.yaml
+    - faultClass: db_failover
+      scenarioFile: tools/chaos/scenarios/db-failover.yaml
+    - faultClass: otel_collector_down
+      scenarioFile: tools/chaos/scenarios/otel-collector-down.yaml
+    - faultClass: dns_failure
+      scenarioFile: tools/chaos/scenarios/dns-failure.yaml
+    - faultClass: clock_skew
+      scenarioFile: tools/chaos/scenarios/clock-skew.yaml
+    - faultClass: cpu_pressure
+      scenarioFile: tools/chaos/scenarios/cpu-pressure.yaml
+    - faultClass: memory_pressure
+      scenarioFile: tools/chaos/scenarios/memory-pressure.yaml
+    - faultClass: disk_pressure
+      scenarioFile: tools/chaos/scenarios/disk-pressure.yaml
+    - faultClass: tls_rotation
+      scenarioFile: tools/chaos/scenarios/tls-rotation.yaml

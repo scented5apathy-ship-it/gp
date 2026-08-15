@@ -1,0 +1,607 @@
+# E13.2 — SLO / alert / runbook contract.
+#
+# Source of truth: requirements.md NFR2, NFR3, NFR5,
+# design.md §13, ownership-catalog.md §3, scale-and-slo.md
+# §5–§6 (SLO + burn-rate + retention), architecture-decisions.md
+# ADR-E0.5-01 (SLO baseline).
+#
+# Validated by scripts/lint-slo-alert.mjs and enforced at
+# runtime by:
+#   - platform/observability/alerts/slo-alert-rules.yaml
+#     (PrometheusRule resource rendered by the umbrella chart)
+#   - platform/observability/alerts/burn-rate-rules.yaml
+#   - services/operations-service/src/main/java/.../slo/SloGuard.java
+#   - runbook/observability.md + runbook/slo.md (operator
+#     runbooks wired to every alert)
+#
+# Hard invariants (E13.2 — SLO / alert / runbook):
+#   * Every service / platform component MUST declare at least
+#     one SLI with an explicit SLO target (latency / availability
+#     / freshness / durability). The 4 mandatory SLOs (API
+#     read p95, API write p95, consumer lag, workflow success)
+#     are wired to burn-rate alerts per the Google SRE workbook
+#     (1h / 6h / 24h / 3d windows).
+#   * Burn-rate alert thresholds MUST be tied to error budget
+#     (1h / 6h / 24h / 3d). When the 1h burn-rate is > 14.4x
+#     the page on-call; 6h burn-rate 6x opens a ticket and
+#     freezes release; 24h burn-rate 3x forces an SLO review.
+#   * Alert severity MUST map to the 4-tier SLO incident
+#     ladder (SEV1 / SEV2 / SEV3 / SEV4) with explicit
+#     page / ticket / silent actions and runbook links.
+#   * Tenant pseudonymous labels are MANDATORY on every
+#     alert rule. Raw `tenant_id` / `user_id` / `email` /
+#     `oidc_subject` are FORBIDDEN in alert expressions.
+#   * Cardinality ceiling (50K tenant_pseudo_id, 200K
+#     user_pseudo_id) MUST be enforced at the recording-rule
+#     layer; over-limit dimensions are dropped.
+#   * Alert routing MUST be explicit: page on-call, ticket
+#     with severity, dashboard link, runbook link, owner team,
+#     slack channel. NO alert MAY ship without these four
+#     fields populated.
+#   * Runbook MUST be wired for every alert rule: `runbookRef`
+#     (Markdown path under `runbook/`), `dashboardRef`
+#     (Grafana dashboard UID + panel), `owner` (team slug),
+#     `severity` (SEV1..SEV4), `action` (PAGE / TICKET /
+#     SILENT), `summary` (one-line description).
+#   * Synthetic availability probes MUST cover Kong, Keycloak,
+#     OpenFGA, PostgreSQL, Kafka, Temporal, Object Storage,
+#     Vault, Flagsmith, OTel Collector. Probe failure for
+#     > 2 minutes is a SEV2 alert.
+#   * Error budget freeze (NFR7): when 50 % of the monthly
+#     budget is consumed in the first week, release is
+#     frozen and the runtime MUST refuse non-critical
+#     releases until the budget is replenished.
+#   * Privacy / DNA / consent findings (severity 1 / SEV1)
+#     freeze the budget immediately regardless of burn-rate.
+policyVersion: 1.0.0
+owner: sre-primary
+scope: slo-alert
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR2
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+  scaleAndSlo: .kiro/specs/genealogy-platform/scale-and-slo.md
+
+slis:
+  description: >
+    The closed-set of SLIs the platform MUST measure. Each
+    SLI is a (query, target, method) tuple; the linter
+    enforces the closed-set and the burn-rate alert wiring.
+  values:
+    - name: api_read_p95
+      query: http_server_requests_seconds_bucket{route=~"/api/v1/.*",method="GET"}
+      targetMs: 300
+      burnRateAlerts:
+        - window: 1h
+          factor: 14.4
+          action: PAGE
+          severity: SEV2
+        - window: 6h
+          factor: 6
+          action: TICKET
+          severity: SEV3
+        - window: 24h
+          factor: 3
+          action: TICKET
+          severity: SEV3
+        - window: 3d
+          factor: 1
+          action: SILENT
+          severity: SEV4
+    - name: api_write_p95
+      query: http_server_requests_seconds_bucket{method=~"POST|PUT|PATCH|DELETE"}
+      targetMs: 600
+      burnRateAlerts:
+        - window: 1h
+          factor: 14.4
+          action: PAGE
+          severity: SEV2
+        - window: 6h
+          factor: 6
+          action: TICKET
+          severity: SEV3
+    - name: search_p95
+      query: http_server_requests_seconds_bucket{route=~"/api/v1/search.*"}
+      targetMs: 1000
+      burnRateAlerts:
+        - window: 30m
+          factor: 14.4
+          action: PAGE
+          severity: SEV3
+    - name: tree_view_initial_tti_p75
+      query: pwa_tree_view_initial_tti_ms
+      targetMs: 2500
+      burnRateAlerts:
+        - window: 1h
+          factor: 14.4
+          action: PAGE
+          severity: SEV3
+    - name: consumer_lag_critical_p99
+      query: consumer_lag_records{topic=~"audit\\..*|dna\\..*|tree\\..*"}
+      targetRecords: 1000
+      burnRateAlerts:
+        - window: 5m
+          factor: 2
+          action: PAGE
+          severity: SEV2
+    - name: outbox_age_p99
+      query: outbox_age_seconds{aggregate_type=~"person|tree|relationship"}
+      targetSeconds: 300
+      burnRateAlerts:
+        - window: 5m
+          factor: 2
+          action: PAGE
+          severity: SEV2
+    - name: workflow_failure_rate_per_hour
+      query: workflow_failure_total
+      targetFailures: 5
+      burnRateAlerts:
+        - window: 5m
+          factor: 2
+          action: PAGE
+          severity: SEV2
+    - name: projection_freshness_p99
+      query: projection_freshness_seconds
+      targetSeconds: 900
+      burnRateAlerts:
+        - window: 15m
+          factor: 2
+          action: TICKET
+          severity: SEV3
+    - name: synthetic_availability
+      query: probe_success{probe_group="core"}
+      targetRatio: 0.99
+      burnRateAlerts:
+        - window: 2m
+          factor: 1
+          action: PAGE
+          severity: SEV2
+    - name: api_availability
+      query: http_server_requests_seconds_count{status_class="5xx"}
+      targetRatio: 0.999
+      burnRateAlerts:
+        - window: 1h
+          factor: 14.4
+          action: PAGE
+          severity: SEV1
+        - window: 6h
+          factor: 6
+          action: TICKET
+          severity: SEV2
+    - name: pii_redaction_coverage
+      query: telemetry_redaction_hits_total / telemetry_log_body_total
+      targetRatio: 1.0
+      burnRateAlerts:
+        - window: 10m
+          factor: 1
+          action: PAGE
+          severity: SEV1
+
+alertSeverities:
+  description: >
+    The closed-set of SLO alert severities. SEV1 freezes
+    release and pages on-call + DPO delegate; SEV2 pages
+    on-call; SEV3 opens a ticket; SEV4 silent (review only).
+  values:
+    - name: SEV1
+      blocksRelease: true
+      pageRoles:
+        - oncall-primary
+        - appsec-primary
+        - dpo-delegate
+      responseMinutes: 15
+      notifyChannel: gp-sev1
+      freezesBudget: true
+    - name: SEV2
+      blocksRelease: true
+      pageRoles:
+        - oncall-primary
+      responseMinutes: 30
+      notifyChannel: gp-sev2
+      freezesBudget: false
+    - name: SEV3
+      blocksRelease: false
+      pageRoles:
+        - oncall-secondary
+      responseMinutes: 240
+      notifyChannel: gp-sev3
+      freezesBudget: false
+    - name: SEV4
+      blocksRelease: false
+      pageRoles:
+        - oncall-rotation
+      responseMinutes: 1440
+      notifyChannel: gp-noise
+      freezesBudget: false
+
+alertActions:
+  description: >
+    The closed-set of actions the SRE platform supports for
+    alert routing. Every alert rule MUST declare exactly one
+    action.
+  values:
+    - PAGE
+    - TICKET
+    - SILENT
+
+burnRateWindows:
+  description: >
+    Mandatory burn-rate alert windows. Mirrors the Google SRE
+    multi-window, multi-burn-rate alerts cookbook + NFR5.
+  values:
+    - window: 1m
+      factor: 14.4
+      purpose: short_burst
+    - window: 5m
+      factor: 14.4
+      purpose: short_burst
+    - window: 30m
+      factor: 14.4
+      purpose: search
+    - window: 1h
+      factor: 14.4
+      purpose: page
+    - window: 2m
+      factor: 1
+      purpose: synthetic_probe
+    - window: 6h
+      factor: 6
+      purpose: ticket
+    - window: 10m
+      factor: 1
+      purpose: redaction_coverage
+    - window: 15m
+      factor: 2
+      purpose: projection_freshness
+    - window: 24h
+      factor: 3
+      purpose: slo_review
+    - window: 3d
+      factor: 1
+      purpose: trend
+
+availabilityTargets:
+  description: >
+    Service-class availability targets (DRAFT — E0.6
+    sign-off required to bind). Mirrors
+    `scale-and-slo.md` §5.2.
+  values:
+    - serviceClass: saas_production
+      target: 0.999
+      errorBudgetMinutesPerMonth: 43.2
+    - serviceClass: api_read_path
+      target: 0.9995
+      errorBudgetMinutesPerMonth: 21.6
+    - serviceClass: search
+      target: 0.995
+      errorBudgetMinutesPerMonth: 216
+    - serviceClass: async_job
+      target: 0.99
+      errorBudgetMinutesPerMonth: 438
+    - serviceClass: media_pipeline
+      target: 0.99
+      errorBudgetMinutesPerMonth: 438
+    - serviceClass: on_premise_base
+      target: 0.995
+      errorBudgetMinutesPerMonth: 216
+
+syntheticProbes:
+  description: >
+    Synthetic availability probes the platform stack MUST
+    run continuously. Probe failure > 2 minutes triggers
+    the `synthetic_availability` SEV2 alert.
+  values:
+    - name: kong_health
+      target: kong-admin.gp-edge.svc.cluster.local:8444/health
+    - name: keycloak_realm
+      target: keycloak.gp-identity.svc.cluster.local:8080/realms/genealogy
+    - name: openfga_store
+      target: openfga.gp-authz.svc.cluster.local:8080/stores
+    - name: postgres_primary
+      target: postgres-primary.gp-data.svc.cluster.local:5432
+    - name: kafka_broker
+      target: kafka-bootstrap.gp-events.svc.cluster.local:9092
+    - name: temporal_namespace
+      target: temporal-frontend.gp-workflow.svc.cluster.local:7233
+    - name: object_storage
+      target: minio.gp-storage.svc.cluster.local:9000/minio/health/live
+    - name: vault_seal_status
+      target: vault.gp-secrets.svc.cluster.local:8200/v1/sys/seal-status
+    - name: flagsmith_health
+      target: flagsmith.gp-flags.svc.cluster.local:8080/api/v1/environment
+    - name: otel_collector
+      target: otel-collector.gp-observability.svc.cluster.local:4318/v1/traces
+
+tenantPseudonymLabels:
+  description: >
+    The ONLY labels the SLO alert rules MUST reference.
+    Mirrors `telemetry-policy.yaml` `pseudonymLabels`.
+  values:
+    - tenant_pseudo_id
+    - user_pseudo_id
+    - actor_pseudo_id
+    - service
+
+forbiddenAlertLabels:
+  description: >
+    Labels that MUST NEVER appear in any alert rule
+    expression. Same rule as E13.1 `forbiddenMetricLabels`.
+  values:
+    - tenant_id
+    - user_id
+    - actor_id
+    - email
+    - oidc_subject
+    - oidcSubject
+    - phone
+    - passport
+    - ssn
+    - raw_dna
+    - raw_pii
+    - rawEmail
+    - rawPhone
+    - rawAddress
+    - treeViewerBypass
+    - rawEventPayload
+    - rawAuditStream
+
+runbookRequiredFields:
+  description: >
+    Every alert rule MUST declare the following fields so the
+    operator can navigate without external docs.
+  values:
+    - runbookRef
+    - dashboardRef
+    - owner
+    - severity
+    - action
+    - summary
+    - notifyChannel
+
+runbookPaths:
+  description: >
+    Runbook paths the linter verifies exist on disk.
+  values:
+    - runbook/observability.md
+    - runbook/slo.md
+    - runbook/genealogy-service.md
+    - runbook/tenant-service.md
+    - runbook/research-service.md
+    - runbook/audit.md
+
+dashboardCatalog:
+  description: >
+    Grafana dashboards the SLO alerts reference. The
+    `grafana/dashboards.yaml` source-of-truth MUST declare
+    every dashboard Uid below.
+  values:
+    - uid: api-overview
+      path: grafana/dashboards/api-overview.json
+    - uid: kong
+      path: grafana/dashboards/kong.json
+    - uid: kafka
+      path: grafana/dashboards/kafka.json
+    - uid: temporal
+      path: grafana/dashboards/temporal.json
+    - uid: openfga
+      path: grafana/dashboards/openfga.json
+    - uid: istio
+      path: grafana/dashboards/istio.json
+    - uid: vault
+      path: grafana/dashboards/vault.json
+    - uid: database
+      path: grafana/dashboards/database.json
+    - uid: workload
+      path: grafana/dashboards/workload.json
+
+alertRuleMatrix:
+  description: >
+    Closed-set state matrix for the SLO alert rule
+    lifecycle. Initial = ROUTED. Terminal statuses:
+    SUPPRESSED / RESOLVED.
+  initialStatus: ROUTED
+  statuses:
+    - status: ROUTED
+      transitions: [ACK_IN_PROGRESS, ACK_OVERDUE, SUPPRESSED, RESOLVED]
+    - status: ACK_IN_PROGRESS
+      transitions: [ACK_OVERDUE, MITIGATING]
+    - status: ACK_OVERDUE
+      transitions: [ESCALATED]
+    - status: MITIGATING
+      transitions: [RESOLVED, ESCALATED]
+    - status: ESCALATED
+      transitions: [MITIGATING]
+    - status: RESOLVED
+      transitions: []
+      terminal: true
+    - status: SUPPRESSED
+      transitions: []
+      terminal: true
+
+budgetStateMatrix:
+  description: >
+    Closed-set state matrix for the monthly error budget.
+    Initial = NOMINAL. Terminal statuses: FROZEN / EXHAUSTED.
+  initialStatus: NOMINAL
+  statuses:
+    - status: NOMINAL
+      transitions: [WARN, FROZEN]
+    - status: WARN
+      transitions: [NOMINAL, FROZEN]
+    - status: FROZEN
+      transitions: [NOMINAL, EXHAUSTED]
+    - status: EXHAUSTED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric bounds. Any deviation is rejected by the
+    linter AND by the Java `SloGuard`.
+  values:
+    - name: apiReadP95TargetMs
+      value: 300
+    - name: apiWriteP95TargetMs
+      value: 600
+    - name: searchP95TargetMs
+      value: 1000
+    - name: treeViewInitialTtiP75TargetMs
+      value: 2500
+    - name: consumerLagCriticalP99TargetRecords
+      value: 1000
+    - name: outboxAgeP99TargetSeconds
+      value: 300
+    - name: workflowFailurePerHourTarget
+      value: 5
+    - name: projectionFreshnessP99TargetSeconds
+      value: 900
+    - name: syntheticAvailabilityTargetRatio
+      value: 0.99
+    - name: apiAvailabilityTargetRatio
+      value: 0.999
+    - name: piiRedactionCoverageTargetRatio
+      value: 1.0
+    - name: shortBurstFactor
+      value: 14.4
+    - name: ticketFactor
+      value: 6
+    - name: reviewFactor
+      value: 3
+    - name: sev1ResponseMinutes
+      value: 15
+    - name: sev2ResponseMinutes
+      value: 30
+    - name: sev3ResponseMinutes
+      value: 240
+    - name: sev4ResponseMinutes
+      value: 1440
+    - name: budgetFreezeWeek1Ratio
+      value: 0.5
+    - name: cardinalityTenantCeiling
+      value: 50000
+    - name: cardinalityUserCeiling
+      value: 200000
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - allAlertsHaveRunbook
+    - allAlertsHaveDashboard
+    - allAlertsHaveOwner
+    - allAlertsHaveSeverity
+    - allAlertsHaveAction
+    - allAlertsHaveNotifyChannel
+    - allAlertsPseudonymousLabels
+    - syntheticProbesCoverAllComponents
+    - burnRateWindowsCoverGoogleWorkbook
+    - errorBudgetFreezeThresholdEnforced
+    - sev1FreezesBudgetImmediately
+    - privacyFindingFreezesBudgetImmediately
+    - runbookPathsExist
+    - dashboardCatalogDeclared
+    - alertRuleMatrixReachable
+    - budgetStateMatrixReachable
+    - numericBoundsRespected
+    - noRawIdentityInAlertExpressions
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    alerting (Prometheus rules + Alertmanager) or runbook
+    management (markdown repo). Mirrors E2.10 / E13.1.
+  values:
+    - name: alerting
+      spec: prometheus_alertmanager_only
+    - name: recordingRules
+      spec: prometheus_only
+    - name: runbookStorage
+      spec: git_repo_markdown_only
+    - name: dashboardCatalog
+      spec: grafana_only
+    - name: syntheticProbes
+      spec: blackbox_exporter_only
+    - name: onCallRouting
+      spec: alertmanager_pagerduty_only
+    - name: noCustomAlertingEngine
+      spec: forbidden
+    - name: noCustomRecordingRuleEngine
+      spec: forbidden
+    - name: noCustomSyntheticProbeRunner
+      spec: forbidden
+    - name: noCustomOnCallScheduler
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain. Mirrors
+    the E13.1 list; same forbidden payload surface.
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers the linter verifies are
+    implemented at the agreed paths.
+  values:
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/slo/SloGuard.java
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/slo/E13SloLimits.java
+    - platform/observability/alerts/slo-alert-rules.yaml
+    - platform/observability/alerts/burn-rate-rules.yaml
+    - runbook/slo.md
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/reliability/slo-alert-policy.yaml
+
+requiredAlertRuleFields:
+  description: >
+    Every alert rule in
+    `platform/observability/alerts/*.yaml` MUST declare the
+    following keys; the linter scans every rule file and
+    fails closed.
+  values:
+    - alert
+    - expr
+    - for
+    - labels
+    - annotations
+
+requiredAlertAnnotations:
+  description: >
+    Every alert rule MUST populate the following annotation
+    keys (`grafana/alerting` consumes them).
+  values:
+    - summary
+    - runbook_url
+    - dashboard_url
+    - severity
+    - owner
+    - action
+    - notify_channel

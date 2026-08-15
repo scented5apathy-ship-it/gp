@@ -1,0 +1,80 @@
+# E13.2 — Burn-rate multi-window recording rules.
+#
+# Mirrors `contracts/reliability/slo-alert-policy.yaml`
+# `burnRateWindows` (10 windows: 1m / 5m / 30m / 1h / 2m /
+# 6h / 10m / 15m / 24h / 3d). Validated by
+# `scripts/lint-slo-alert.mjs`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-burn-rate-rules
+  labels:
+    app.kubernetes.io/name: genea-burn-rate-rules
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/managed-by: argocd
+    release: genea-observability
+  annotations:
+    runbook_url: runbook/slo.md
+    dashboard_url: grafana/dashboards/api-overview.json
+    owner: sre-primary
+    severity: SEV2
+    action: PAGE
+    notify_channel: gp-sev2
+spec:
+  groups:
+    - name: burn-rate.api-read-p95
+      interval: 30s
+      rules:
+        - record: api_read_p95:burn_rate_1m
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method="GET",route=~"/api/v1/.*"}[1m])) by (le, route)
+            )
+        - record: api_read_p95:burn_rate_5m
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method="GET",route=~"/api/v1/.*"}[5m])) by (le, route)
+            )
+        - record: api_read_p95:burn_rate_30m
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method="GET",route=~"/api/v1/.*"}[30m])) by (le, route)
+            )
+        - record: api_read_p95:burn_rate_1h
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method="GET",route=~"/api/v1/.*"}[1h])) by (le, route)
+            )
+        - record: api_read_p95:burn_rate_6h
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method="GET",route=~"/api/v1/.*"}[6h])) by (le, route)
+            )
+        - record: api_read_p95:burn_rate_24h
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method="GET",route=~"/api/v1/.*"}[24h])) by (le, route)
+            )
+        - record: api_read_p95:burn_rate_3d
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method="GET",route=~"/api/v1/.*"}[3d])) by (le, route)
+            )
+    - name: burn-rate.api-availability
+      interval: 30s
+      rules:
+        - record: api_availability:burn_rate_2m
+          expr: |
+            (sum(rate(http_server_requests_seconds_count{service="genealogy-platform",status_class="5xx"}[2m]))
+             /
+             sum(rate(http_server_requests_seconds_count{service="genealogy-platform"}[2m])))
+        - record: api_availability:burn_rate_10m
+          expr: |
+            (sum(rate(http_server_requests_seconds_count{service="genealogy-platform",status_class="5xx"}[10m]))
+             /
+             sum(rate(http_server_requests_seconds_count{service="genealogy-platform"}[10m])))
+        - record: api_availability:burn_rate_15m
+          expr: |
+            (sum(rate(http_server_requests_seconds_count{service="genealogy-platform",status_class="5xx"}[15m]))
+             /
+             sum(rate(http_server_requests_seconds_count{service="genealogy-platform"}[15m])))

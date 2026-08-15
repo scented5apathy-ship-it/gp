@@ -1,0 +1,489 @@
+# E13.3 — Performance / capacity contract.
+#
+# Source of truth: requirements.md NFR2, NFR3, NFR4,
+# design.md §13, scale-and-slo.md §2–§5, architecture-decisions.md.
+#
+# Validated by scripts/lint-performance-capacity.mjs and
+# enforced at runtime by:
+#   - tools/k6/bench-suite.mjs (load test harness, runs in CI)
+#   - services/operations-service/src/main/java/.../capacity/CapacityGuard.java
+#   - apps/web/bench/perf-budget.test.ts (Core Web Vitals budget gate)
+#   - platform/helm/genealogy-platform/files/capacity/hpa-policy.yaml
+#   - docs/capacity-report.md (operator-readable envelope)
+#
+# Hard invariants (E13.3 — Performance / capacity):
+#   * Every workload class MUST declare a benchmark profile
+#     with target p95 latency, max RPS, sustained concurrency,
+#     dataset size and SLO. The 6 mandatory workload classes
+#     (browse_tree / search / detail_read / write_proposal /
+#     media_upload / async_job) MUST each declare at least
+#     one benchmark scenario.
+#   * k6 / Gatling is the load generator; the harness MUST
+#     report p50 / p95 / p99 latency, error rate, RPS and
+#     payload size. Synthetic datasets from
+#     `scale-and-slo.md` §3 (10K / 100K / 1M person) MUST be
+#     available offline.
+#   * HPA MUST use the closed-set of metric sources
+#     (cpu / memory / rps / lag / queue_depth / custom_metric).
+#     Manual scaling is forbidden in production.
+#   * Connection pool sizing MUST respect the closed-set
+#     (postgres_max / kafka_producer / kafka_consumer /
+#     grpc_client / redis_client). Exceeding the ceiling
+#     MUST trip a SEV3 alert.
+#   * Database thresholds (pg_max_connections,
+#     pg_replication_lag_seconds, pg_longest_query_seconds,
+#     pg_dead_tuples_ratio) MUST be tracked and alerted.
+#   * Kafka partition count MUST scale with the partition
+#     budget (1 partition per 1 000 sustained RPS, ceiling 256
+#     partitions per topic). Temporal worker count MUST
+#     follow the closed-set formula (1 worker per 50
+#     concurrent workflows).
+#   * Synthetic datasets MUST be deterministic
+#     (seed = sha256(size + locale)) and MUST carry
+#     `SYNTHETIC_ONLY` marker + license. Real PII / DNA MUST
+#     NEVER appear in any benchmark dataset.
+#   * The capacity envelope MUST record per-environment
+#     headroom: dev (1×), on-premise (1,5×), saas (3× burst).
+#   * Core Web Vitals budget for the public landing + tree
+#     view MUST be enforced (`lcp`, `cls`, `inp`, `ttfb`,
+ *     `tti`, `tbt`) with thresholds per `apps/web/
+#     perf-budget.test.ts`.
+#   * Performance regression gates: a 10 % regression in p95
+#     vs the previous release blocks the canary. Argo
+#     Rollouts `abortOnErrorBudgetBurn` is wired.
+policyVersion: 1.0.0
+owner: sre-primary
+scope: performance-capacity
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR2
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+  scaleAndSlo: .kiro/specs/genealogy-platform/scale-and-slo.md
+
+workloadClasses:
+  description: >
+    The closed-set of workload classes the benchmark harness
+    MUST cover. Mirrors `scale-and-slo.md` §3.4.
+  values:
+    - name: browse_tree
+      mix: 0.55
+      readHeavy: true
+      sli: api_read_p95
+      dataset: 100k_person
+      maxRps: 25000
+      maxConcurrentUsers: 5000
+      targetP95Ms: 300
+      hpaMetric: rps
+      hpaTarget: 70
+    - name: search
+      mix: 0.15
+      readHeavy: true
+      sli: search_p95
+      dataset: 1m_person
+      maxRps: 1000
+      maxConcurrentUsers: 500
+      targetP95Ms: 1000
+      hpaMetric: rps
+      hpaTarget: 70
+    - name: detail_read
+      mix: 0.10
+      readHeavy: true
+      sli: api_read_p95
+      dataset: 100k_person
+      maxRps: 8000
+      maxConcurrentUsers: 3000
+      targetP95Ms: 300
+      hpaMetric: rps
+      hpaTarget: 70
+    - name: write_proposal
+      mix: 0.10
+      readHeavy: false
+      sli: api_write_p95
+      dataset: 100k_person
+      maxRps: 1500
+      maxConcurrentUsers: 500
+      targetP95Ms: 600
+      hpaMetric: rps
+      hpaTarget: 70
+    - name: media_upload
+      mix: 0.06
+      readHeavy: false
+      sli: workflow_failure_per_hour
+      dataset: 100k_person
+      maxRps: 40
+      maxConcurrentUsers: 100
+      targetP95Ms: 2000
+      hpaMetric: queue_depth
+      hpaTarget: 70
+    - name: async_job
+      mix: 0.04
+      readHeavy: false
+      sli: workflow_failure_per_hour
+      dataset: 1m_person
+      maxRps: 15
+      maxConcurrentUsers: 4000
+      targetP95Ms: 15000
+      hpaMetric: queue_depth
+      hpaTarget: 70
+
+benchmarkHarness:
+  description: >
+    The closed-set of benchmark harness capabilities.
+    Mirrors `scale-and-slo.md` §3.
+  values:
+    - k6
+    - gatling
+    - testcontainers_seed
+    - synthetic_dataset_10k
+    - synthetic_dataset_100k
+    - synthetic_dataset_1m
+    - deterministic_seed
+    - core_web_vitals_budget
+    - p50_p95_p99_histogram
+
+syntheticDatasetLocales:
+  description: >
+    Locales the synthetic dataset generator MUST cover so
+    Unicode / RTL / non-Gregorian date round-trip is
+    benchmarked.
+  values:
+    - vi-VN
+    - en-US
+    - fr-FR
+    - ar-SA
+    - he-IL
+    - ja-JP
+    - zh-CN
+
+hpaMetrics:
+  description: >
+    The closed-set of metrics the HPA controller is allowed
+    to scale on. Manual scaling in production is FORBIDDEN.
+  values:
+    - cpu
+    - memory
+    - rps
+    - lag
+    - queue_depth
+    - custom_metric
+
+hpaAntiPatterns:
+  description: >
+    Patterns the runtime MUST reject.
+  values:
+    - manualScalingProduction
+    - scaleOnRawIdentity
+    - scaleOnTenantId
+    - bypass_hpa
+
+connectionPool:
+  description: >
+    Maximum connection / client pool size per dependency.
+    Exceeding the ceiling trips a SEV3 alert.
+  postgresMax: 75
+  kafkaProducerMax: 200
+  kafkaConsumerMax: 400
+  grpcClientMax: 500
+  redisClientMax: 600
+  temporalWorkerMax: 100
+
+databaseThresholds:
+  description: >
+    Postgres thresholds the capacity guard MUST track.
+  pgMaxConnectionsRatio: 0.75
+  pgReplicationLagSeconds: 30
+  pgLongestQuerySeconds: 60
+  pgDeadTuplesRatio: 0.2
+
+kafkaSizing:
+  description: >
+    Kafka partition / throughput sizing rule.
+  partitionPerRps: 1000
+  maxPartitionsPerTopic: 256
+  minInSyncReplicas: 2
+  consumerGroupLagSecondsCritical: 30
+  consumerGroupLagSecondsAsync: 300
+
+temporalSizing:
+  description: >
+    Temporal worker / task queue sizing rule.
+  workersPerConcurrentWorkflow: 50
+  maxConcurrentWorkflowsPerWorker: 100
+  activityHeartbeatSeconds: 30
+  workflowTaskTimeoutSeconds: 60
+
+coreWebVitalsBudget:
+  description: >
+    Core Web Vitals budget for the public landing + tree
+    view (mirrors `apps/web/perf-budget.test.ts`). Regression
+    > 10 % blocks the canary (Argo Rollouts abort).
+  values:
+    - name: lcp
+      targetMs: 2500
+      unit: ms
+    - name: cls
+      targetRatio: 0.1
+      unit: ratio
+    - name: inp
+      targetMs: 200
+      unit: ms
+    - name: ttfb
+      targetMs: 800
+      unit: ms
+    - name: tti
+      targetMs: 2500
+      unit: ms
+    - name: tbt
+      targetMs: 200
+      unit: ms
+
+regressionRules:
+  description: >
+    Regression thresholds that MUST trip a release-block.
+  p95RegressionPercent: 10
+  errorRateRegressionPercent: 25
+  throughputRegressionPercent: 15
+  bundleSizeRegressionPercent: 5
+  canaryAbortOnRegression: true
+
+capacityEnvelope:
+  description: >
+    Per-environment capacity headroom envelope. SaaS burst
+    is 3× steady-state; on-premise is 2× (1,5× headroom
+    + 1,3× maintenance headroom); dev = 1×.
+  values:
+    - environment: dev
+      cpuHeadroomRatio: 1
+      memoryHeadroomRatio: 1
+      burstMultiplier: 1
+    - environment: saas
+      cpuHeadroomRatio: 3
+      memoryHeadroomRatio: 3
+      burstMultiplier: 3
+    - environment: on_premise
+      cpuHeadroomRatio: 1.5
+      memoryHeadroomRatio: 1.5
+      burstMultiplier: 2
+
+performanceRunStateMatrix:
+  description: >
+    Closed-set state matrix for the benchmark run lifecycle.
+    Initial = QUEUED. Terminal statuses: COMPLETED / FAILED /
+    ABORTED.
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [RUNNING, CANCELLED, ABORTED]
+    - status: RUNNING
+      transitions: [COLLECTING, FAILED, ABORTED]
+    - status: COLLECTING
+      transitions: [COMPLETED, FAILED, ABORTED]
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: ABORTED
+      transitions: []
+      terminal: true
+
+hpaStateMatrix:
+  description: >
+    Closed-set state matrix for the HPA controller. Initial
+    = STEADY. Terminal statuses: DISABLED.
+  initialStatus: STEADY
+  statuses:
+    - status: STEADY
+      transitions: [SCALING_UP, SCALING_DOWN, SATURATED, DISABLED]
+    - status: SCALING_UP
+      transitions: [STEADY, SATURATED]
+    - status: SCALING_DOWN
+      transitions: [STEADY]
+    - status: SATURATED
+      transitions: [STEADY, SCALING_UP]
+    - status: DISABLED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric bounds.
+  values:
+    - name: maxP95RegressionPercent
+      value: 10
+    - name: maxErrorRateRegressionPercent
+      value: 25
+    - name: maxThroughputRegressionPercent
+      value: 15
+    - name: maxBundleSizeRegressionPercent
+      value: 5
+    - name: minTenantHeadroomMultiplier
+      value: 1.5
+    - name: saasBurstMultiplier
+      value: 3
+    - name: onPremiseBurstMultiplier
+      value: 2
+    - name: kafkaMaxPartitionsPerTopic
+      value: 256
+    - name: kafkaPartitionPerRps
+      value: 1000
+    - name: kafkaMinInSyncReplicas
+      value: 2
+    - name: temporalWorkerPerWorkflow
+      value: 50
+    - name: temporalMaxConcurrentPerWorker
+      value: 100
+    - name: postgresPoolCeilingRatio
+      value: 0.75
+    - name: coreWebVitalLcpMs
+      value: 2500
+    - name: coreWebVitalCls
+      value: 0.1
+    - name: coreWebVitalInpMs
+      value: 200
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - allWorkloadClassesHaveBenchmark
+    - k6IsTheLoadGenerator
+    - syntheticDatasetsCarryLicenseMarker
+    - noRealPiiInBenchmarkDataset
+    - noRealDnaInBenchmarkDataset
+    - hpaUsesClosedSetMetrics
+    - manualScalingProductionForbidden
+    - connectionPoolsRespectCeilings
+    - postgresThresholdsTracked
+    - kafkaSizingRuleEnforced
+    - temporalSizingRuleEnforced
+    - coreWebVitalsBudgetEnforced
+    - regressionBlocksCanary
+    - capacityHeadroomDocumented
+    - deterministicSeedReproducible
+    - performanceRunMatrixReachable
+    - hpaStateMatrixReachable
+    - numericBoundsRespected
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    benchmarking / load generation / HPA / connection pool
+    management.
+  values:
+    - name: loadGenerator
+      spec: k6_or_gatling_only
+    - name: hpa
+      spec: kubernetes_hpa_only
+    - name: syntheticData
+      spec: testcontainers_seed_only
+    - name: coreWebVitals
+      spec: web_vitals_api_only
+    - name: noCustomLoadGenerator
+      spec: forbidden
+    - name: noCustomHpa
+      spec: forbidden
+    - name: noCustomConnectionPoolManager
+      spec: forbidden
+    - name: noCustomCwvCollector
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain. Same
+    forbidden payload surface as E13.1 / E13.2.
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers.
+  values:
+    - tools/k6/bench-suite.mjs
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/capacity/CapacityGuard.java
+    - apps/web/bench/perf-budget.test.ts
+    - platform/helm/genealogy-platform/files/capacity/hpa-policy.yaml
+    - docs/capacity-report.md
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/reliability/performance-capacity-policy.yaml
+
+benchmarkScenarios:
+  description: >
+    Mandatory benchmark scenarios. Each scenario declares
+    `workloadClass`, `dataset`, `duration`, `targetVu` and
+    `thresholds` (p95, errorRate).
+  values:
+    - workloadClass: browse_tree
+      dataset: 100k_person
+      duration: 5m
+      targetVu: 200
+      thresholds:
+        p95Ms: 300
+        errorRate: 0.01
+    - workloadClass: search
+      dataset: 1m_person
+      duration: 5m
+      targetVu: 100
+      thresholds:
+        p95Ms: 1000
+        errorRate: 0.01
+    - workloadClass: detail_read
+      dataset: 100k_person
+      duration: 5m
+      targetVu: 80
+      thresholds:
+        p95Ms: 300
+        errorRate: 0.01
+    - workloadClass: write_proposal
+      dataset: 100k_person
+      duration: 5m
+      targetVu: 50
+      thresholds:
+        p95Ms: 600
+        errorRate: 0.005
+    - workloadClass: media_upload
+      dataset: 100k_person
+      duration: 5m
+      targetVu: 30
+      thresholds:
+        p95Ms: 2000
+        errorRate: 0.005
+    - workloadClass: async_job
+      dataset: 1m_person
+      duration: 10m
+      targetVu: 80
+      thresholds:
+        p95Ms: 15000
+        errorRate: 0.001

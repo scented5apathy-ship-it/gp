@@ -1,0 +1,638 @@
+# E13.1 — Telemetry hoàn chỉnh contract.
+#
+# Source of truth: requirements.md NFR1, NFR3, NFR5, design.md
+# §13 (observability) + §3.1 (Grafana OSS stack), ownership-catalog.md
+# §3 (platform SRE).
+#
+# Validated by scripts/lint-telemetry.mjs and enforced at runtime by:
+#   - services/operations-service/src/main/java/.../telemetry/TelemetryGuard.java
+#   - apps/web/src/lib/telemetry/redaction.ts (browser-side scrubber)
+#   - apps/web/test/telemetry/redaction.test.ts (browser redaction CI)
+#   - platform/grafana/otel-collector.yaml + redaction processor (E2.10)
+#
+# Hard invariants (E13.1 — Telemetry):
+#   * Trace propagation MUST span Kong -> BFF -> gRPC -> Kafka/Temporal.
+#     `traceparent` header MUST be propagated by every hop; the
+#     `traceId` MUST be mirrored in the Kafka envelope and Temporal
+#     search attribute.
+#   * Every metric/log/trace emitted by the platform MUST carry
+#     ONLY pseudonymous labels: `tenant_pseudo_id`,
+#     `user_pseudo_id`, `actor_pseudo_id` (HMAC-SHA256 of the raw
+#     identifier keyed by Vault pepper). Raw `tenant_id`,
+#     `user_id`, `email`, `oidc_subject`, `phone`, `passport`,
+#     `ssn`, `raw_dna`, `raw_pii`, `treeViewerBypass` are
+#     FORBIDDEN at every exporter boundary.
+#   * RED metrics (Rate / Errors / Duration) MUST be emitted for
+#     every public REST endpoint AND every gRPC method AND every
+#     Kafka consumer AND every Temporal workflow.
+#   * Outbox age, consumer lag, workflow failure rate and
+#     projection freshness MUST be emitted as time-series with
+#     burn-rate-ready histograms.
+#   * Log redaction MUST scrub 9 categories: SSN / passport /
+#     driver-license / email / phone / ipv4 / JWT / raw DNA
+#     marker `rs\d{2,8} [ACGT]{2}` / Authorization header.
+#   * Re-hash of OIDC subject (`oidc_subject`) is forbidden in
+#     plain metric labels (must always be HMAC-SHA256 before
+#     emission).
+#   * Audit pipeline MUST always emit `actor_pseudo_id` and the
+#     structured audit JSON must NOT include raw email / phone /
+#     SSN / raw DNA.
+#   * Cardinality ceiling per label: `tenant_pseudo_id` (50 000
+#     active per environment), `user_pseudo_id` (200 000), the
+#     rest (workflow / consumer) (1 000).
+#   * Telemetry emission MUST NOT block business code. HTTP flush
+#     must use the OTel Collector SDK with batch processor and
+#     `send_batch_max_size=512` / `send_batch_timeout=5s`.
+#   * Telemetry outage (OTel Collector down) MUST NOT cascade to
+#     business failure. The runtime falls back to a local ring
+#     buffer (max 4 MiB) with circuit breaker.
+#   * The browser-side `redaction.ts` MUST reject every event
+#     whose `attributes` map includes any of 25 forbidden payload
+#     keys (incl. `rawEmail` / `oidcSubject` / `treeViewerBypass`).
+policyVersion: 1.0.0
+owner: sre-primary
+scope: telemetry
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR5
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+telemetrySignals:
+  description: >
+    The closed-set of telemetry signal classes the platform
+    MUST emit. Mirrors `design.md` §13 + ownership-catalog.md §3.
+  values:
+    - trace
+    - metric
+    - log
+    - audit
+
+traceHops:
+  description: >
+    The exact hops a single request MUST propagate
+    `traceparent` / `tracestate` through. The linter enforces
+    each hop is wired to the OTel SDK / Collector with no
+    silent gap.
+  values:
+    - edge_ingress
+    - kong_gateway
+    - web_bff
+    - public_api
+    - grpc_client
+    - service_mtls
+    - service_handler
+    - jooq_query
+    - postgres
+    - kafka_producer
+    - kafka_consumer
+    - temporal_activity
+    - temporal_workflow
+    - outbox_relay
+    - search_projection
+
+pseudonymLabels:
+  description: >
+    The ONLY labels the runtime may use to identify a tenant,
+    user or actor in metrics, logs, traces and audit. Raw
+    identifiers MUST be HMAC-SHA256 keyed by Vault pepper
+    BEFORE emission.
+  values:
+    - tenant_pseudo_id
+    - user_pseudo_id
+    - actor_pseudo_id
+    - workflow_pseudo_id
+    - consumer_pseudo_id
+
+forbiddenMetricLabels:
+  description: >
+    Labels that MUST NOT appear on any emitted metric. The
+    OTel Collector `attributes/tenant-pseudonym` processor
+    drops any of these at the exporter boundary; the browser
+    `redaction.ts` drops them at the SDK boundary.
+  values:
+    - tenant_id
+    - user_id
+    - actor_id
+    - email
+    - oidc_subject
+    - oidcSubject
+    - phone
+    - passport
+    - ssn
+    - raw_dna
+    - raw_pii
+    - rawEmail
+    - rawPhone
+    - rawAddress
+    - treeViewerBypass
+    - rawEventPayload
+    - rawAuditStream
+    - rawConsentReceipt
+    - rawSignatureBlob
+    - rawIdDocument
+    - cameraSerial
+    - exifGps
+    - passportNumber
+    - productionPii
+    - internalVaultToken
+    - internalSessionCookie
+    - dnaRawBucketKey
+    - dnaMatchBucketKey
+
+telemetryRedactionPatterns:
+  description: >
+    The 9 mandatory regex patterns the OTel Collector
+    `redaction` processor MUST apply to every log body. The
+    linter asserts the count and the canonical regexes; the
+    runtime MUST apply them BEFORE any exporter writes.
+    Order matters — `ipv4` MUST run before `phone` so the
+    phone regex cannot swallow the dotted-decimal IP.
+  values:
+    - name: ssn
+      regex: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+    - name: passport
+      regex: "\\b[A-Z]{1,2}[0-9]{6,9}\\b"
+    - name: driverLicense
+      regex: "\\b[A-Z]{1,2}\\d{6,8}\\b"
+    - name: email
+      regex: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
+    - name: ipv4
+      regex: "\\b(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)(?:\\.(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)){3}\\b"
+    - name: jwt
+      regex: "\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\b"
+    - name: rawDnaMarker
+      regex: "\\brs\\d{2,8}\\s+[ACGT]{2,}\\b"
+    - name: phone
+      regex: "\\+?\\d{1,3}[\\s.-]?\\(?\\d{1,4}\\)?[\\s.-]?\\d{1,4}[\\s.-]?\\d{1,9}"
+    - name: authorizationHeader
+      regex: "(?i)(authorization|cookie|set-cookie):\\s*[^\\s,;]+"
+
+cardinalityCeilings:
+  description: >
+    Maximum active unique label values per environment. The
+    runtime MUST drop emission when the cardinality ceiling is
+    exceeded and emit `telemetry.label.cardinality.exceeded`.
+  values:
+    - name: tenant_pseudo_id
+      max: 50000
+    - name: user_pseudo_id
+      max: 200000
+    - name: workflow_pseudo_id
+      max: 1000
+    - name: consumer_pseudo_id
+      max: 1000
+
+otlpExporterDefaults:
+  description: >
+    Default OTel SDK exporter batch tuning. Mirrored to
+    `platform/grafana/otel-collector.yaml` (E2.10) and applied
+    by every Java service (`sdk.batch`) and Next.js web app
+    (`@opentelemetry/exporter-trace-otlp-http`). The runtime
+    MUST NOT block business code on telemetry export.
+  values:
+    - name: sendBatchMaxSize
+      value: 512
+    - name: sendBatchTimeoutSeconds
+      value: 5
+    - name: maxQueueSize
+      value: 2048
+    - name: protocol
+      value: grpc
+    - name: compression
+      value: gzip
+    - name: tlsInsecure
+      value: false
+
+redMetricSurface:
+  description: >
+    The mandatory RED (Rate / Errors / Duration) histogram
+    surfaces the runtime MUST emit. The deep linter verifies
+    each surface declares the 3 base metrics + label schema.
+  values:
+    - surface: rest_endpoint
+      rate: http_server_requests_seconds_count
+      errors: http_server_requests_seconds_count
+      duration: http_server_requests_seconds_bucket
+      labels:
+        - route
+        - method
+        - status_class
+        - tenant_pseudo_id
+        - service
+    - surface: grpc_method
+      rate: grpc_server_handled_total
+      errors: grpc_server_handled_total
+      duration: grpc_server_handling_seconds_bucket
+      labels:
+        - grpc_method
+        - grpc_service
+        - status_class
+        - tenant_pseudo_id
+        - service
+    - surface: kafka_consumer
+      rate: kafka_consumer_records_consumed_total
+      errors: kafka_consumer_records_failed_total
+      duration: kafka_consumer_record_processing_seconds_bucket
+      labels:
+        - topic
+        - consumer_group
+        - tenant_pseudo_id
+    - surface: temporal_workflow
+      rate: temporal_workflow_start_total
+      errors: temporal_workflow_failed_total
+      duration: temporal_workflow_duration_seconds_bucket
+      labels:
+        - workflow_type
+        - task_queue
+        - tenant_pseudo_id
+
+outboxAndLagMetrics:
+  description: >
+    Outbox / consumer-lag / workflow-failure /
+    projection-freshness metrics. Each metric is emitted by
+    the runtime library and recorded as a Prometheus histogram
+    + gauge; alerts in E13.2 consume these metrics.
+  values:
+    - name: outbox_age_seconds
+      type: gauge
+      labels:
+        - aggregate_type
+        - tenant_pseudo_id
+    - name: consumer_lag_records
+      type: gauge
+      labels:
+        - topic
+        - consumer_group
+        - tenant_pseudo_id
+    - name: workflow_failure_total
+      type: counter
+      labels:
+        - workflow_type
+        - task_queue
+        - failure_class
+    - name: projection_freshness_seconds
+      type: gauge
+      labels:
+        - projection_name
+        - tenant_pseudo_id
+
+fallbackStrategy:
+  description: >
+    Behaviour when the OTel Collector is unreachable. The
+    runtime MUST NOT cascade the failure to business code; a
+    local ring buffer + circuit breaker MUST be used.
+  values:
+    - name: ringBufferMaxBytes
+      value: 4194304
+    - name: circuitBreakerWindowSeconds
+      value: 30
+    - name: circuitBreakerThreshold
+      value: 5
+    - name: onCircuitOpen
+      value: drop_oldest
+    - name: onCollectorRecover
+      value: flush_ring_buffer
+
+auditPipelineFields:
+  description: >
+    The fields the dedicated `otlp/audit` receiver (E2.10)
+    MUST emit on every audit event. The audit pipeline forces
+    `actor_pseudo_id` and rejects raw identity labels.
+  required:
+    - actor_pseudo_id
+    - tenant_pseudo_id
+    - action
+    - correlation_id
+    - trace_id
+  rejected:
+    - email
+    - oidc_subject
+    - phone
+    - rawEmail
+    - raw_dna
+    - raw_pii
+
+browserRedactionTests:
+  description: >
+    The mandatory browser-side redaction tests the CI MUST run
+    for `apps/web/src/lib/telemetry/redaction.ts`. Each test
+    references a real `apps/web/test/telemetry/redaction.test.ts`
+    case and is enforced by the linter.
+  values:
+    - email_scrub
+    - phone_scrub
+    - ipv4_scrub
+    - jwt_scrub
+    - raw_dna_marker_scrub
+    - forbidden_key_drop
+    - pseudonym_label_present
+    - traceparent_propagation
+    - fallback_ring_buffer
+
+telemetryStateMatrix:
+  description: >
+    Closed-set state matrix for the OTel SDK lifecycle.
+    Initial = READY. Terminal = SHUTDOWN. Every state must be
+    reachable from READY via BFS and every terminal state must
+    have empty transitions.
+  initialStatus: READY
+  statuses:
+    - status: READY
+      transitions: [COLLECTING, CIRCUIT_OPEN, SHUTDOWN]
+    - status: COLLECTING
+      transitions: [BACKPRESSURE, CIRCUIT_OPEN]
+    - status: BACKPRESSURE
+      transitions: [COLLECTING, CIRCUIT_OPEN]
+    - status: CIRCUIT_OPEN
+      transitions: [FLUSHING, COLLECTING]
+    - status: FLUSHING
+      transitions: [COLLECTING, SHUTDOWN]
+    - status: SHUTDOWN
+      transitions: []
+      terminal: true
+
+runtimeStateMatrix:
+  description: >
+    Closed-set state matrix for the operations-side
+    `TelemetryGuard` Java guard. Initial = ALLOWED. Terminal
+    statuses: REDACTED / DROPPED / ESCALATED.
+  initialStatus: ALLOWED
+  statuses:
+    - status: ALLOWED
+      transitions: [PSEUDONYMIZED, REDACTED]
+    - status: PSEUDONYMIZED
+      transitions: [REDACTED, ALLOWED]
+    - status: REDACTED
+      transitions: [DROPPED, ESCALATED]
+    - status: DROPPED
+      transitions: []
+      terminal: true
+    - status: ESCALATED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric invariants. Any deviation is rejected by the
+    linter AND by the Java guard.
+  values:
+    - name: maxPseudonymHashBytes
+      value: 32
+    - name: minTraceparentVersionDigits
+      value: 2
+    - name: maxTracestateVendorEntries
+      value: 32
+    - name: outboxAgeAlertThresholdSeconds
+      value: 300
+    - name: consumerLagAlertThresholdRecords
+      value: 1000
+    - name: workflowFailureAlertThresholdPerHour
+      value: 5
+    - name: projectionFreshnessAlertThresholdSeconds
+      value: 900
+    - name: batchProcessorMaxQueueSize
+      value: 2048
+    - name: ringBufferMaxBytes
+      value: 4194304
+    - name: circuitBreakerWindowSeconds
+      value: 30
+    - name: circuitBreakerThreshold
+      value: 5
+    - name: auditFieldsForcedCount
+      value: 5
+    - name: auditFieldsRejectedCount
+      value: 6
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - traceparentPropagatedAcrossHops
+    - pseudonymLabelsOnly
+    - forbiddenMetricLabelsRejected
+    - nineRedactionPatternsApplied
+    - redMetricsEmittedForAllSurfaces
+    - outboxAgeAndLagEmitted
+    - browserRedactionTestsPresent
+    - otelCollectorDownDoesNotBlockBusiness
+    - auditPipelineForcesActorPseudoId
+    - cardinalityCeilingsRespected
+    - rawDnaNeverOnAnySurface
+    - rawPiiNeverOnAnySurface
+    - oidcSubjectNeverPlain
+    - emailNeverPlain
+    - treeViewerBypassNeverEmitted
+    - traceMirroredInKafkaEnvelope
+    - traceMirroredInTemporalSearchAttribute
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    any of these — the platform stack (Grafana OSS / OTel
+    Collector) already provides them.
+  values:
+    - name: observability
+      spec: grafana_oss_stack_only
+    - name: metric_collector
+      spec: otel_collector_only
+    - name: trace_storage
+      spec: tempo_only
+    - name: log_storage
+      spec: loki_only
+    - name: dashboard_ui
+      spec: grafana_only
+    - name: alerting
+      spec: prometheus_only
+    - name: audit_sink
+      spec: otlp_audit_only
+    - name: noCustomMetricBackend
+      spec: forbidden
+    - name: noCustomLogAggregator
+      spec: forbidden
+    - name: noCustomTraceStore
+      spec: forbidden
+    - name: noCustomDashboardUI
+      spec: forbidden
+    - name: noCustomAlertingEngine
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain (used by
+    the linter to reject accidental leaks of secrets, PII, DNA
+    or vendor-specific terminology inside telemetry policy).
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - inline_stripe_api_key
+    - inline_license_file
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers the linter verifies are
+    implemented at the agreed paths.
+  values:
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/telemetry/TelemetryGuard.java
+    - apps/web/src/lib/telemetry/redaction.ts
+    - apps/web/test/telemetry/redaction.test.ts
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/reliability/telemetry-policy.yaml
+
+egressAllowlist:
+  description: >
+    Egress hosts the browser SDK is allowed to send telemetry
+    to. Anything outside this list MUST be blocked by CSP and
+    enforced by the runtime SDK.
+  values:
+    - otel-collector.gp-observability.svc.cluster.local
+    - otel-collector.gp-observability
+    - localhost_4318_dev_only
+
+outboxEnvelope:
+  description: >
+    Mandatory fields the outbox Kafka envelope MUST carry so
+    trace correlation survives the broker hop.
+  fields:
+    - traceparent
+    - tracestate
+    - trace_id
+    - span_id
+    - correlation_id
+    - tenant_pseudo_id
+    - actor_pseudo_id
+
+temporalSearchAttributes:
+  description: >
+    The Temporal search attribute schema MUST contain only
+    pseudonymous fields. Raw identifiers are forbidden
+    (`design.md` §7.4).
+  required:
+    - tenant_pseudo_id
+    - workflow_pseudo_id
+    - correlation_id
+    - trace_id
+  rejected:
+    - tenant_id
+    - user_id
+    - email
+    - raw_dna
+    - raw_pii
+
+browserTelemetry:
+  description: >
+    The mandatory browser-side telemetry contract. Mirrors
+    E12 (offline / PWA) — telemetry MUST NOT capture content,
+    DOM, raw inputs or anything beyond pseudonymous IDs and
+    the OpenFeature exposure event.
+  eventWhitelist:
+    - app_loaded
+    - route_changed
+    - flag_exposure
+    - error_boundary_caught
+    - mutation_queue_synced
+    - offline_cache_opt_in
+    - offline_cache_opt_out
+    - offline_cache_purge
+    - permission_version_mismatch
+    - accessibility_preference_changed
+  forbidContentCapture: true
+  forbidInputCapture: true
+  forbidDnaUpload: true
+  forbidMediaCapture: true
+
+serviceLevelRequiredMetrics:
+  description: >
+    Every service MUST publish these metrics. The linter
+    verifies the metric library declared in
+    `services/<svc>/build.gradle.kts` references an
+    `otel.api` artifact and a `micrometer-registry-prometheus`
+    bridge (or equivalent Spring Boot actuator config).
+  values:
+    - http_server_requests_seconds
+    - grpc_server_handled_total
+    - grpc_server_handling_seconds
+    - jvm_memory_used_bytes
+    - jvm_gc_pause_seconds
+    - process_cpu_seconds_total
+    - kafka_consumer_records_consumed_total
+    - outbox_age_seconds
+    - consumer_lag_records
+    - workflow_failure_total
+    - projection_freshness_seconds
+
+tenantPseudonymAlgorithm:
+  description: >
+    The exact algorithm used to compute the pseudonymous IDs.
+    Vault-managed HMAC pepper; output is 16-byte truncated to
+    hex (32 chars). Mirrored in
+    `services/operations-service/.../telemetry/TelemetryGuard.java`.
+  values:
+    - name: hashFunction
+      value: HMAC-SHA256
+    - name: pepperSource
+      value: vault_kv_v2_observability_pepper
+    - name: pepperRotationPeriodDays
+      value: 90
+    - name: outputEncoding
+      value: hex
+    - name: outputTruncateBytes
+      value: 16
+    - name: saltPerEnvironment
+      value: true
+
+telemetryOutageAlerts:
+  description: >
+    Alerts the runtime library MUST emit when it detects
+    telemetry outage. The OTel Collector scrape failure is
+    already covered by E2.10 `PrometheusScrapeFailing` /
+    `OtelCollectorDroppedSpans`.
+  values:
+    - sdk_circuit_open
+    - sdk_circuit_half_open
+    - sdk_circuit_close
+    - sdk_fallback_ring_buffer_full
+    - sdk_cardinality_ceiling_exceeded
+
+telemetryOutageAuditEvents:
+  description: >
+    Audit events emitted when telemetry outage happens.
+    Each event MUST be sent to the `otlp/audit` receiver on
+    recovery, even if regular telemetry is degraded.
+  values:
+    - telemetry.circuitOpen
+    - telemetry.circuitRecover
+    - telemetry.fallbackRingBufferFull
+    - telemetry.label.cardinality.exceeded
+    - telemetry.batchProcessor.dropped
+    - telemetry.collectorUnreachable
+    - telemetry.collectorRecovered
+    - telemetry.redactionRuleMissing
+    - telemetry.pseudonymPepperRotated
+    - telemetry.fallbackToSafeDefault

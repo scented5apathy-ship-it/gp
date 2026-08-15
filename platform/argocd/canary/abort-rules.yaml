@@ -1,0 +1,98 @@
+# E13.4 — Argo Rollouts canary abort rules.
+#
+# Mirrors `contracts/reliability/resilience-chaos-policy.yaml`
+# `canaryAbortRules`. The canary is aborted when ANY of
+# these conditions is observed for `forSeconds` consecutive.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: genea-api-canary
+  labels:
+    app.kubernetes.io/name: genea-api
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/managed-by: argocd
+spec:
+  replicas: 5
+  strategy:
+    canary:
+      canaryService: genea-api-canary
+      stableService: genea-api-stable
+      maxSurge: 25%
+      maxUnavailable: 0
+      analysis:
+        templates:
+          - templateName: genea-canary-abort
+        startingStep: 2
+        steps:
+          - setWeight: 5
+          - pause: { duration: 2m }
+          - setWeight: 25
+          - pause: { duration: 3m }
+          - setWeight: 50
+          - pause: { duration: 5m }
+          - setWeight: 100
+  analysisTemplates:
+    - metadata:
+        name: genea-canary-abort
+      spec:
+        args:
+          - name: service-name
+            value: genea-api
+          - name: baseline-p95-ms
+            value: "300"
+          - name: max-error-rate
+            value: "0.005"
+          - name: max-five-xx-ratio
+            value: "0.01"
+        metrics:
+          - name: five-xx-ratio
+            interval: 30s
+            count: 4
+            successCondition: result <= args.max-five-xx-ratio
+            failureCondition: result > args.max-five-xx-ratio
+            provider:
+              prometheus:
+                address: http://prometheus.gp-observability:9090
+                query: |
+                  sum(rate(http_server_requests_seconds_count{
+                    service="{{args.service-name}}",status_class="5xx"}[2m]))
+                  /
+                  sum(rate(http_server_requests_seconds_count{
+                    service="{{args.service-name}}"}[2m]))
+          - name: p95-latency-regression
+            interval: 30s
+            count: 6
+            successCondition: result <= args.baseline-p95-ms * 2
+            failureCondition: result > args.baseline-p95-ms * 2
+            provider:
+              prometheus:
+                address: http://prometheus.gp-observability:9090
+                query: |
+                  histogram_quantile(0.95,
+                    sum(rate(http_server_requests_seconds_bucket{
+                      service="{{args.service-name}}"}[2m])) by (le))
+          - name: error-rate-spike
+            interval: 30s
+            count: 6
+            successCondition: result <= args.max-error-rate
+            failureCondition: result > args.max-error-rate
+            provider:
+              prometheus:
+                address: http://prometheus.gp-observability:9090
+                query: |
+                  sum(rate(http_server_requests_seconds_count{
+                    service="{{args.service-name}}",status_class=~"5xx|4xx"}[2m]))
+                  /
+                  sum(rate(http_server_requests_seconds_count{
+                    service="{{args.service-name}}"}[2m]))
+          - name: privacy-finding
+            interval: 15s
+            count: 1
+            successCondition: result == 0
+            failureCondition: result >= 1
+            provider:
+              prometheus:
+                address: http://prometheus.gp-observability:9090
+                query: |
+                  sum(increase(telemetry_redaction_misses_total{
+                    service="{{args.service-name}}"}[2m]))

@@ -1,0 +1,194 @@
+# E13.2 — SLO / availability alert rules.
+#
+# Mirrors `contracts/reliability/slo-alert-policy.yaml`.
+# Validated by `scripts/lint-slo-alert.mjs`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: genea-slo-alerts
+  labels:
+    app.kubernetes.io/name: genea-slo-alerts
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/managed-by: argocd
+    release: genea-observability
+  annotations:
+    runbook_url: runbook/slo.md
+    dashboard_url: grafana/dashboards/api-overview.json
+    owner: sre-primary
+    severity: SEV2
+    action: PAGE
+    notify_channel: gp-sev2
+spec:
+  groups:
+    - name: slo.api-availability
+      interval: 30s
+      rules:
+        - alert: ApiAvailabilityBurn1h
+          expr: |
+            (sum(rate(http_server_requests_seconds_count{service="genealogy-platform",status_class="5xx"}[1h]))
+             /
+             sum(rate(http_server_requests_seconds_count{service="genealogy-platform"}[1h]))) > (1 - 0.999)
+              and on() (count(rate(http_server_requests_seconds_count{service="genealogy-platform"}[1h])) > 0)
+          for: 2m
+          labels:
+            severity: SEV1
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev1
+            tenant_pseudo_id: "*"
+          annotations:
+            summary: "API 5xx burn-rate 14.4x over 1h"
+            runbook_url: runbook/slo.md#sev1
+            dashboard_url: grafana/dashboards/api-overview.json
+            severity: SEV1
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev1
+        - alert: ApiReadP95Burn1h
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method="GET",route=~"/api/v1/.*"}[1h])) by (le, route)
+            ) > 0.3
+          for: 5m
+          labels:
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+            tenant_pseudo_id: "*"
+          annotations:
+            summary: "Read p95 > 300 ms for 5m"
+            runbook_url: runbook/slo.md#sev2
+            dashboard_url: grafana/dashboards/api-overview.json
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+        - alert: ApiWriteP95Burn1h
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_server_requests_seconds_bucket{service="genealogy-platform",method=~"POST|PUT|PATCH|DELETE"}[1h])) by (le, route)
+            ) > 0.6
+          for: 5m
+          labels:
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+          annotations:
+            summary: "Write p95 > 600 ms for 5m"
+            runbook_url: runbook/slo.md#sev2
+            dashboard_url: grafana/dashboards/api-overview.json
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+    - name: slo.consumer-lag
+      interval: 30s
+      rules:
+        - alert: ConsumerLagCriticalP99
+          expr: consumer_lag_records{topic=~"audit\\..*|dna\\..*|tree\\..*"} > 1000
+          for: 5m
+          labels:
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+          annotations:
+            summary: "Critical consumer lag > 1 000 records"
+            runbook_url: runbook/slo.md#consumerlagcriticalp99
+            dashboard_url: grafana/dashboards/kafka.json
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+        - alert: OutboxAgeP99
+          expr: outbox_age_seconds{aggregate_type=~"person|tree|relationship"} > 300
+          for: 5m
+          labels:
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+          annotations:
+            summary: "Outbox age > 5 minutes"
+            runbook_url: runbook/slo.md#outboxagep99
+            dashboard_url: grafana/dashboards/kafka.json
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+        - alert: WorkflowFailurePerHour
+          expr: increase(workflow_failure_total[1h]) > 5
+          for: 5m
+          labels:
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+          annotations:
+            summary: "Workflow failures > 5 / hour"
+            runbook_url: runbook/slo.md#workflowfailureperhour
+            dashboard_url: grafana/dashboards/temporal.json
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+    - name: slo.freshness
+      interval: 30s
+      rules:
+        - alert: ProjectionFreshnessP99
+          expr: projection_freshness_seconds > 900
+          for: 15m
+          labels:
+            severity: SEV3
+            owner: sre-primary
+            action: TICKET
+            notify_channel: gp-sev3
+          annotations:
+            summary: "Projection freshness > 15 minutes"
+            runbook_url: runbook/slo.md#sev3
+            dashboard_url: grafana/dashboards/workload.json
+            severity: SEV3
+            owner: sre-primary
+            action: TICKET
+            notify_channel: gp-sev3
+        - alert: PiiRedactionCoverageLost
+          expr: |
+            (sum(rate(telemetry_redaction_hits_total{service="genealogy-platform"}[10m]))
+             /
+             sum(rate(telemetry_log_body_total{service="genealogy-platform"}[10m]))) < 1
+              and on() (sum(rate(telemetry_log_body_total{service="genealogy-platform"}[10m])) > 0)
+          for: 10m
+          labels:
+            severity: SEV1
+            owner: appsec-primary
+            action: PAGE
+            notify_channel: gp-sev1
+          annotations:
+            summary: "PII redaction coverage < 100 %"
+            runbook_url: runbook/slo.md#piiredactioncoveragelost
+            dashboard_url: grafana/dashboards/otel-collector.json
+            severity: SEV1
+            owner: appsec-primary
+            action: PAGE
+            notify_channel: gp-sev1
+    - name: slo.synthetic-probes
+      interval: 30s
+      rules:
+        - alert: SyntheticProbeFailedCore
+          expr: probe_success{probe_group="core"} < 0.99
+          for: 2m
+          labels:
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2
+          annotations:
+            summary: "Synthetic probe failed for 2m"
+            runbook_url: runbook/slo.md#sev2
+            dashboard_url: grafana/dashboards/workload.json
+            severity: SEV2
+            owner: sre-primary
+            action: PAGE
+            notify_channel: gp-sev2

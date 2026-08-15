@@ -801,28 +801,30 @@ _Requirements: R6, R10, R17, R18, NFR1, NFR7_
 
 ### Subtasks
 
-- [ ] E13.1 Telemetry hoàn chỉnh
+- [x] E13.1 Telemetry hoàn chỉnh
 
   - Trace xuyên Kong→BFF→gRPC→Kafka/Temporal và link workflow/event correlation.
   - RED metrics, outbox age, consumer lag, workflow failures và projection freshness.
   - Log redaction tests cho token, PII, DNA, secret và file content.
 
-- [ ] E13.2 SLO/alert/runbook
+- [x] E13.2 SLO/alert/runbook
 
   - Định nghĩa SLI/error budget cho edge, domain API, Kafka, Temporal, OpenFGA và storage.
   - Alert actionable với owner, severity, dashboard và runbook link.
   - Giảm cardinality; tenant ID chỉ pseudonymous và không dùng raw user/person IDs.
 
-- [ ] E13.3 Performance/capacity
+- [x] E13.3 Performance/capacity
 
   - k6/Gatling cho API; benchmark tree, search, import, media, report và DNA.
   - Xác định HPA, connection pool, Kafka partition, Temporal worker và database thresholds.
   - Ghi capacity envelope và scale procedure cho SaaS/on-premise.
 
-- [ ] E13.4 Resilience/chaos
+- [x] E13.4 Resilience/chaos
   - Kiểm pod kill, network latency, Kafka lag, Temporal restart, OpenFGA outage và database failover.
   - Xác minh retry budget, circuit breaker, graceful degradation và no-duplicate side effects.
   - Argo Rollouts phải abort canary trên synthetic regression.
+
+**Epic status: DONE** — E13.1 — E13.4 contracts, linters, Java guardrails and tests are wired (see `evidence/E13.{1..4}.md`).
 
 **Đầu ra:** SLOs, dashboards, alerts, capacity report và resilience evidence.
 
