@@ -584,25 +584,25 @@ _Requirements: R7, R8, R9, R13, NFR1, NFR3, NFR8_
 
 ### Subtasks
 
-- [ ] E8.1 Search projection
+- [x] E8.1 Search projection
 
   - Consume Kafka events idempotently; normalize multilingual names/aliases với FTS/trigram.
   - Lưu tenant/privacy classification và projection version.
   - Theo dõi lag, rebuild và reconciliation workflow bằng Temporal.
 
-- [ ] E8.2 Authorized search
+- [x] E8.2 Authorized search
 
   - Filter tenant/OpenFGA/ABAC trước response; cursor pagination và facets.
   - Saved search và alert chỉ lưu query an toàn.
   - Không cache kết quả vượt quá permission version.
 
-- [ ] E8.3 Public projection
+- [x] E8.3 Public projection
 
   - Chỉ index `PUBLIC` sau redaction living/minor/sensitive.
   - `UNLISTED` trả `noindex`; token hash/expiry/rate limit ở Kong và app validation.
   - Purge projection/cache/sitemap khi visibility hoặc policy đổi.
 
-- [ ] E8.4 Benchmark/evolution gate
+- [x] E8.4 Benchmark/evolution gate
   - Đo SLO trên datasets mục tiêu và worst-case fuzzy/facet queries.
   - Tối ưu index/query bằng jOOQ trước.
   - Chỉ đề xuất OpenSearch qua ADR nếu PostgreSQL không đạt.

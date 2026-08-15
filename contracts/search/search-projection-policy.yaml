@@ -1,0 +1,511 @@
+# contracts/search/search-projection-policy.yaml
+#
+# E8.1 — Search projection contract.
+#
+# Single source of truth for the `search-service` projection pipeline
+# (PostgreSQL FTS + pg_trgm + unaccent-aware normalized columns per
+# `design.md` §9). The service consumes genealogy/research/collaboration
+# Kafka events idempotently (per ADR-E0.5-08 BACKWARD Avro), normalises
+# multilingual names/aliases with accent-insensitive FTS/trigram tokens,
+# and stores tenant + privacy classification + projection version.
+# Lag is monitored through the OTel pipeline; rebuild + reconciliation
+# flows through Temporal per ADR-E0.5-07.
+#
+# Conventions (mirror E7.5 albums-linking-policy.yaml):
+#   - Closed-set vocabularies are exhaustive enums; linter enforces
+#     both the size and the exact symbol set so the Java enum values
+#     stay byte-equivalent.
+#   - Boolean guard rails MUST be true / false exactly as named.
+#   - Numeric bounds have explicit floor / ceiling; the linter enforces
+#     both the value and the multiplicative invariants.
+#   - Hard invariants pin DNA bucket shield + privacy classification +
+#     event idempotency + outbox relay behaviour (see ADR-E0.5-07 +
+#     ADR-E0.5-08).
+#   - Sandbox egress allowlist distinct from E7.5 albums allowlist
+#     (search needs postgres + apicurio + vault-agent + openfga +
+#     audit-service + kafka-broker — no public-projection tokenizer).
+#   - State machine for projection lag covers PENDING → BACKFILLED →
+#     STREAMING → DRAINED; terminals (FAILED, RETIRED) MUST have empty
+#     transition arrays.
+#   - The chart mirror at
+#     `platform/helm/genealogy-platform/files/search-projection-policy.yaml`
+#     MUST stay byte-identical (enforced by `scripts/lint-search-projection.mjs`).
+
+policyVersion: "1.0.0"
+owner: search
+domain: genealogy.platform.search.v1
+contract: "E8.1 search projection"
+doc: |
+  Search projection contract for the genealogy platform search service.
+  Defines the Kafka → search-projection table pipeline plus the
+  normalised name/alias columns, privacy classification, projection
+  version, lag budget and rebuild/reconciliation workflow.
+  Compatibility policy = BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+searchDocumentKinds:
+  doc: "Exhaustive kinds the search projection stores. Java enum mirror."
+  values:
+    - PERSON
+    - EVENT
+    - PLACE
+    - SOURCE
+    - CITATION
+    - MEDIA
+    - ALBUM
+
+searchPrivacyClasses:
+  doc: "Per-document privacy classification mirrored on the search projection."
+  values:
+    - PRIVATE
+    - TREE_DEFAULT
+    - UNLISTED
+    - PUBLIC
+    - REDACTED
+
+searchProjectionStatuses:
+  doc: "Per-document projection lifecycle (mirrors the E4 person + E7 media projection lifecycle)."
+  values:
+    - PENDING
+    - INDEXED
+    - STALE
+    - REDACTED
+    - PURGED
+
+searchSourceDomains:
+  doc: "Domains feeding the projection pipeline (Kafka event namespaces)."
+  values:
+    - GENEALOGY
+    - RESEARCH
+    - COLLABORATION
+    - MEDIA
+
+searchEventTypes:
+  doc: "Closed-set event types accepted by the projection worker."
+  values:
+    - PERSON_CREATED
+    - PERSON_UPDATED
+    - PERSON_DELETED
+    - PERSON_LIVING_STATUS_CHANGED
+    - PERSON_PRIVACY_CHANGED
+    - EVENT_CREATED
+    - EVENT_UPDATED
+    - EVENT_DELETED
+    - PLACE_CREATED
+    - PLACE_UPDATED
+    - PLACE_DELETED
+    - SOURCE_CREATED
+    - CITATION_CREATED
+    - MEDIA_ASSET_INDEXED
+    - MEDIA_ASSET_REDACTED
+    - MEDIA_ASSET_PURGED
+    - ALBUM_CREATED
+    - ALBUM_RENAMED
+    - ALBUM_VISIBILITY_CHANGED
+    - ALBUM_RECONCILIATION_PURGED
+
+searchProjectionLagPhases:
+  doc: "Projection lag phases used by the OTel gauges + Grafana dashboard."
+  values:
+    - HEALTHY
+    - BACKFILLING
+    - DRAINING
+    - AT_RISK
+    - DEGRADED
+
+searchReconciliationStatuses:
+  doc: "Reconciliation workflow statuses (per ADR-E0.5-07 Temporal). Initial = QUEUED."
+  values:
+    - QUEUED
+    - BACKFILL_RUNNING
+    - BACKFILL_DONE
+    - INDEX_REBUILT
+    - DRAIN_RUNNING
+    - DRAINED
+    - DECIDED
+    - FAILED
+    - RETIRED
+
+searchFailureReasons:
+  doc: "Closed-set failure reasons used by the projection worker + reconciliation workflow."
+  values:
+    - PROJECTION_NOT_FOUND
+    - PROJECTION_VERSION_MISMATCH
+    - PROJECTION_LAG_EXCEEDED
+    - PROJECTION_EVENT_TYPE_UNKNOWN
+    - PROJECTION_SOURCE_DOMAIN_UNKNOWN
+    - PROJECTION_TENANT_MISMATCH
+    - PROJECTION_PRIVACY_CLASS_FORBIDDEN
+    - PROJECTION_PRIVACY_REDACTION_MISSING
+    - PROJECTION_DNA_BUCKET_FORBIDDEN
+    - PROJECTION_RECONCILIATION_FAILED
+    - PROJECTION_RECONCILIATION_OUTBOX_FAILED
+    - PROJECTION_BACKFILL_TIMEOUT
+    - PROJECTION_EVENT_PAYLOAD_INVALID
+    - PROJECTION_IDEMPOTENCY_KEY_MISSING
+    - PROJECTION_OUTBOX_RELAY_LOOP
+    - PROJECTION_LANGUAGE_TAG_INVALID
+    - PROJECTION_NAME_TOO_LONG
+    - PROJECTION_ALIAS_TOO_MANY
+    - PROJECTION_ALIAS_TOO_LONG
+    - PROJECTION_QUERY_TOO_LONG
+    - PROJECTION_SAVED_SEARCH_SHARE_FORBIDDEN
+    - PROJECTION_NORMALIZED_TOKEN_INVALID
+    - PROJECTION_BACKFILL_QUOTA_EXCEEDED
+
+searchAuditEvents:
+  doc: "Closed-set audit hooks (OpenTelemetry log events + audit-service)."
+  values:
+    - SEARCH_PROJECTION_RECEIVED
+    - SEARCH_PROJECTION_INDEXED
+    - SEARCH_PROJECTION_REDACTED
+    - SEARCH_PROJECTION_PURGED
+    - SEARCH_PROJECTION_REHYDRATED
+    - SEARCH_PROJECTION_RECONCILIATION_QUEUED
+    - SEARCH_PROJECTION_RECONCILIATION_RUN
+    - SEARCH_PROJECTION_RECONCILIATION_DRAINED
+    - SEARCH_PROJECTION_RECONCILIATION_PURGED
+    - SEARCH_PROJECTION_LAG_THRESHOLD_BREACHED
+    - SEARCH_PROJECTION_LAG_RECOVERED
+    - SEARCH_PROJECTION_BACKFILL_STARTED
+    - SEARCH_PROJECTION_BACKFILL_FINISHED
+    - SEARCH_PROJECTION_DNA_BUCKET_REFUSED
+    - SEARCH_PROJECTION_PRIVACY_REDACTED
+    - SEARCH_PROJECTION_REINDEX_TRIGGERED
+    - SEARCH_PROJECTION_EVENT_DUPLICATE_DROPPED
+    - SEARCH_PROJECTION_FACET_CACHE_REBUILT
+
+searchBenchmarkWorkloads:
+  doc: "Closed-set benchmark workloads (per E8.4 gate)."
+  values:
+    - EXACT_PERSON
+    - EXACT_ALBUM
+    - FUZZY_PERSON_TRIGRAM
+    - FUZZY_PLACE_TRIGRAM
+    - FACET_TREE_FAMILY
+    - FACET_DECADE_LIVING_STATUS
+    - CURSOR_PAGINATION
+    - SAVED_SEARCH_ALERT
+
+searchBenchmarkVerdicts:
+  doc: "Verdicts the benchmark gate can return. P95 + latency + freshness roll up into one verdict."
+  values:
+    - PASS
+    - PASS_WITH_NOTES
+    - FAIL_P95
+    - FAIL_LAG
+    - FAIL_FRESHNESS
+    - FAIL_INDEX
+    - FAIL_SAFETY
+    - BLOCKED_ADR_REQUIRED
+
+searchProjectionEvolutionPaths:
+  doc: "Evolution paths the E8.4 gate may recommend."
+  values:
+    - POSTGRES_HOLD
+    - POSTGRES_REINDEX
+    - POSTGRES_PARTITION
+    - POSTGRES_GIN_REWRITE
+    - OPENSEARCH_REQUIRED
+    - ADAPTIVE_INDEX_REQUIRED
+
+languageNormalizationStrategies:
+  doc: "Accent-insensitive name/alias normalisation strategies."
+  values:
+    - UNACCENT_LOWERCASE_NFC
+    - UNACCENT_LOWERCASE_NFKD
+    - UNACCENT_TRIGRAM_AWARE
+
+savedSearchSharingScopes:
+  doc: "Closed-set scopes saved searches may be shared with."
+  values:
+    - PRIVATE
+    - TREE_COLLABORATORS
+    - TENANT_TEAM
+
+searchFacetAxes:
+  doc: "Closed-set facet axes per R11.3."
+  values:
+    - TREE
+    - FAMILY
+    - DECADE
+    - LIVING_STATUS
+    - PLACE
+    - RESOURCE_KIND
+    - PRIVACY_CLASS
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the projection worker sandbox (k8s NetworkPolicy)."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+
+# ---------------------------------------------------------------------------
+# 3. State machines
+# ---------------------------------------------------------------------------
+
+projectionLagStateMatrix:
+  doc: "Lag state machine — every status reachable from HEALTHY unless terminal."
+  initialStatus: HEALTHY
+  statuses:
+    - status: HEALTHY
+      transitions: [BACKFILLING, DRAINING, AT_RISK]
+    - status: BACKFILLING
+      transitions: [DRAINING, AT_RISK, DEGRADED]
+    - status: DRAINING
+      transitions: [HEALTHY, AT_RISK, DEGRADED, DECIDED]
+    - status: AT_RISK
+      transitions: [HEALTHY, DEGRADED, DECIDED]
+    - status: DEGRADED
+      transitions: [HEALTHY, DECIDED]
+    - status: DECIDED
+      transitions: []
+      terminal: true
+
+projectionReconciliationStateMatrix:
+  doc: "Reconciliation workflow state machine — every status reachable from QUEUED unless terminal."
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [BACKFILL_RUNNING, FAILED, RETIRED]
+    - status: BACKFILL_RUNNING
+      transitions: [BACKFILL_DONE, FAILED, RETIRED]
+    - status: BACKFILL_DONE
+      transitions: [INDEX_REBUILT, FAILED]
+    - status: INDEX_REBUILT
+      transitions: [DRAIN_RUNNING, FAILED]
+    - status: DRAIN_RUNNING
+      transitions: [DRAINED, FAILED]
+    - status: DRAINED
+      transitions: [DECIDED]
+    - status: DECIDED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: RETIRED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  postgresFullTextOnly: true
+  pgTrgmEnabled: true
+  unaccentNormalizationRequired: true
+  privacyClassificationRequired: true
+  projectionVersioningRequired: true
+  eventConsumptionIdempotent: true
+  idempotencyKeyRequired: true
+  outboxRelaySeparated: true
+  reconciliationWorkflowRequired: true
+  lagMetricsExported: true
+  lagBudgetBreachedAlerts: true
+  projectionOutOfBandForbidden: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  languageTagIetfBcp47Required: true
+  savedSearchSharingOpaque: true
+  savedSearchQueryNoRawPii: true
+  benchmarkSuiteRequiredForRelease: true
+  adrRequiredBeforeOpenSearch: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  maxNameLength: 256
+  maxAliasLength: 256
+  maxAliasPerDocument: 64
+  maxLanguagesPerDocument: 16
+  maxBcp47TagLength: 64
+  maxQueryLength: 512
+  maxSavedSearchNameLength: 128
+  maxSavedSearchDescriptionLength: 1024
+  maxSavedSearchResultsPerPage: 100
+  maxCursorDepth: 1024
+  maxFacetCountPerAxis: 256
+  maxProjectionBatchSize: 1024
+  maxOutboxBatchSize: 256
+  projectionLagP95BudgetSeconds: 24
+  projectionLagP99BudgetSeconds: 120
+  projectionLagBreachSeconds: 300
+  projectionLagHeartbeatSeconds: 5
+  backfillBatchSize: 4096
+  backfillTimeoutSeconds: 1800
+  backfillHeartbeatSeconds: 30
+  backfillLookbackHours: 168
+  backfillCadenceHours: 24
+  reconciliationP95BudgetSeconds: 600
+  reconciliationHeartbeatSeconds: 60
+  benchmarkSuiteMaxDatasets: 16
+  benchmarkSuiteMaxQueriesPerDataset: 1024
+  benchmarkSuiteP95BudgetMilliseconds: 1000
+  benchmarkSuiteP99BudgetMilliseconds: 2500
+  benchmarkSuiteFreshnessBudgetSeconds: 60
+  benchmarkSuiteFuzzyRecallFloor: 0.85
+  benchmarkSuiteFuzzyPrecisionFloor: 0.90
+  benchmarkSuiteFacetCardinalityFloor: 16
+  projectionDocumentIdLength: 64
+  tenantScopeIdLength: 64
+  actorPseudoIdLength: 64
+  correlationIdLength: 128
+  idempotencyKeyLength: 128
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  projectionLagP95BudgetSeconds: 24
+  projectionLagHeartbeatMultiplier: 6
+  backfillCadenceMultiplier: 24
+  backfillLookbackMultiplier: 7
+  benchmarkSuiteP95BudgetMultiplier: 1
+  benchmarkSuiteFreshnessBudgetMultiplier: 60
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope (matches contracts/events/envelope/v1)
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox event types emitted by the projection worker / reconciliation workflow."
+  items:
+    - type: gp.search.v1.ProjectionReconciliationPurged
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.search.v1.ProjectionLagBreached
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.search.v1.SavedSearchCreated
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  doc: "Toggles that gate every audit event listed under `searchAuditEvents`."
+  auditRequired:
+    - SEARCH_PROJECTION_RECEIVED
+    - SEARCH_PROJECTION_INDEXED
+    - SEARCH_PROJECTION_REDACTED
+    - SEARCH_PROJECTION_PURGED
+    - SEARCH_PROJECTION_RECONCILIATION_QUEUED
+    - SEARCH_PROJECTION_RECONCILIATION_RUN
+    - SEARCH_PROJECTION_RECONCILIATION_DRAINED
+    - SEARCH_PROJECTION_RECONCILIATION_PURGED
+    - SEARCH_PROJECTION_LAG_THRESHOLD_BREACHED
+    - SEARCH_PROJECTION_LAG_RECOVERED
+    - SEARCH_PROJECTION_BACKFILL_STARTED
+    - SEARCH_PROJECTION_BACKFILL_FINISHED
+    - SEARCH_PROJECTION_DNA_BUCKET_REFUSED
+    - SEARCH_PROJECTION_PRIVACY_REDACTED
+    - SEARCH_PROJECTION_REINDEX_TRIGGERED
+    - SEARCH_PROJECTION_EVENT_DUPLICATE_DROPPED
+    - SEARCH_PROJECTION_FACET_CACHE_REBUILT
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns (raw PII / DNA)
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+
+# ---------------------------------------------------------------------------
+# 10. Benchmark dataset contract (E8.4 gate consumes these)
+# ---------------------------------------------------------------------------
+
+benchmarkSuiteContract:
+  queryLanguages:
+    - en
+    - vi
+    - ja
+    - fr
+    - es
+  datasetAxes:
+    - treeSize
+    - nameCardinality
+    - aliasCardinality
+    - placeCardinality
+    - privacyClassMix
+  worstCaseQueries:
+    - oneCharacterTrigram
+    - diacriticOnly
+    - mixedScript
+    - maxCursorDepth
+    - maxFacetCardinality
+  rolloutGates:
+    - PASS: [POSTGRES_HOLD]
+    - PASS_WITH_NOTES: [POSTGRES_REINDEX, POSTGRES_PARTITION, POSTGRES_GIN_REWRITE]
+    - FAIL_P95: [OPENSEARCH_REQUIRED]
+    - FAIL_FRESHNESS: [ADAPTIVE_INDEX_REQUIRED]
+    - FAIL_INDEX: [OPENSEARCH_REQUIRED]
+
+# ---------------------------------------------------------------------------
+# 11. Capability boundaries (do not reinvent platform)
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  doc: "What the projection must NOT do because the platform already provides it."
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom OpenSearch indexing (the worker consumes Avro events only)"
+    - "Custom PII / DNA detector (use the platform-wide redactor)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"

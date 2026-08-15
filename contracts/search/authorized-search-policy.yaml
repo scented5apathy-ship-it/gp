@@ -1,0 +1,376 @@
+# contracts/search/authorized-search-policy.yaml
+#
+# E8.2 — Authorized search contract.
+#
+# Single source of truth for the `search-service` authorized query
+# layer (per `design.md` §9). Wraps the projection pipeline (E8.1)
+# with tenant / OpenFGA / ABAC pre-filters, cursor pagination,
+# facet roll-ups, saved-search + alert metadata, and a permission
+# cache with strict version binding (per ADR-E0.5-09 — search
+# results may never out-live the permission version that produced
+# them).
+#
+# Conventions mirror E7.5 albums-linking-policy.yaml + E8.1
+# search-projection-policy.yaml.
+
+policyVersion: "1.0.0"
+owner: search
+domain: genealogy.platform.search.authorized.v1
+contract: "E8.2 authorized search"
+doc: |
+  Authorized search contract. Defines the tenant / OpenFGA / ABAC
+  pre-filter pipeline, cursor pagination shape, facet axes,
+  saved-search + alert metadata, permission-version cache, and
+  outbox envelope for `gp.search.v1.SavedSearchCreated` /
+  `gp.search.v1.SavedSearchAlertFired`.
+  Compatibility policy = BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+searchFilterModes:
+  doc: "Filter combination modes the query layer must accept."
+  values:
+    - ANY_OF
+    - ALL_OF
+    - NONE_OF
+
+searchOrderModes:
+  doc: "Sort modes the query layer must support. Cursor pagination uses these as `cursor.order`."
+  values:
+    - RELEVANCE
+    - CAPTURED_AT_ASC
+    - CAPTURED_AT_DESC
+    - UPDATED_AT_DESC
+    - NAME_ASC
+    - NAME_DESC
+
+searchResourceKinds:
+  doc: "Per-resource kind the authorized query may target."
+  values:
+    - PERSON
+    - EVENT
+    - PLACE
+    - SOURCE
+    - CITATION
+    - MEDIA
+    - ALBUM
+
+searchAuthorizationOutcomes:
+  doc: "Verdict returned by the tenant / OpenFGA / ABAC pipeline."
+  values:
+    - ALLOWED
+    - TENANT_MISMATCH
+    - OPENFGA_DENY
+    - ABAC_LIVING_FORBIDDEN
+    - ABAC_MINOR_FORBIDDEN
+    - ABAC_DNA_FORBIDDEN
+    - ABAC_CONSENT_REQUIRED
+    - ABAC_CONTEXTUAL_DENY
+    - PERMISSION_VERSION_STALE
+    - REJECTED
+
+searchFacetSorts:
+  doc: "Sort modes applied to facet buckets."
+  values:
+    - COUNT_DESC
+    - LABEL_ASC
+    - RECENT_FIRST
+
+searchCursorEncodings:
+  doc: "Encodings accepted for cursor serialization."
+  values:
+    - BASE64URL_OPAQUE
+    - KEY_PACKED
+
+searchSavedSearchAlertCadences:
+  doc: "Cadences the saved-search alert worker may run on."
+  values:
+    - REALTIME
+    - HOURLY
+    - DAILY
+    - WEEKLY
+    - DISABLED
+
+searchSavedSearchAlertChannels:
+  doc: "Channels the saved-search alert worker may publish to."
+  values:
+    - IN_APP
+    - EMAIL
+    - PUSH
+    - WEBHOOK
+
+searchSavedSearchScopes:
+  doc: "Mirrors E8.1 — scopes saved searches may be shared with."
+  values:
+    - PRIVATE
+    - TREE_COLLABORATORS
+    - TENANT_TEAM
+
+searchPermissionCacheStatus:
+  doc: "Permission cache bucket status. Mirrors the cache invalidation lifecycle."
+  values:
+    - VALID
+    - STALE
+    - PURGING
+    - PURGED
+
+searchFailureReasons:
+  doc: "Closed-set failure reasons used by the authorized query pipeline."
+  values:
+    - SEARCH_QUERY_TOO_LONG
+    - SEARCH_QUERY_EMPTY
+    - SEARCH_CURSOR_INVALID
+    - SEARCH_CURSOR_DEPTH_EXCEEDED
+    - SEARCH_RESOURCE_KIND_UNKNOWN
+    - SEARCH_FILTER_MODE_UNKNOWN
+    - SEARCH_ORDER_MODE_UNKNOWN
+    - SEARCH_TENANT_MISMATCH
+    - SEARCH_OPENFGA_DENY
+    - SEARCH_ABAC_LIVING_FORBIDDEN
+    - SEARCH_ABAC_MINOR_FORBIDDEN
+    - SEARCH_ABAC_DNA_FORBIDDEN
+    - SEARCH_ABAC_CONSENT_REQUIRED
+    - SEARCH_ABAC_CONTEXTUAL_DENY
+    - SEARCH_PERMISSION_VERSION_STALE
+    - SEARCH_SAVED_SEARCH_NOT_FOUND
+    - SEARCH_SAVED_SEARCH_SHARE_FORBIDDEN
+    - SEARCH_SAVED_SEARCH_QUERY_NO_PII
+    - SEARCH_ALERT_CADENCE_FORBIDDEN
+    - SEARCH_ALERT_CHANNEL_FORBIDDEN
+    - SEARCH_FACET_AXIS_UNKNOWN
+    - SEARCH_PERMISSION_CACHE_MISS
+    - SEARCH_DNA_BUCKET_FORBIDDEN
+    - SEARCH_PERMISSION_TOKEN_INVALID
+
+searchAuditEvents:
+  doc: "Closed-set audit hooks the authorized query pipeline emits."
+  values:
+    - SEARCH_QUERY_RECEIVED
+    - SEARCH_QUERY_ALLOWED
+    - SEARCH_QUERY_REJECTED
+    - SEARCH_FACETS_RETURNED
+    - SEARCH_CURSOR_ADVANCED
+    - SEARCH_PERMISSION_CACHE_HIT
+    - SEARCH_PERMISSION_CACHE_MISS
+    - SEARCH_PERMISSION_CACHE_INVALIDATED
+    - SEARCH_PERMISSION_CACHE_PURGED
+    - SEARCH_SAVED_SEARCH_CREATED
+    - SEARCH_SAVED_SEARCH_UPDATED
+    - SEARCH_SAVED_SEARCH_DELETED
+    - SEARCH_SAVED_SEARCH_SHARED
+    - SEARCH_SAVED_SEARCH_ALERT_FIRED
+    - SEARCH_DNA_BUCKET_REFUSED
+    - SEARCH_LIVING_RULE_APPLIED
+    - SEARCH_MINOR_RULE_APPLIED
+    - SEARCH_CONSENT_RULE_APPLIED
+
+searchFacetAxes:
+  doc: "Closed-set facet axes (mirrors E8.1)."
+  values:
+    - TREE
+    - FAMILY
+    - DECADE
+    - LIVING_STATUS
+    - PLACE
+    - RESOURCE_KIND
+    - PRIVACY_CLASS
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the authorized query sandbox."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+
+# ---------------------------------------------------------------------------
+# 3. State machine
+# ---------------------------------------------------------------------------
+
+permissionCacheStateMatrix:
+  doc: "Permission cache state machine — every status reachable from VALID unless terminal."
+  initialStatus: VALID
+  statuses:
+    - status: VALID
+      transitions: [STALE, PURGING]
+    - status: STALE
+      transitions: [VALID, PURGING]
+    - status: PURGING
+      transitions: [PURGED, VALID, DECIDED]
+    - status: PURGED
+      transitions: []
+      terminal: true
+    - status: DECIDED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  tenantFilterEnforced: true
+  openfgaCheckEnforced: true
+  abacOverlayEnforced: true
+  permissionVersionBindingEnforced: true
+  permissionCacheMaxVersionWindow: true
+  cursorOpaque: true
+  cursorDepthBounded: true
+  facetCardinalityBounded: true
+  savedSearchSharingOpaque: true
+  savedSearchQueryNoRawPii: true
+  alertChannelTenantConstrained: true
+  searchOutOfBandForbidden: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  livingStatusRedactionApplied: true
+  minorStatusRedactionApplied: true
+  dnaConsentRedactionApplied: true
+  consentWithdrawalInvalidatesResults: true
+  outboxRelaySeparated: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  maxQueryLength: 512
+  maxCursorDepth: 1024
+  maxFacetCountPerAxis: 256
+  maxPageSize: 100
+  minPageSize: 1
+  defaultPageSize: 20
+  maxFiltersPerQuery: 32
+  maxSavedSearchNameLength: 128
+  maxSavedSearchDescriptionLength: 1024
+  maxSavedSearchFiltersPerQuery: 32
+  maxSavedSearchResultsPerPage: 100
+  maxSavedSearchAlertsPerUser: 64
+  maxSavedSearchAlertSubscribers: 256
+  permissionCacheMaxAgeSeconds: 30
+  permissionCacheMaxVersionWindow: 5
+  permissionCacheTombstoneSeconds: 90
+  permissionCacheP95BudgetMilliseconds: 5
+  permissionCacheStaleBudgetSeconds: 15
+  alertWorkerHeartbeatSeconds: 30
+  alertWorkerP95BudgetSeconds: 60
+  alertCadenceRealtimeP95BudgetMilliseconds: 250
+  searchP95BudgetMilliseconds: 1000
+  searchP99BudgetMilliseconds: 2500
+  savedSearchIdLength: 64
+  alertIdLength: 64
+  tenantScopeIdLength: 64
+  actorPseudoIdLength: 64
+  correlationIdLength: 128
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  permissionCacheTombstoneMultiplier: 3
+  permissionCacheMaxAgeMultiplier: 1
+  alertCadenceRealtimeP95Multiplier: 1
+  searchP95BudgetMultiplier: 1
+  pageSizeDefaultToMaxRatio: 5
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope (matches contracts/events/envelope/v1)
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox event types emitted by the authorized query + saved-search worker."
+  items:
+    - type: gp.search.v1.SavedSearchCreated
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.search.v1.SavedSearchAlertFired
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - SEARCH_QUERY_RECEIVED
+    - SEARCH_QUERY_ALLOWED
+    - SEARCH_QUERY_REJECTED
+    - SEARCH_FACETS_RETURNED
+    - SEARCH_CURSOR_ADVANCED
+    - SEARCH_PERMISSION_CACHE_HIT
+    - SEARCH_PERMISSION_CACHE_MISS
+    - SEARCH_PERMISSION_CACHE_INVALIDATED
+    - SEARCH_PERMISSION_CACHE_PURGED
+    - SEARCH_SAVED_SEARCH_CREATED
+    - SEARCH_SAVED_SEARCH_UPDATED
+    - SEARCH_SAVED_SEARCH_DELETED
+    - SEARCH_SAVED_SEARCH_SHARED
+    - SEARCH_SAVED_SEARCH_ALERT_FIRED
+    - SEARCH_DNA_BUCKET_REFUSED
+    - SEARCH_LIVING_RULE_APPLIED
+    - SEARCH_MINOR_RULE_APPLIED
+    - SEARCH_CONSENT_RULE_APPLIED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries (do not reinvent platform)
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom OpenSearch indexing (the worker consumes Avro events only)"
+    - "Custom PII / DNA detector (use the platform-wide redactor)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"
+    - "Custom permission cache (use Flagsmith + cache-aside on top)"

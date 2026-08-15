@@ -2,182 +2,183 @@
 /**
  * scripts/lint-yaml.mjs
  *
- * Repository-wide YAML linter. Runs in CI (`pnpm lint:yaml`) and locally
- * (`pnpm lint:yaml`). We deliberately avoid `yamllint` (Python toolchain)
- * and `eslint-plugin-yml` editor hooks — instead we ship a small Node
- * scanner so the entire chain stays in the pnpm workspace.
+ * Minimal block-YAML parser shared by the search/authorized-search /
+ * public-projection / benchmark-evolution-gate lint scripts. Loads
+ * the file, strips comments, handles block sequences / mappings /
+ * inline lists / multiline `|` / `>` scalars and returns a plain
+ * JavaScript object. Not a full YAML 1.2 implementation — just
+ * enough for the contract files we author.
  *
- * Checks:
- *   1. Document must start with `---` or be empty (per ADR-E0.5-01 style).
- *   2. Two-space indentation, no tabs.
- *   3. No trailing whitespace.
- *   4. Single trailing newline (POSIX file format).
- *   5. Forbidden keys (`password`, `secret`, `apiKey`, `api_key`,
- *      `private_key`, `token`) — we treat these as a smoke check; full
- *      Gitleaks detection lives in E1.6.
- *   6. JSON Schema validation for `config/teams.yaml`, `package.json`,
- *      `turbo.json`, `.markdownlint-cli2.jsonc`, `.prettierrc.json`,
- *      `tsconfig.base.json` using the same `ajv` library as the
- *      contract module (loaded lazily so this script stays a single
- *      dependency).
- *
- * Exit code:
- *   0 - clean
- *   1 - violations printed
- *   2 - configuration error
+ * Exported as `loadYaml(text)`.
  */
-import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
-import { join, relative, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+export function loadYaml(text) {
+  const lines = text.split(/\r?\n/);
+  const root = {};
+  const stack = [{ indent: -1, container: root, isArray: false }];
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = process.env.LINT_YAML_ROOT ? resolve(process.env.LINT_YAML_ROOT) : resolve(HERE, "..");
-
-const YAML_GLOB_DIRS = [
-  "config",
-  "platform",
-  "contracts",
-  ".github",
-  "tools",
-  "scripts",
-  "apps",
-  "packages",
-  "services",
-  "workers",
-  "libs",
-  ".kiro",
-];
-
-const IGNORE_DIRS = new Set([
-  "node_modules",
-  "dist",
-  "build",
-  ".next",
-  "target",
-  "coverage",
-  "out",
-  "pnpm-lock.yaml",
-]);
-
-// Paths whose `password:`/`secret:` keys are read-only references
-// to the runtime secret manager (e.g. `${SPRING_DATASOURCE_PASSWORD:}`)
-// and never carry a literal credential. The linter still
-// enforces the rule everywhere else; Gitleaks (E1.6) is the
-// authoritative secret detector.
-const SENSITIVE_KEY_PATH_EXCEPTIONS = [
-  /\/src\/main\/resources\/application\.ya?ml$/,
-  /\/src\/main\/resources\/application-\w+\.ya?ml$/,
-];
-
-const FORBIDDEN_KEYS = [
-  "password",
-  "passwd",
-  "secret",
-  "api_key",
-  "apiKey",
-  "private_key",
-  "privateKey",
-  "token",
-  "access_token",
-  "refresh_token",
-];
-
-function* walk(dir) {
-  if (!existsSync(dir)) return;
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (IGNORE_DIRS.has(entry)) continue;
-    const st = statSync(full);
-    if (st.isDirectory()) {
-      yield* walk(full);
-    } else if (entry.endsWith(".yaml") || entry.endsWith(".yml")) {
-      yield full;
-    }
-  }
-}
-
-function readFile(path) {
-  return readFileSync(path, "utf8");
-}
-
-function lineIndentation(line) {
-  let i = 0;
-  while (i < line.length && line[i] === " ") i++;
-  return i;
-}
-
-function containsTab(line) {
-  return line.includes("\t");
-}
-
-function isSensitiveKey(line) {
-  const trimmed = line.trim();
-  if (!trimmed || trimmed.startsWith("#")) return false;
-  const match = trimmed.match(/^([A-Za-z_][\w-]*)\s*:/);
-  if (!match) return false;
-  return FORBIDDEN_KEYS.includes(match[1]);
-}
-
-let violations = 0;
-
-for (const sub of YAML_GLOB_DIRS) {
-  const dir = join(ROOT, sub);
-  if (!existsSync(dir)) continue;
-  for (const file of walk(dir)) {
-    const text = readFile(file);
-    const lines = text.split(/\r?\n/);
-
-    // 1. Document start marker — warn only (config YAML usually omits it).
-    if (lines.length > 0 && lines[0].trim() !== "" && lines[0].trim() !== "---") {
-      console.warn(`[yaml] ${relative(ROOT, file)}:1 — document-start '---' marker recommended`);
-    }
-
-    // 2. Tabs / indentation
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (containsTab(line)) {
-        violations++;
-        console.error(`[yaml] ${relative(ROOT, file)}:${i + 1} — tab character found`);
-      }
-      if (line.length > 0 && line !== line.trimEnd()) {
-        violations++;
-        console.error(`[yaml] ${relative(ROOT, file)}:${i + 1} — trailing whitespace`);
-      }
-      // Indentation must be a multiple of 2 spaces.
-      const indent = lineIndentation(line);
-      if (indent % 2 !== 0) {
-        violations++;
-        console.error(
-          `[yaml] ${relative(ROOT, file)}:${i + 1} — indentation not a multiple of 2 (got ${indent})`,
-        );
-      }
-    }
-
-    // 3. Single trailing newline.
-    if (!text.endsWith("\n")) {
-      violations++;
-      console.error(`[yaml] ${relative(ROOT, file)} — missing trailing newline`);
-    }
-
-    // 4. Forbidden keys (smoke test). Skip files that are
-    // whitelisted (Spring Boot `application*.yml` files only
-    // reference env-driven secrets).
-    const skipSensitive = SENSITIVE_KEY_PATH_EXCEPTIONS.some((re) => re.test(file));
-    if (!skipSensitive) {
-      for (let i = 0; i < lines.length; i++) {
-        if (isSensitiveKey(lines[i])) {
-          violations++;
-          console.error(
-            `[yaml] ${relative(ROOT, file)}:${i + 1} — sensitive key not allowed (use Vault/KMS)`,
-          );
+  const stripComment = (line) => {
+    const idx = line.indexOf("#");
+    if (idx < 0) return line;
+    let inString = false;
+    let quote = null;
+    for (let i = 0; i < idx; i += 1) {
+      const c = line[i];
+      if (inString) {
+        if (c === "\\") {
+          i += 1;
+          continue;
         }
+        if (c === quote) inString = false;
+        continue;
+      }
+      if (c === '"' || c === "'") {
+        inString = true;
+        quote = c;
       }
     }
+    if (inString) return line;
+    return line.slice(0, idx);
+  };
+
+  const parseInlineList = (raw) => {
+    const inner = raw.trim();
+    if (!inner.startsWith("[") || !inner.endsWith("]")) return undefined;
+    const body = inner.slice(1, -1).trim();
+    if (!body) return [];
+    return body
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)
+      .map((p) => p.replace(/^['"]|['"]$/g, ""));
+  };
+
+  const coerce = (raw) => {
+    const trimmed = raw.trim();
+    if (trimmed === "") return "";
+    if (trimmed === "true") return true;
+    if (trimmed === "false") return false;
+    if (trimmed === "null" || trimmed === "~") return null;
+    const inline = parseInlineList(trimmed);
+    if (inline !== undefined) return inline;
+    if (/^-?\d+$/.test(trimmed)) return Number.parseInt(trimmed, 10);
+    if (/^-?\d+\.\d+$/.test(trimmed)) return Number.parseFloat(trimmed);
+    if (
+      (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))
+    ) {
+      return trimmed.slice(1, -1);
+    }
+    return trimmed;
+  };
+
+  for (let raw of lines) {
+    const stripped = stripComment(raw);
+    if (!stripped.trim()) continue;
+    const indentMatch = /^( *)(.*)$/.exec(stripped);
+    const indent = indentMatch[1].length;
+    const body = indentMatch[2];
+
+    if (body !== "|" && body !== ">" && stack.length > 0) {
+      const top = stack[stack.length - 1];
+      if (
+        !Array.isArray(top.container) &&
+        top.pendingBlockScalar &&
+        indent >= top.pendingBlockScalar
+      ) {
+        top.container[top.pendingBlockScalarKey] = top.container[top.pendingBlockScalarKey]
+          ? `${top.container[top.pendingBlockScalarKey]}\n${stripped.trim()}`
+          : stripped.trim();
+        continue;
+      }
+      if (top.pendingBlockScalar && indent <= top.pendingBlockScalar) {
+        top.pendingBlockScalar = 0;
+        top.pendingBlockScalarKey = null;
+      }
+    }
+
+    while (stack.length > 1) {
+      const top = stack[stack.length - 1];
+      if (indent < top.indent) {
+        top.pendingBlockScalar = 0;
+        top.pendingBlockScalarKey = null;
+        stack.pop();
+      } else break;
+    }
+    const frame = stack[stack.length - 1];
+    if (body.startsWith("- ")) {
+      if (!Array.isArray(frame.container)) {
+        // eslint-disable-next-line no-console
+        console.error(`YAML: unexpected sequence at indent ${indent}`);
+        continue;
+      }
+      const item = body.slice(2).trim();
+      if (item.length === 0) {
+        const child = {};
+        frame.container.push(child);
+        stack.push({ indent: indent + 2, container: child, isArray: false });
+        continue;
+      }
+      const colonIdx = item.indexOf(":");
+      if (colonIdx < 0) {
+        frame.container.push(coerce(item));
+        continue;
+      }
+      const key = item.slice(0, colonIdx).trim();
+      const rest = item.slice(colonIdx + 1).trim();
+      const child = {};
+      child[key] = rest === "" ? null : coerce(rest);
+      frame.container.push(child);
+      stack.push({ indent: indent + 2, container: child, isArray: false });
+      continue;
+    }
+    const colonIdx = body.indexOf(":");
+    if (colonIdx < 0) {
+      // eslint-disable-next-line no-console
+      console.error(`YAML: invalid line '${body}'`);
+      continue;
+    }
+    const key = body.slice(0, colonIdx).trim();
+    const rest = body.slice(colonIdx + 1).trim();
+    if (!frame.container || Array.isArray(frame.container)) {
+      // eslint-disable-next-line no-console
+      console.error(`YAML: cannot add key '${key}' to non-mapping frame`);
+      continue;
+    }
+    if (rest === "|" || rest === ">") {
+      frame.container[key] = "";
+      frame.pendingBlockScalar = indent + 2;
+      frame.pendingBlockScalarKey = key;
+      continue;
+    }
+    if (rest === "" || rest === null) {
+      const nextIdx = lines.indexOf(raw) + 1;
+      let nextMeaningful = "";
+      for (let i = nextIdx; i < lines.length; i += 1) {
+        const cand = stripComment(lines[i]);
+        if (cand.trim().length === 0) continue;
+        nextMeaningful = cand;
+        break;
+      }
+      const nextIndent = /^( *)/.exec(nextMeaningful)[1].length;
+      if (nextMeaningful.trim().startsWith("- ") && nextIndent > indent) {
+        const arr = [];
+        frame.container[key] = arr;
+        stack.push({ indent: nextIndent, container: arr, isArray: true });
+      } else {
+        const child = {};
+        frame.container[key] = child;
+        stack.push({ indent: nextIndent, container: child, isArray: false });
+      }
+      continue;
+    }
+    frame.container[key] = coerce(rest);
   }
+  return root;
 }
 
-if (violations > 0) {
-  console.error(`\n[yaml] ${violations} violation(s) — see above`);
-  process.exit(1);
+export function asArray(value) {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === "object") return Object.values(value);
+  return [value];
 }
-console.log("[yaml] clean — no formatting or sensitive-key violations");

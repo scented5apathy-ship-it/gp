@@ -1,0 +1,357 @@
+# contracts/search/public-projection-policy.yaml
+#
+# E8.3 — Public projection contract.
+#
+# Single source of truth for the `search-service` public projection
+# (per `design.md` §9 + R11.4 + R13.7). Only `PUBLIC` rows enter the
+# public index AFTER living / minor / DNA / consent redaction.
+# `UNLISTED` returns `noindex` and requires an opaque token with hash,
+# expiry + rate limit enforced at Kong and validated again in-app.
+# Purge propagation covers projection rows + cached responses + sitemap
+# when visibility or policy changes (per ADR-E0.5-07 + ADR-E0.5-08).
+#
+# Conventions mirror E7.5 albums + E8.1 search-projection + E8.2
+# authorized-search contracts.
+
+policyVersion: "1.0.0"
+owner: search
+domain: genealogy.platform.search.public.v1
+contract: "E8.3 public projection"
+doc: |
+  Public projection contract. Defines the PUBLIC-only index, the
+  living / minor / DNA / consent redaction pipeline, UNLISTED
+  token verification, sitemap/cache purge hooks, and outbox events
+  `gp.search.v1.PublicProjectionPurged` /
+  `gp.search.v1.PublicProjectionVisibilityChanged`.
+  Compatibility policy = BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+publicProjectionVisibilityScopes:
+  doc: "Visibility scopes the public projection may index. Only PUBLIC ever lands in the index."
+  values:
+    - PUBLIC
+    - UNLISTED
+
+publicProjectionLifecycleStatuses:
+  doc: "Lifecycle status for each row in the public projection."
+  values:
+    - PENDING
+    - REDACTED
+    - INDEXED
+    - STALE
+    - PURGED
+
+publicProjectionRedactionReasons:
+  doc: "Reasons a row gets redacted before entering the public index."
+  values:
+    - LIVING
+    - MINOR
+    - DNA_ATTACHED
+    - CONSENT_MISSING
+    - CONSENT_REVOKED
+    - VISIBILITY_NOT_PUBLIC
+    - TENANT_REDACTION_FORBIDDEN
+    - POLICY_DENY
+    - SOFT_DELETED
+    - LEGAL_HOLD
+
+publicProjectionTokenKinds:
+  doc: "Token kinds the UNLISTED path accepts."
+  values:
+    - SHARE_TOKEN
+    - COLLABORATION_TOKEN
+    - PUBLIC_LISTING_TOKEN
+
+publicProjectionPurgeTriggers:
+  doc: "Triggers that propagate purge across projection + cache + sitemap."
+  values:
+    - VISIBILITY_DOWNGRADE
+    - LIVING_STATUS_CHANGED
+    - MINOR_STATUS_CHANGED
+    - DNA_ATTACHMENT_ADDED
+    - CONSENT_REVOKED
+    - LEGAL_HOLD_APPLIED
+    - SOFT_DELETED
+    - POLICY_DENY
+    - TENANT_OFFBOARDED
+
+publicProjectionSitemapStatuses:
+  doc: "Sitemap lifecycle statuses."
+  values:
+    - BUILT
+    - SERVING
+    - STALE
+    - PURGING
+    - PURGED
+
+publicProjectionIndexStrategies:
+  doc: "Index strategies the public projection may use."
+  values:
+    - POSTGRES_GIN
+    - POSTGRES_GIST
+    - POSTGRES_BRIN
+    - HYBRID_DISK
+
+publicProjectionFailureReasons:
+  doc: "Closed-set failure reasons used by the public projection."
+  values:
+    - PUBLIC_PROJECTION_NOT_PUBLIC
+    - PUBLIC_PROJECTION_REDACTION_FAILED
+    - PUBLIC_PROJECTION_DNA_BUCKET_FORBIDDEN
+    - PUBLIC_PROJECTION_LIVING_FORBIDDEN
+    - PUBLIC_PROJECTION_MINOR_FORBIDDEN
+    - PUBLIC_PROJECTION_CONSENT_FORBIDDEN
+    - PUBLIC_PROJECTION_TOKEN_INVALID
+    - PUBLIC_PROJECTION_TOKEN_EXPIRED
+    - PUBLIC_PROJECTION_TOKEN_RATE_LIMITED
+    - PUBLIC_PROJECTION_TOKEN_HASH_MISMATCH
+    - PUBLIC_PROJECTION_TOKEN_KIND_UNKNOWN
+    - PUBLIC_PROJECTION_VISIBILITY_DOWNGRADE_FORBIDDEN
+    - PUBLIC_PROJECTION_PURGE_FAILED
+    - PUBLIC_PROJECTION_CACHE_PURGE_FAILED
+    - PUBLIC_PROJECTION_SITEMAP_PURGE_FAILED
+    - PUBLIC_PROJECTION_LIFECYCLE_FORBIDDEN
+    - PUBLIC_PROJECTION_INDEX_STRATEGY_FORBIDDEN
+    - PUBLIC_PROJECTION_SITEMAP_STALE
+    - PUBLIC_PROJECTION_ROBOTSTXT_FORBIDDEN
+    - PUBLIC_PROJECTION_CANONICAL_HOST_FORBIDDEN
+    - PUBLIC_PROJECTION_LANGUAGE_HREFLANG_FORBIDDEN
+
+publicProjectionAuditEvents:
+  doc: "Closed-set audit hooks the public projection emits."
+  values:
+    - PUBLIC_PROJECTION_RECEIVED
+    - PUBLIC_PROJECTION_REDACTED
+    - PUBLIC_PROJECTION_INDEXED
+    - PUBLIC_PROJECTION_PURGED
+    - PUBLIC_PROJECTION_VISIBILITY_CHANGED
+    - PUBLIC_PROJECTION_TOKEN_VERIFIED
+    - PUBLIC_PROJECTION_TOKEN_REJECTED
+    - PUBLIC_PROJECTION_TOKEN_EXPIRED
+    - PUBLIC_PROJECTION_TOKEN_RATE_LIMITED
+    - PUBLIC_PROJECTION_SITEMAP_BUILT
+    - PUBLIC_PROJECTION_SITEMAP_SERVING
+    - PUBLIC_PROJECTION_SITEMAP_PURGED
+    - PUBLIC_PROJECTION_CACHE_PURGED
+    - PUBLIC_PROJECTION_DNA_BUCKET_REFUSED
+    - PUBLIC_PROJECTION_LIVING_REFUSED
+    - PUBLIC_PROJECTION_MINOR_REFUSED
+    - PUBLIC_PROJECTION_CONSENT_REFUSED
+    - PUBLIC_PROJECTION_ROBOTSTXT_UPDATED
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the public projection sandbox (Kong validates token-bound requests)."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+
+# ---------------------------------------------------------------------------
+# 3. State machines
+# ---------------------------------------------------------------------------
+
+publicProjectionLifecycleStateMatrix:
+  doc: "Public projection lifecycle state machine — every status reachable from PENDING unless terminal."
+  initialStatus: PENDING
+  statuses:
+    - status: PENDING
+      transitions: [REDACTED, PURGED]
+    - status: REDACTED
+      transitions: [INDEXED, PURGED, DECIDED]
+    - status: INDEXED
+      transitions: [STALE, PURGED, DECIDED]
+    - status: STALE
+      transitions: [INDEXED, PURGED, DECIDED]
+    - status: PURGED
+      transitions: []
+      terminal: true
+    - status: DECIDED
+      transitions: []
+      terminal: true
+
+sitemapStateMatrix:
+  doc: "Sitemap state machine — every status reachable from BUILT unless terminal."
+  initialStatus: BUILT
+  statuses:
+    - status: BUILT
+      transitions: [SERVING, PURGING]
+    - status: SERVING
+      transitions: [STALE, PURGING, DECIDED]
+    - status: STALE
+      transitions: [SERVING, PURGING, DECIDED]
+    - status: PURGING
+      transitions: [PURGED, SERVING, DECIDED]
+    - status: PURGED
+      transitions: []
+      terminal: true
+    - status: DECIDED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  publicOnlyAfterRedaction: true
+  livingRedactionRequired: true
+  minorRedactionRequired: true
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  consentRedactionRequired: true
+  consentWithdrawalInvalidatesResults: true
+  unlistedReturnsNoindex: true
+  unlistedTokenHashRequired: true
+  unlistedTokenExpiryRequired: true
+  unlistedTokenRateLimitRequired: true
+  unlistedTokenVerifiedAtEdge: true
+  unlistedTokenReverifiedInApp: true
+  purgePropagatesToCache: true
+  purgePropagatesToSitemap: true
+  purgePropagatesToProjection: true
+  robotstxtUpdatedOnVisibilityChange: true
+  canonicalHostEnforced: true
+  languageHreflangRequired: true
+  publicProjectionOutOfBandForbidden: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  outboxRelaySeparated: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  maxDocumentIdLength: 64
+  maxTenantScopeIdLength: 64
+  maxActorPseudoIdLength: 64
+  maxCorrelationIdLength: 128
+  maxUnlistedTokenLength: 256
+  maxUnlistedTokenHashLength: 128
+  unlistedTokenTtlSeconds: 2592000
+  unlistedTokenRateLimitPerMinute: 30
+  unlistedTokenRateLimitBurst: 5
+  unlistedTokenMinHashBytes: 32
+  projectionRowMaxBytes: 16384
+  projectionBatchSize: 512
+  projectionOutboxBatchSize: 256
+  redactionP95BudgetMilliseconds: 150
+  purgeP95BudgetMilliseconds: 1000
+  sitemapRebuildP95BudgetSeconds: 45
+  sitemapHeartbeatSeconds: 30
+  sitemapMaxEntries: 50000
+  robotstxtMaxBytes: 4096
+  canonicalHostMaxLength: 253
+  languageHreflangMaxEntries: 32
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  sitemapHeartbeatMultiplier: 2
+  unlistedTokenRateLimitBurstMultiplier: 6
+  projectionBatchSizeOutboxRatio: 2
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the public projection + sitemap workers."
+  items:
+    - type: gp.search.v1.PublicProjectionPurged
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.search.v1.PublicProjectionVisibilityChanged
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - PUBLIC_PROJECTION_RECEIVED
+    - PUBLIC_PROJECTION_REDACTED
+    - PUBLIC_PROJECTION_INDEXED
+    - PUBLIC_PROJECTION_PURGED
+    - PUBLIC_PROJECTION_VISIBILITY_CHANGED
+    - PUBLIC_PROJECTION_TOKEN_VERIFIED
+    - PUBLIC_PROJECTION_TOKEN_REJECTED
+    - PUBLIC_PROJECTION_TOKEN_EXPIRED
+    - PUBLIC_PROJECTION_TOKEN_RATE_LIMITED
+    - PUBLIC_PROJECTION_SITEMAP_BUILT
+    - PUBLIC_PROJECTION_SITEMAP_SERVING
+    - PUBLIC_PROJECTION_SITEMAP_PURGED
+    - PUBLIC_PROJECTION_CACHE_PURGED
+    - PUBLIC_PROJECTION_DNA_BUCKET_REFUSED
+    - PUBLIC_PROJECTION_LIVING_REFUSED
+    - PUBLIC_PROJECTION_MINOR_REFUSED
+    - PUBLIC_PROJECTION_CONSENT_REFUSED
+    - PUBLIC_PROJECTION_ROBOTSTXT_UPDATED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom OpenSearch indexing (the worker consumes Avro events only)"
+    - "Custom PII / DNA detector (use the platform-wide redactor)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"
+    - "Custom rate limiter (use Kong + token hash + app validation)"
+    - "Custom sitemap generator (use the worker + Apicurio schemas)"

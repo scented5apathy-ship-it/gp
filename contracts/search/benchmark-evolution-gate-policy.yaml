@@ -1,0 +1,369 @@
+# contracts/search/benchmark-evolution-gate-policy.yaml
+#
+# E8.4 — Search benchmark + evolution gate contract.
+#
+# Single source of truth for the `search-service` benchmark suite
+# that gates any move to OpenSearch (per `design.md` §9 — "OpenSearch
+# là evolution path khi benchmark chứng minh PostgreSQL không đáp ứng
+# facet/scale"). The gate measures p95 / p99 / freshness / fuzzy recall
+# / fuzzy precision on the closed-set workloads, then emits a
+# closed-set verdict that maps to a closed-set evolution path.
+# PostgreSQL is the default and only dependency — OpenSearch may
+# only land via an explicit ADR supersession (per ADR-E0.5-09).
+#
+# Conventions mirror E8.1 / E8.2 / E8.3 contracts.
+
+policyVersion: "1.0.0"
+owner: search
+domain: genealogy.platform.search.benchmark.v1
+contract: "E8.4 benchmark + evolution gate"
+doc: |
+  Benchmark + evolution gate contract. Defines the closed-set
+  workloads, datasets, SLOs, verdicts and evolution paths that
+  govern the search-service performance gate. Any verdict other
+  than `PASS` MUST be reviewed before merging a benchmark
+  promotion PR. Compatibility policy = BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+benchmarkWorkloads:
+  doc: "Closed-set benchmark workloads the suite MUST execute."
+  values:
+    - EXACT_PERSON
+    - EXACT_ALBUM
+    - FUZZY_PERSON_TRIGRAM
+    - FUZZY_PLACE_TRIGRAM
+    - FACET_TREE_FAMILY
+    - FACET_DECADE_LIVING_STATUS
+    - CURSOR_PAGINATION
+    - SAVED_SEARCH_ALERT
+
+benchmarkDatasetShapes:
+  doc: "Closed-set dataset shapes the suite MUST cover."
+  values:
+    - SMALL_HOT_TREE
+    - MEDIUM_MULTI_TREE
+    - LARGE_PUBLIC_CORPUS
+    - LARGE_PRIVATE_CORPUS
+    - LARGE_MULTILINGUAL_CORPUS
+    - WORST_CASE_DIACRITICS
+    - WORST_CASE_MIXED_SCRIPT
+    - WORST_CASE_MAX_CURSOR_DEPTH
+
+benchmarkVerdicts:
+  doc: "Closed-set verdicts the gate may emit."
+  values:
+    - PASS
+    - PASS_WITH_NOTES
+    - FAIL_P95
+    - FAIL_P99
+    - FAIL_LAG
+    - FAIL_FRESHNESS
+    - FAIL_FUZZY_RECALL
+    - FAIL_FUZZY_PRECISION
+    - FAIL_FACET_CARDINALITY
+    - FAIL_INDEX
+    - FAIL_SAFETY
+    - BLOCKED_ADR_REQUIRED
+
+benchmarkEvolutionPaths:
+  doc: "Closed-set evolution paths the gate may recommend."
+  values:
+    - POSTGRES_HOLD
+    - POSTGRES_REINDEX
+    - POSTGRES_PARTITION
+    - POSTGRES_GIN_REWRITE
+    - POSTGRES_GIST_REWRITE
+    - POSTGRES_BRIN_PARTITION
+    - ADAPTIVE_INDEX_REQUIRED
+    - OPENSEARCH_REQUIRED
+
+benchmarkSloMetrics:
+  doc: "Closed-set SLO metrics the gate evaluates."
+  values:
+    - P95_QUERY_LATENCY_MS
+    - P99_QUERY_LATENCY_MS
+    - P95_FACET_LATENCY_MS
+    - P95_CURSOR_PAGINATION_LATENCY_MS
+    - P95_FRESHNESS_SECONDS
+    - FUZZY_RECALL_AT_10
+    - FUZZY_PRECISION_AT_10
+    - FACET_CARDINALITY
+    - SAFETY_BUDGET_VIOLATIONS
+    - SAFETY_DNA_BUCKET_LEAKS
+
+benchmarkQueryLanguages:
+  doc: "Languages the suite MUST execute against."
+  values:
+    - en
+    - vi
+    - ja
+    - fr
+    - es
+
+benchmarkRolloutStages:
+  doc: "Closed-set rollout stages the benchmark run can be attached to."
+  values:
+    - NIGHTLY
+    - PRE_MERGE
+    - RELEASE_CANDIDATE
+    - POST_RELEASE
+    - AD_HOC
+
+benchmarkFailureReasons:
+  doc: "Closed-set failure reasons emitted by the gate."
+  values:
+    - BENCHMARK_WORKLOAD_UNKNOWN
+    - BENCHMARK_DATASET_SHAPE_UNKNOWN
+    - BENCHMARK_SLO_METRIC_UNKNOWN
+    - BENCHMARK_QUERY_LANGUAGE_UNKNOWN
+    - BENCHMARK_EVOLUTION_PATH_UNKNOWN
+    - BENCHMARK_VERDICT_UNKNOWN
+    - BENCHMARK_ROLLOUT_STAGE_UNKNOWN
+    - BENCHMARK_DATASET_MISSING
+    - BENCHMARK_DATASET_TOO_SMALL
+    - BENCHMARK_DATASET_TOO_LARGE
+    - BENCHMARK_SLO_BUDGET_EXCEEDED
+    - BENCHMARK_FUZZY_RECALL_BELOW_FLOOR
+    - BENCHMARK_FUZZY_PRECISION_BELOW_FLOOR
+    - BENCHMARK_FACET_CARDINALITY_BELOW_FLOOR
+    - BENCHMARK_FRESHNESS_BUDGET_EXCEEDED
+    - BENCHMARK_INDEX_INVALID
+    - BENCHMARK_SAFETY_BUDGET_EXCEEDED
+    - BENCHMARK_DNA_BUCKET_LEAK
+    - BENCHMARK_CONTRACT_HASH_DRIFT
+    - BENCHMARK_RUNTIME_TIMEOUT
+    - BENCHMARK_DETERMINISTIC_FAIL
+    - BENCHMARK_ADR_REQUIRED
+
+benchmarkAuditEvents:
+  doc: "Closed-set audit hooks the benchmark runner emits."
+  values:
+    - BENCHMARK_RUN_QUEUED
+    - BENCHMARK_RUN_STARTED
+    - BENCHMARK_WORKLOAD_STARTED
+    - BENCHMARK_WORKLOAD_FINISHED
+    - BENCHMARK_SLO_BREACHED
+    - BENCHMARK_SLO_RECOVERED
+    - BENCHMARK_VERDICT_EMITTED
+    - BENCHMARK_EVOLUTION_PATH_RECOMMENDED
+    - BENCHMARK_ADR_REQUIRED_RECORDED
+    - BENCHMARK_DATASET_INVALID
+    - BENCHMARK_DNA_BUCKET_LEAK_REFUSED
+    - BENCHMARK_RUN_ABORTED
+    - BENCHMARK_RUN_FINISHED
+    - BENCHMARK_RUN_PROMOTED
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the benchmark runner sandbox."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+
+# ---------------------------------------------------------------------------
+# 3. State machine
+# ---------------------------------------------------------------------------
+
+benchmarkGateStateMatrix:
+  doc: "Benchmark gate state machine — every status reachable from QUEUED unless terminal."
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [DATASETS_LOADING, FAILED, BLOCKED]
+    - status: DATASETS_LOADING
+      transitions: [WORKLOADS_RUNNING, FAILED]
+    - status: WORKLOADS_RUNNING
+      transitions: [SLO_AGGREGATING, FAILED]
+    - status: SLO_AGGREGATING
+      transitions: [VERDICT_EMITTED, FAILED]
+    - status: VERDICT_EMITTED
+      transitions: [RECOMMENDED, FAILED, DECIDED]
+    - status: RECOMMENDED
+      transitions: [PROMOTED, BLOCKED, DECIDED]
+    - status: PROMOTED
+      transitions: []
+      terminal: true
+    - status: BLOCKED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: DECIDED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  postgresqlOnlyByDefault: true
+  opensearchRequiresAdr: true
+  benchmarkSuiteRequiredForRelease: true
+  fuzzyRecallFloorEnforced: true
+  fuzzyPrecisionFloorEnforced: true
+  freshnessBudgetEnforced: true
+  facetCardinalityFloorEnforced: true
+  p95BudgetEnforced: true
+  p99BudgetEnforced: true
+  safetyBudgetEnforced: true
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  deterministicRunnerRequired: true
+  contractHashBoundToRun: true
+  datasetShapeSealed: true
+  benchmarkOutOfBandForbidden: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  benchmarkSuiteMaxDatasets: 16
+  benchmarkSuiteMaxQueriesPerDataset: 1024
+  benchmarkSuiteMaxWorkloads: 8
+  benchmarkSuiteMaxRolloutStages: 5
+  benchmarkSuiteWarmupIterations: 50
+  benchmarkSuiteMeasurementIterations: 200
+  benchmarkSuiteCooldownSeconds: 60
+  benchmarkSuiteP95BudgetMilliseconds: 1000
+  benchmarkSuiteP99BudgetMilliseconds: 2000
+  benchmarkSuiteFacetP95BudgetMilliseconds: 250
+  benchmarkSuiteCursorP95BudgetMilliseconds: 500
+  benchmarkSuiteFreshnessBudgetSeconds: 60
+  benchmarkSuiteFuzzyRecallFloor: 0.85
+  benchmarkSuiteFuzzyPrecisionFloor: 0.90
+  benchmarkSuiteFacetCardinalityFloor: 16
+  benchmarkSuiteSafetyBudgetViolations: 0
+  benchmarkSuiteDnaBucketLeaks: 0
+  benchmarkSuiteRuntimeTimeoutSeconds: 120
+  benchmarkSuiteHeartbeatSeconds: 30
+  benchmarkSuiteContractHashLength: 64
+  benchmarkSuiteDatasetMaxRows: 10000000
+  benchmarkSuiteDatasetMinRows: 1000
+  benchmarkSuiteRecommendationTtlSeconds: 2592000
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  p95P99BudgetRatio: 2
+  heartbeatMultiplier: 6
+  workloadMultiplier: 1
+  rolloutStagesMultiplier: 1
+  fuzzyFloorPrecisionFloorRatio: 1
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the benchmark runner."
+  items:
+    - type: gp.search.v1.BenchmarkVerdictEmitted
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.search.v1.BenchmarkEvolutionPathRecommended
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - BENCHMARK_RUN_QUEUED
+    - BENCHMARK_RUN_STARTED
+    - BENCHMARK_WORKLOAD_STARTED
+    - BENCHMARK_WORKLOAD_FINISHED
+    - BENCHMARK_SLO_BREACHED
+    - BENCHMARK_SLO_RECOVERED
+    - BENCHMARK_VERDICT_EMITTED
+    - BENCHMARK_EVOLUTION_PATH_RECOMMENDED
+    - BENCHMARK_ADR_REQUIRED_RECORDED
+    - BENCHMARK_DATASET_INVALID
+    - BENCHMARK_DNA_BUCKET_LEAK_REFUSED
+    - BENCHMARK_RUN_ABORTED
+    - BENCHMARK_RUN_FINISHED
+    - BENCHMARK_RUN_PROMOTED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Rollout → path mapping
+# ---------------------------------------------------------------------------
+
+rolloutToEvolutionPath:
+  NIGHTLY: [POSTGRES_HOLD, POSTGRES_REINDEX, POSTGRES_PARTITION, POSTGRES_GIN_REWRITE, POSTGRES_GIST_REWRITE, POSTGRES_BRIN_PARTITION, ADAPTIVE_INDEX_REQUIRED]
+  PRE_MERGE: [POSTGRES_HOLD, POSTGRES_REINDEX, POSTGRES_PARTITION, POSTGRES_GIN_REWRITE]
+  RELEASE_CANDIDATE: [POSTGRES_HOLD]
+  POST_RELEASE: [POSTGRES_HOLD, POSTGRES_REINDEX]
+  AD_HOC: [POSTGRES_HOLD, POSTGRES_REINDEX, POSTGRES_PARTITION, POSTGRES_GIN_REWRITE, POSTGRES_GIST_REWRITE, POSTGRES_BRIN_PARTITION, ADAPTIVE_INDEX_REQUIRED, OPENSEARCH_REQUIRED]
+
+# ---------------------------------------------------------------------------
+# 11. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom OpenSearch indexing (the worker consumes Avro events only)"
+    - "Custom PII / DNA detector (use the platform-wide redactor)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"
+    - "Custom benchmark framework (re-use k6/Gatling + platform tooling)"
+    - "OpenSearch without ADR supersession (gate enforces ADR_REQUIRED)"
