@@ -1,0 +1,399 @@
+# E14.3 — On-premise bundle contract.
+#
+# Source of truth: requirements.md NFR6 (portability +
+# on-premise parity), NFR8 (re-use platform stack — Helm +
+# OCI images + SBOM + Cosign), design.md §13 (Helm values
+# schema, registry mirror / air-gap), ownership-catalog.md
+# §3.
+#
+# Validated by scripts/lint-onprem-bundle.mjs and enforced at
+# runtime by:
+#   - services/operations-service/src/main/java/.../
+#     onprem/BundleGuard.java
+#   - platform/helm/genealogy-platform/files/disaster-recovery/
+#     onprem-bundle-policy.yaml (Helm mirror, byte-identical)
+#   - runbook/onprem-bundle.md (operator runbook)
+#   - tools/onprem/preflight.sh (registry / storage / DNS /
+#     certificate preflight)
+#
+# Hard invariants (E14.3 — On-premise bundle):
+#   * Bundle MUST be delivered as a signed OCI artifact
+#     (`cosign verify` against the platform root key);
+#     SBOM (CycloneDX 1.5 SPDX 2.3) MUST be attached.
+#   * Helm values schema MUST validate every key against
+#     the closed-set top-level keys; missing required key
+#     ⇒ linter fails.
+#   * Compatibility matrix declares a closed-set of
+#     supported Kubernetes versions, PostgreSQL versions,
+#     Kafka versions, S3-compatible stores, Keycloak
+#     versions, OpenFGA versions, Temporal versions, Vault
+#     versions, Flagsmith versions.
+#   * Registry mirror MUST be either `quay.io/genealogy`
+#     (default) or `customer-internal-registry` (declared
+#     via `airGapMirror` field). Manual registry
+#     ad-hoc entries are forbidden.
+#   * Preflight checks MUST cover Kubernetes version,
+#     storage class (RWX supported), DNS resolution,
+#     certificate validity, CPU / memory capacity and
+#     external dependency reachability.
+#   * Air-gap deployment MUST ship the entire image set +
+#     SBOM + signatures; no runtime internet call allowed.
+#   * `noForkApplicationCode=true` is mandatory — the
+#     platform refuses to bundle a fork of the application.
+policyVersion: 1.0.0
+owner: sre-primary
+scope: onprem-bundle
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR6
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+registryMirrors:
+  description: >
+    Closed-set of registry mirrors the on-prem bundle
+    accepts. Anything outside this set is rejected.
+  values:
+    - quay.io/genealogy
+    - customer-internal-registry
+
+supportedKubernetesVersions:
+  description: >
+    Closed-set of supported Kubernetes versions.
+  values:
+    - "1.29"
+    - "1.30"
+    - "1.31"
+    - "1.32"
+
+supportedPostgresqlVersions:
+  description: >
+    Closed-set of supported PostgreSQL versions.
+  values:
+    - 15
+    - 16
+    - 17
+
+supportedKafkaVersions:
+  description: >
+    Closed-set of supported Kafka (Strimzi) versions.
+  values:
+    - 3.7
+    - 3.8
+
+supportedObjectStores:
+  description: >
+    Closed-set of supported S3-compatible stores.
+  values:
+    - aws_s3
+    - minio_2024
+    - minio_2025
+
+supportedKeycloakVersions:
+  description: >
+    Closed-set of supported Keycloak versions.
+  values:
+    - "24.0"
+    - "25.0"
+    - "26.0"
+
+supportedOpenfgaVersions:
+  description: >
+    Closed-set of supported OpenFGA versions.
+  values:
+    - 1.8
+    - 1.9
+
+supportedTemporalVersions:
+  description: >
+    Closed-set of supported Temporal versions.
+  values:
+    - 1.22
+    - 1.23
+    - 1.24
+
+supportedVaultVersions:
+  description: >
+    Closed-set of supported Vault versions.
+  values:
+    - 1.15
+    - 1.16
+    - 1.17
+
+supportedFlagsmithVersions:
+  description: >
+    Closed-set of supported Flagsmith versions.
+  values:
+    - 2.4
+    - 2.5
+
+compatibilityMatrix:
+  description: >
+    The compatibility matrix that pins every supported
+    platform component to the closed-set versions declared
+    above. The linter enforces every entry is bound to a
+    supported version.
+  values:
+    - component: kubernetes
+      version: "1.31"
+      contractRef: design.md#13
+    - component: postgresql
+      version: "16"
+      contractRef: design.md#5.1
+    - component: kafka
+      version: "3.8"
+      contractRef: design.md#7.3
+    - component: object_storage
+      version: minio_2025
+      contractRef: design.md#11
+    - component: keycloak
+      version: "26.0"
+      contractRef: design.md#4.2
+    - component: openfga
+      version: "1.9"
+      contractRef: design.md#4.2
+    - component: temporal
+      version: "1.24"
+      contractRef: design.md#7.4
+    - component: vault
+      version: "1.17"
+      contractRef: design.md#12
+    - component: flagsmith
+      version: "2.5"
+      contractRef: design.md#13
+
+helmValuesSchema:
+  description: >
+    Top-level Helm values keys the bundle MUST accept.
+    The linter enforces every required key is present.
+  required:
+    - clusterName
+    - environment
+    - registryMirror
+    - airGapEnabled
+    - cosignPublicKey
+    - telemetrySink
+    - tenantDatabaseHost
+    - kafkaBootstrapServers
+    - objectStoreEndpoint
+    - keycloakIssuerUrl
+    - openfgaApiUrl
+    - temporalFrontendUrl
+    - vaultAddress
+    - flagsmithApiUrl
+  optional:
+    - extraAnnotations
+    - extraLabels
+    - podDisruptionBudgetOverride
+
+sbomAndSignatures:
+  description: >
+    Mandatory SBOM + signature metadata every bundle MUST
+    attach. The platform refuses to install a bundle
+    without these.
+  formats:
+    - cyclonedx_1_5
+    - spdx_2_3
+  signatures:
+    - cosign
+  attestation:
+    - slsa_provenance_v1
+  requiredAnnotations:
+    - org.opencontainers.image.source
+    - org.opencontainers.image.revision
+    - org.opencontainers.image.created
+    - org.opencontainers.image.licenses
+
+preflightChecks:
+  description: >
+    Mandatory preflight checks the bundle MUST execute
+    before starting an install or upgrade. Each check
+    has a `name`, `command` and `mustPass`.
+  values:
+    - name: kubernetesVersion
+      command: kubectl version --short
+      mustPass: true
+    - name: storageClass
+      command: kubectl get sc -o json | jq -e '.items[] | select(.provisioner=="csi")'
+      mustPass: true
+    - name: dnsResolution
+      command: kubectl run -it --rm --restart=Never --image=busybox dns-test -- nslookup kubernetes.default
+      mustPass: true
+    - name: certificateValidity
+      command: openssl x509 -checkend 2592000 -in /etc/ssl/certs/ca-certificates.crt
+      mustPass: true
+    - name: cpuCapacity
+      command: kubectl get nodes -o json | jq -e '[.items[].status.allocatable.cpu | rtrimstr("m") | tonumber] | add > 16000'
+      mustPass: true
+    - name: memoryCapacity
+      command: kubectl get nodes -o json | jq -e '[.items[].status.allocatable.memory | rtrimstr("Ki") | tonumber] | add > 67108864'
+      mustPass: true
+    - name: externalDependencyReachability
+      command: ./tools/onprem/preflight.sh
+      mustPass: true
+
+airGapRules:
+  description: >
+    Air-gap deployment rules. The bundle MUST ship every
+    dependency inside the OCI artifact set + SBOM +
+    signatures. No runtime internet call is allowed.
+  values:
+    - allImagesInBundle
+    - sbomInBundle
+    - signaturesInBundle
+    - helmChartsInBundle
+    - vendorLicensesInBundle
+    - noRuntimeInternetCall
+
+bundleStateMatrix:
+  description: >
+    Closed-set state matrix for the on-prem bundle
+    lifecycle. Initial = STAGED. Terminal statuses:
+    INSTALLED / FAILED / SUPERSEDED.
+  initialStatus: STAGED
+  statuses:
+    - status: STAGED
+      transitions: [PREFLIGHT_RUNNING, VERIFIED, FAILED, SUPERSEDED]
+    - status: PREFLIGHT_RUNNING
+      transitions: [VERIFIED, FAILED]
+    - status: VERIFIED
+      transitions: [INSTALLING, FAILED, SUPERSEDED]
+    - status: INSTALLING
+      transitions: [INSTALLED, FAILED]
+    - status: INSTALLED
+      transitions: [UPGRADING, SUPERSEDED]
+    - status: UPGRADING
+      transitions: [INSTALLED, FAILED]
+    - status: FAILED
+      transitions: [STAGED, SUPERSEDED]
+    - status: SUPERSEDED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric bounds.
+  values:
+    - name: maxBundleSizeGigabytes
+      value: 50
+    - name: preflightTimeoutSeconds
+      value: 1800
+    - name: installTimeoutSeconds
+      value: 7200
+    - name: upgradeTimeoutSeconds
+      value: 7200
+    - name: cosignSignatureTtlDays
+      value: 365
+    - name: sbomRetentionDays
+      value: 1095
+    - name: minSupportedKubernetesMinor
+      value: 29
+    - name: maxSupportedKubernetesMinor
+      value: 32
+    - name: minSupportedPostgresqlMajor
+      value: 15
+    - name: maxSupportedPostgresqlMajor
+      value: 17
+    - name: minCpuMillicoresRequired
+      value: 16000
+    - name: minMemoryKibibytesRequired
+      value: 67108864
+    - name: minStorageClassRwxSupport
+      value: 1
+    - name: registryMirrorMaximumEntries
+      value: 2
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - bundleSignedWithCosign
+    - sbomAttachedAsCycloneDxOrSpdx
+    - slsaProvenanceAttached
+    - helmValuesSchemaRequiredKeysPresent
+    - compatibilityMatrixCoversAllComponents
+    - registryMirrorFromClosedSet
+    - airGapBundlesShipAllDependencies
+    - preflightChecksMustPassBeforeInstall
+    - noForkApplicationCode
+    - cpuMemoryCapacityMinimumsRespected
+    - storageClassRwxSupported
+    - dnsResolutionRespected
+    - certificateValidityAtLeastThirtyDays
+    - externalDependenciesReachable
+    - bundleRetentionAtLeastThreeYears
+    - helmChartVersioningFollowsSemver
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    any of these.
+  values:
+    - name: oci_registry
+      spec: quay_or_customer_internal_only
+    - name: image_signing
+      spec: cosign_only
+    - name: sbom_format
+      spec: cyclonedx_or_spdx_only
+    - name: helm_packaging
+      spec: helm_only
+    - name: provenance_attestation
+      spec: slsa_provenance_v1_only
+    - name: no_custom_oci_registry
+      spec: forbidden
+    - name: no_custom_image_signer
+      spec: forbidden
+    - name: no_fork_application_code
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain.
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - inline_stripe_api_key
+    - inline_license_file
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+    - skip_preflight
+    - skip_cosign_verify
+    - skip_sbom_attestation
+    - ad_hoc_registry
+    - fork_application_code
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers.
+  values:
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/onprem/BundleGuard.java
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/onprem/E14OnpremLimits.java
+    - runbook/onprem-bundle.md
+    - tools/onprem/preflight.sh
+    - platform/helm/genealogy-platform/Chart.yaml
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/disaster-recovery/onprem-bundle-policy.yaml

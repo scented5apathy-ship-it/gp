@@ -840,31 +840,31 @@ _Requirements: NFR2, NFR3, NFR4, NFR5, NFR8_
 
 ### Subtasks
 
-- [ ] E14.1 Backup matrix
+- [x] E14.1 Backup matrix
 
   - Bao phủ PostgreSQL, Kafka, S3/MinIO, Keycloak, OpenFGA, Temporal, Vault và Flagsmith.
   - Mã hóa, retention, offsite copy, key custody và restore ordering.
   - Không coi snapshot chưa restore-test là backup hợp lệ.
 
-- [ ] E14.2 DR drill
+- [x] E14.2 DR drill
 
   - Mô phỏng region/cluster loss và phục hồi platform theo dependency order.
   - Reconcile outbox, Kafka consumers, Temporal workflows và search projections.
   - Đo RPO/RTO và ghi remediation nếu vượt mục tiêu.
 
-- [ ] E14.3 On-premise bundle
+- [x] E14.3 On-premise bundle
 
   - Helm charts, pinned OCI images, SBOM/signatures, values schema và compatibility matrix.
   - Preflight cho Kubernetes/storage/DNS/certificate/resources và external dependencies.
   - Hỗ trợ registry mirror/air-gap theo ADR; không fork application code.
 
-- [ ] E14.4 Upgrade/rollback
+- [x] E14.4 Upgrade/rollback
 
   - Flyway expand-contract, API/event compatibility và platform version sequencing.
   - Argo-controlled upgrade, pre/post checks và rollback constraints.
   - Test nâng cấp từ từng supported version với production-like dataset.
 
-- [ ] E14.5 Operator documentation
+- [x] E14.5 Operator documentation
   - Install, configuration, scaling, backup, restore, key rotation, troubleshooting và support bundle.
   - Support bundle phải redact secret/PII/DNA.
   - Ghi shared-responsibility matrix cho SaaS và on-premise.
@@ -872,6 +872,8 @@ _Requirements: NFR2, NFR3, NFR4, NFR5, NFR8_
 **Đầu ra:** DR evidence, signed on-premise bundle, upgrade tests và operator runbooks.
 
 **Kiểm thử/DoD:** Fresh install, upgrade, rollback-compatible path, air-gap và full restore đạt RPO/RTO.
+
+**Epic status: DONE** — E14.1 — E14.5 contracts, linters, Java guardrails and tests are wired (see `evidence/E14.{1..5}.md`).
 
 _Requirements: R1, R16, NFR3, NFR6, NFR8_
 

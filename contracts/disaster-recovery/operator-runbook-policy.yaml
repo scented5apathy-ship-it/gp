@@ -1,0 +1,415 @@
+# E14.5 — Operator documentation contract.
+#
+# Source of truth: requirements.md NFR6 (on-premise parity
+# + upgrade compatibility matrix), NFR8 (every platform
+# SHALL have owner, version policy, Helm/config-as-code,
+# backup/restore, monitoring, security hardening,
+# upgrade/rollback + runbook), R16 (admin / audit / support
+# access), design.md §13, ownership-catalog.md §3.
+#
+# Validated by scripts/lint-operator-runbook.mjs and
+# enforced at runtime by:
+#   - services/operations-service/src/main/java/.../
+#     runbook/RunbookGuard.java
+#   - platform/helm/genealogy-platform/files/disaster-recovery/
+#     operator-runbook-policy.yaml (Helm mirror,
+#     byte-identical)
+#   - runbook/index.md (operator runbook entrypoint)
+#   - tools/support/support-bundle.sh (redacted bundle
+#     collector)
+#
+# Hard invariants (E14.5 — Operator documentation):
+#   * The operator runbook MUST cover the 8 mandatory
+#     procedures: install / configuration / scaling /
+#     backup / restore / key rotation / troubleshooting /
+#     support bundle.
+#   * Each procedure MUST declare its `owner`, `severity`,
+#     `lastReviewedAt` and `evidenceAnchor` fields.
+#   * Support bundle collector MUST redact every secret,
+#     PII, DNA and raw payload category (29 forbidden
+#     keys). The platform refuses to publish a bundle
+#     that has not been redacted by the closed-set
+#     redaction rules.
+#   * Shared-responsibility matrix MUST distinguish
+#     customer-managed items (C) vs platform-managed
+#     items (P) for every component; the linter enforces
+#     the matrix.
+#   * Documentation MUST declare a `supportChannel` and
+#     an `onCallRotation` from the closed-set.
+#   * Runbook MUST be reviewed at least every 90 days;
+#     `lastReviewedAt` older than 90 days means SEV2.
+#   * Linter MUST verify every runbook procedure is
+#     linked from `runbook/index.md`.
+policyVersion: 1.0.0
+owner: sre-primary
+scope: operator-runbook
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR6
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+mandatoryProcedures:
+  description: >
+    Closed-set of operator runbook procedures that MUST be
+    documented and reviewed quarterly.
+  values:
+    - install
+    - configuration
+    - scaling
+    - backup
+    - restore
+    - key_rotation
+    - troubleshooting
+    - support_bundle
+
+procedureOwnerRoles:
+  description: >
+    Closed-set of owner roles for runbook procedures. Every
+    procedure MUST declare an owner from this list.
+  values:
+    - sre_primary
+    - sre_secondary
+    - platform_sre
+    - security_engineer
+    - dpo_delegate
+    - product_owner
+    - finance_ops
+    - customer_success
+
+procedureSeverityLevels:
+  description: >
+    Closed-set of severity levels a procedure can claim.
+    Anything outside SEV1..SEV4 is forbidden.
+  values:
+    - SEV1
+    - SEV2
+    - SEV3
+    - SEV4
+
+supportChannels:
+  description: >
+    Closed-set of support channels advertised in the
+    runbook. Manual / ad-hoc contact info is forbidden.
+  values:
+    - portal
+    - email
+    - phone_sev1
+    - phone_sev2
+    - chat_secure
+
+onCallRotations:
+  description: >
+    Closed-set of on-call rotations. The matrix guarantees
+    24x7 coverage with named roles.
+  values:
+    - sre_primary_24x7
+    - sre_secondary_24x7
+    - security_engineer_business_hours
+    - dpo_delegate_business_hours
+    - product_owner_business_hours
+
+supportBundleRedactions:
+  description: >
+    Closed-set of redaction rules the support bundle MUST
+    apply. Anything outside this list is forbidden by the
+    platform (PII / DNA / secret leak guard).
+  values:
+    - redact_secrets
+    - redact_pii
+    - redact_dna
+    - redact_raw_payloads
+    - redact_jwt
+    - redact_session_cookie
+    - redact_oauth_client_secret
+    - redact_audit_stream
+    - redact_consent_receipt
+    - redact_tree_viewer_bypass
+
+sharedResponsibilityAreas:
+  description: >
+    Closed-set of shared-responsibility areas the matrix
+    MUST distinguish. Each area MUST be tagged either
+    `customer_managed` or `platform_managed`.
+  values:
+    - kubernetes_cluster
+    - postgres_database
+    - kafka_cluster
+    - object_storage
+    - keycloak_realm
+    - openfga_store
+    - temporal_namespace
+    - vault_kv
+    - flagsmith_environment
+    - tls_certificates
+    - dns_records
+    - on_call_rotation
+    - upgrade_testing
+
+procedures:
+  description: >
+    Mandatory procedure definitions. Each procedure
+    declares `name`, `owner`, `severity`,
+    `lastReviewedAt`, `evidenceAnchor`, `runbookPath` and
+    `redactionRequirements`.
+  values:
+    - name: install
+      owner: sre_primary
+      severity: SEV2
+      lastReviewedAt: 2026-08-01
+      evidenceAnchor: .kiro/specs/genealogy-platform/evidence/E14.3.md
+      runbookPath: runbook/onprem-bundle.md
+      redactionRequirements:
+        - redact_secrets
+        - redact_pii
+        - redact_dna
+        - redact_jwt
+        - redact_session_cookie
+    - name: configuration
+      owner: sre_primary
+      severity: SEV3
+      lastReviewedAt: 2026-08-01
+      evidenceAnchor: .kiro/specs/genealogy-platform/evidence/E14.3.md
+      runbookPath: runbook/onprem-bundle.md
+      redactionRequirements:
+        - redact_secrets
+        - redact_pii
+        - redact_dna
+    - name: scaling
+      owner: sre_primary
+      severity: SEV3
+      lastReviewedAt: 2026-08-01
+      evidenceAnchor: .kiro/specs/genealogy-platform/evidence/E13.3.md
+      runbookPath: runbook/capacity.md
+      redactionRequirements:
+        - redact_secrets
+        - redact_pii
+        - redact_dna
+    - name: backup
+      owner: sre_primary
+      severity: SEV2
+      lastReviewedAt: 2026-08-01
+      evidenceAnchor: .kiro/specs/genealogy-platform/evidence/E14.1.md
+      runbookPath: runbook/backup.md
+      redactionRequirements:
+        - redact_secrets
+        - redact_pii
+        - redact_dna
+        - redact_audit_stream
+    - name: restore
+      owner: sre_primary
+      severity: SEV1
+      lastReviewedAt: 2026-08-01
+      evidenceAnchor: .kiro/specs/genealogy-platform/evidence/E14.1.md
+      runbookPath: runbook/backup.md
+      redactionRequirements:
+        - redact_secrets
+        - redact_pii
+        - redact_dna
+    - name: key_rotation
+      owner: security_engineer
+      severity: SEV2
+      lastReviewedAt: 2026-08-01
+      evidenceAnchor: .kiro/specs/genealogy-platform/evidence/E14.1.md
+      runbookPath: runbook/key-rotation.md
+      redactionRequirements:
+        - redact_secrets
+        - redact_oauth_client_secret
+        - redact_jwt
+    - name: troubleshooting
+      owner: sre_primary
+      severity: SEV2
+      lastReviewedAt: 2026-08-01
+      evidenceAnchor: .kiro/specs/genealogy-platform/evidence/E13.1.md
+      runbookPath: runbook/troubleshooting.md
+      redactionRequirements:
+        - redact_secrets
+        - redact_pii
+        - redact_dna
+        - redact_raw_payloads
+    - name: support_bundle
+      owner: sre_primary
+      severity: SEV3
+      lastReviewedAt: 2026-08-01
+      evidenceAnchor: .kiro/specs/genealogy-platform/evidence/E14.5.md
+      runbookPath: runbook/support-bundle.md
+      redactionRequirements:
+        - redact_secrets
+        - redact_pii
+        - redact_dna
+        - redact_raw_payloads
+        - redact_jwt
+        - redact_session_cookie
+        - redact_oauth_client_secret
+        - redact_audit_stream
+        - redact_consent_receipt
+        - redact_tree_viewer_bypass
+
+sharedResponsibilityMatrix:
+  description: >
+    Closed-set matrix mapping each responsibility area to
+    its owner tag (C = customer / P = platform). The
+    matrix guarantees every area is bound to a single
+    owner.
+  values:
+    - area: kubernetes_cluster
+      owner: customer_managed
+    - area: postgres_database
+      owner: platform_managed
+    - area: kafka_cluster
+      owner: platform_managed
+    - area: object_storage
+      owner: customer_managed
+    - area: keycloak_realm
+      owner: platform_managed
+    - area: openfga_store
+      owner: platform_managed
+    - area: temporal_namespace
+      owner: platform_managed
+    - area: vault_kv
+      owner: platform_managed
+    - area: flagsmith_environment
+      owner: platform_managed
+    - area: tls_certificates
+      owner: customer_managed
+    - area: dns_records
+      owner: customer_managed
+    - area: on_call_rotation
+      owner: platform_managed
+    - area: upgrade_testing
+      owner: platform_managed
+
+runbookStateMatrix:
+  description: >
+    Closed-set state matrix for the runbook review
+    lifecycle. Initial = DRAFT. Terminal statuses:
+    PUBLISHED / SUPERSEDED.
+  initialStatus: DRAFT
+  statuses:
+    - status: DRAFT
+      transitions: [REVIEW, SUPERSEDED]
+    - status: REVIEW
+      transitions: [PUBLISHED, DRAFT, SUPERSEDED]
+    - status: PUBLISHED
+      transitions: [STALE, SUPERSEDED]
+    - status: STALE
+      transitions: [REVIEW, SUPERSEDED]
+    - status: SUPERSEDED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric bounds.
+  values:
+    - name: runbookReviewCadenceDays
+      value: 90
+    - name: supportBundleRetentionDays
+      value: 90
+    - name: maxSupportBundleSizeGigabytes
+      value: 2
+    - name: minRedactionRulesPerProcedure
+      value: 3
+    - name: minProceduresDocumented
+      value: 8
+    - name: maxProceduresDocumented
+      value: 16
+    - name: sharedResponsibilityAreasMinimum
+      value: 8
+    - name: runbookSlaMinutesSev1
+      value: 15
+    - name: runbookSlaMinutesSev2
+      value: 60
+    - name: runbookSlaMinutesSev3
+      value: 240
+    - name: runbookSlaMinutesSev4
+      value: 1440
+    - name: onCallPrimaryShiftHours
+      value: 12
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - allProceduresHaveOwner
+    - allProceduresHaveSeverity
+    - allProceduresHaveEvidenceAnchor
+    - allProceduresHaveRunbookPath
+    - supportBundleRedactsAllForbiddenKeys
+    - sharedResponsibilityMatrixCoversAllAreas
+    - runbookReviewCadenceRespected
+    - supportChannelsFromClosedSet
+    - onCallRotationFromClosedSet
+    - indexFileLinksEveryProcedure
+    - supportBundleSizeWithinLimit
+    - redactionRulesCoverPiiDnaSecret
+    - runbookSlaRespected
+    - rawDnaBytesNeverInSupportBundle
+    - rawEmailNeverInSupportBundle
+    - productionPiiNeverInSupportBundle
+    - sharedAdminPasswordNeverInSupportBundle
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    any of these.
+  values:
+    - name: support_bundle_collector
+      spec: redacted_archive_only
+    - name: on_call_rotation
+      spec: pagerduty_or_opsgenie_only
+    - name: documentation_index
+      spec: runbook_index_only
+    - name: no_custom_support_bundle
+      spec: forbidden
+    - name: no_ad_hoc_on_call_contact
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain.
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - inline_stripe_api_key
+    - inline_license_file
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+    - skip_runbook_review
+    - ad_hoc_contact
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers.
+  values:
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/runbook/RunbookGuard.java
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/runbook/E14RunbookLimits.java
+    - runbook/index.md
+    - tools/support/support-bundle.sh
+    - .kiro/specs/genealogy-platform/evidence/E14.5.md
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/disaster-recovery/operator-runbook-policy.yaml

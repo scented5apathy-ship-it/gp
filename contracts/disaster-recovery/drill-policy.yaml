@@ -1,0 +1,496 @@
+# E14.2 — DR drill contract.
+#
+# Source of truth: requirements.md NFR3 (DR SHALL be diễn tập
+# định kỳ + RPO ≤ 15 phút, RTO ≤ 4 giờ), design.md §13 (DR
+# procedures), ownership-catalog.md §3 (platform SRE).
+#
+# Validated by scripts/lint-drill-config.mjs and enforced at
+# runtime by:
+#   - services/operations-service/src/main/java/.../drill/DrillGuard.java
+#   - platform/helm/genealogy-platform/files/disaster-recovery/
+#     drill-policy.yaml (Helm mirror, byte-identical)
+#   - runbook/disaster-recovery.md (operator runbook)
+#
+# Hard invariants (E14.2 — DR drill):
+#   * Drill scenarios MUST declare a closed-set `drillKind`
+#     (cluster_loss / region_loss / dependency_outage /
+#     control_plane_failure / data_corruption /
+#     rpo_breach / rto_breach / on_premises_failover —
+#     8 mandatory scenarios).
+#   * Every drill MUST publish reconcileTargets covering the
+#     full stack: outbox relay, kafka consumers, temporal
+#     workflows, search projections, public projection.
+#   * Drill cadence: SaaS drills run every 90 days;
+#     on-premise drills follow the customer contract
+#     (≤ 180 days). The linter enforces the cadence.
+#   * RPO / RTO budget declared per scenario MUST equal the
+#     bounds from E14.1 `rpoRtoBudget` and E13.2
+#     `slo-alert-policy.yaml` availability targets.
+#   * Remediation fields are MANDATORY (owner / ticket /
+#     dueDate / severity). Missing remediation ⇒ drill fails.
+#   * Drill evidence MUST live under
+#     `.kiro/specs/genealogy-platform/evidence/dr/` with
+#     postmortem artefact declared.
+#   * Drill MUST NOT touch production data outside the
+#     declared blast radius. The platform refuses a drill
+#     whose blastRadius is `production_wide` without an
+#     explicit feature flag and product approval.
+#   * Region-loss drill MUST declare a target region from the
+#     closed-set `allowedDrRegions`. Manual / ad-hoc region
+#     failover is forbidden.
+#   * Customer-data leak via drill output is forbidden:
+#     `replayLogCaptureMode` MUST equal `redacted_metrics_only`.
+policyVersion: 1.0.0
+owner: sre-primary
+scope: disaster-recovery-drill
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR3
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+drillKinds:
+  description: >
+    Closed-set of DR drill kinds the platform MUST be able
+    to execute. Each kind maps to a Litmus / chaos-mesh /
+    runbook rehearsal.
+  values:
+    - name: cluster_loss
+      description: Single Kubernetes cluster loses quorum; verify reconciliation.
+      cadenceDays: 90
+      blastRadius: per_cluster
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-secondary-a
+        - gp-region-secondary-b
+    - name: region_loss
+      description: SaaS primary region is unreachable; failover to secondary.
+      cadenceDays: 90
+      blastRadius: per_region
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-secondary-a
+        - gp-region-secondary-b
+    - name: dependency_outage
+      description: Single critical dependency outage; verify graceful degradation.
+      cadenceDays: 90
+      blastRadius: per_service
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+        - gp-region-secondary-a
+    - name: control_plane_failure
+      description: Kong or Keycloak control plane failure; verify mTLS bypass path.
+      cadenceDays: 90
+      blastRadius: per_namespace
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+        - gp-region-secondary-a
+        - gp-region-secondary-b
+    - name: data_corruption
+      description: Restore from backup + verify checksum integrity.
+      cadenceDays: 90
+      blastRadius: per_aggregate
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+        - gp-region-secondary-a
+    - name: rpo_breach
+      description: Verify alert + remediation when RPO breaches the budget.
+      cadenceDays: 90
+      blastRadius: per_environment
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+    - name: rto_breach
+      description: Verify alert + remediation when RTO breaches the budget.
+      cadenceDays: 90
+      blastRadius: per_environment
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+    - name: on_premises_failover
+      description: On-premise cluster failover; verify shared responsibility matrix.
+      cadenceDays: 180
+      blastRadius: per_site
+      primaryRegion: onprem-customer-primary
+      allowedDrRegions:
+        - onprem-customer-secondary
+
+allowedDrRegions:
+  description: >
+    Closed-set of DR regions the platform is allowed to fail
+    over to. Manual / ad-hoc region list is forbidden.
+  values:
+    - gp-region-primary
+    - gp-region-secondary-a
+    - gp-region-secondary-b
+    - onprem-customer-primary
+    - onprem-customer-secondary
+
+reconcileTargets:
+  description: >
+    Every drill MUST publish a reconcileTargets list
+    indicating which subsystem is verified after the drill.
+  values:
+    - outbox_relay
+    - kafka_consumer
+    - temporal_workflow
+    - search_projection
+    - public_projection
+    - audit_pipeline
+    - flagsmith_cache
+
+blastRadii:
+  description: >
+    Closed-set blast radius values. `production_wide`
+    requires an explicit feature flag and product approval.
+  values:
+    - per_pod
+    - per_service
+    - per_namespace
+    - per_cluster
+    - per_region
+    - per_site
+    - per_environment
+    - per_aggregate
+
+replayLogCaptureModes:
+  description: >
+    Closed-set of replay-log capture modes. Anything other
+    than `redacted_metrics_only` is forbidden by the platform
+    (customer-data leak guard).
+  values:
+    - redacted_metrics_only
+
+severities:
+  description: >
+    Severity ladder used for remediation tickets. The
+    linter enforces every drill MUST produce a ticket with
+    one of these severities.
+  values:
+    - SEV1
+    - SEV2
+    - SEV3
+    - SEV4
+
+drillScenarios:
+  description: >
+    Mandatory drill scenarios. Each entry declares the
+    drill kind, cadence, blast radius, primary region,
+    reconcile targets, RPO / RTO budget and replay log
+    capture mode.
+  values:
+    - drillKind: cluster_loss
+      cadenceDays: 90
+      blastRadius: per_cluster
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-secondary-a
+        - gp-region-secondary-b
+      reconcileTargets:
+        - outbox_relay
+        - kafka_consumer
+        - temporal_workflow
+        - search_projection
+        - public_projection
+        - audit_pipeline
+        - flagsmith_cache
+      replayLogCaptureMode: redacted_metrics_only
+      rpoSeconds: 900
+      rtoSeconds: 14400
+      requiredArtifacts:
+        - drillLog
+        - reconcileReport
+        - postmortem
+        - remediation
+        - signoff
+    - drillKind: region_loss
+      cadenceDays: 90
+      blastRadius: per_region
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-secondary-a
+        - gp-region-secondary-b
+      reconcileTargets:
+        - outbox_relay
+        - kafka_consumer
+        - temporal_workflow
+        - search_projection
+        - public_projection
+        - audit_pipeline
+      replayLogCaptureMode: redacted_metrics_only
+      rpoSeconds: 900
+      rtoSeconds: 14400
+      requiredArtifacts:
+        - drillLog
+        - reconcileReport
+        - postmortem
+        - remediation
+        - signoff
+    - drillKind: dependency_outage
+      cadenceDays: 90
+      blastRadius: per_service
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+        - gp-region-secondary-a
+      reconcileTargets:
+        - outbox_relay
+        - kafka_consumer
+        - temporal_workflow
+        - search_projection
+      replayLogCaptureMode: redacted_metrics_only
+      rpoSeconds: 3600
+      rtoSeconds: 14400
+      requiredArtifacts:
+        - drillLog
+        - reconcileReport
+        - postmortem
+        - signoff
+    - drillKind: control_plane_failure
+      cadenceDays: 90
+      blastRadius: per_namespace
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+        - gp-region-secondary-a
+        - gp-region-secondary-b
+      reconcileTargets:
+        - audit_pipeline
+        - flagsmith_cache
+      replayLogCaptureMode: redacted_metrics_only
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+      requiredArtifacts:
+        - drillLog
+        - reconcileReport
+        - postmortem
+        - signoff
+    - drillKind: data_corruption
+      cadenceDays: 90
+      blastRadius: per_aggregate
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+        - gp-region-secondary-a
+      reconcileTargets:
+        - outbox_relay
+        - search_projection
+        - audit_pipeline
+      replayLogCaptureMode: redacted_metrics_only
+      rpoSeconds: 900
+      rtoSeconds: 14400
+      requiredArtifacts:
+        - drillLog
+        - reconcileReport
+        - postmortem
+        - signoff
+    - drillKind: rpo_breach
+      cadenceDays: 90
+      blastRadius: per_environment
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+      reconcileTargets:
+        - outbox_relay
+        - search_projection
+      replayLogCaptureMode: redacted_metrics_only
+      rpoSeconds: 900
+      rtoSeconds: 14400
+      requiredArtifacts:
+        - drillLog
+        - remediation
+        - signoff
+    - drillKind: rto_breach
+      cadenceDays: 90
+      blastRadius: per_environment
+      primaryRegion: gp-region-primary
+      allowedDrRegions:
+        - gp-region-primary
+      reconcileTargets:
+        - temporal_workflow
+        - outbox_relay
+      replayLogCaptureMode: redacted_metrics_only
+      rpoSeconds: 900
+      rtoSeconds: 14400
+      requiredArtifacts:
+        - drillLog
+        - remediation
+        - signoff
+    - drillKind: on_premises_failover
+      cadenceDays: 180
+      blastRadius: per_site
+      primaryRegion: onprem-customer-primary
+      allowedDrRegions:
+        - onprem-customer-secondary
+      reconcileTargets:
+        - outbox_relay
+        - kafka_consumer
+        - temporal_workflow
+        - search_projection
+        - audit_pipeline
+        - flagsmith_cache
+      replayLogCaptureMode: redacted_metrics_only
+      rpoSeconds: 3600
+      rtoSeconds: 14400
+      requiredArtifacts:
+        - drillLog
+        - reconcileReport
+        - postmortem
+        - remediation
+        - signoff
+
+drillStateMatrix:
+  description: >
+    Closed-set state matrix for the drill lifecycle.
+    Initial = PLANNED. Terminal statuses: PASSED / FAILED /
+    SUPERSEDED.
+  initialStatus: PLANNED
+  statuses:
+    - status: PLANNED
+      transitions: [IN_PROGRESS, CANCELLED]
+    - status: IN_PROGRESS
+      transitions: [RECONCILING, FAILED]
+    - status: RECONCILING
+      transitions: [PASSED, FAILED]
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+    - status: PASSED
+      transitions: [REMEDIATION_PENDING, SUPERSEDED]
+    - status: REMEDIATION_PENDING
+      transitions: [REMEDIATION_DONE, FAILED]
+    - status: REMEDIATION_DONE
+      transitions: [SUPERSEDED]
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: SUPERSEDED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric bounds.
+  values:
+    - name: saasDrillCadenceDays
+      value: 90
+    - name: onPremDrillCadenceDaysMaximum
+      value: 180
+    - name: clusterLossRpoSecondsMaximum
+      value: 900
+    - name: regionLossRtoSecondsMaximum
+      value: 14400
+    - name: dependencyOutageRtoSecondsMaximum
+      value: 14400
+    - name: controlPlaneFailureRpoSecondsMaximum
+      value: 86400
+    - name: dataCorruptionRtoSecondsMaximum
+      value: 14400
+    - name: rpoBreachRtoSecondsMaximum
+      value: 14400
+    - name: onPremFailoverRpoSecondsMaximum
+      value: 3600
+    - name: drillEvidenceRetentionDays
+      value: 1095
+    - name: reconcileTargetsPerDrillMinimum
+      value: 2
+    - name: maxProductionWideDrillsPerQuarter
+      value: 0
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - everyDrillHasReconcileTargets
+    - everyDrillHasReplayLogCaptureMode
+    - everyDrillHasRequiredArtifacts
+    - regionLossDrillHasSecondaryRegion
+    - onPremFailoverDrillHasOnPremRegion
+    - blastRadiusNeverProductionWideWithoutFlag
+    - replayLogCaptureModeNeverCustomerData
+    - remediationSeverityFromClosedSet
+    - drillEvidencePathUnderEvidenceDir
+    - cadenceRespectedForAllScenarios
+    - rpoRtoBudgetMatchesBackupMatrix
+    - onPremCadenceWithin180Days
+    - drillSignoffHasSreAndProductOwners
+    - rawPiiNeverInDrillLog
+    - rawDnaBytesNeverInDrillLog
+    - drillLogsAreTenantPseudonymous
+    - reconcileReportCoversAllSubsystems
+    - noAdHocRegionFailover
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    any of these.
+  values:
+    - name: dr_coordination
+      spec: litmus_or_chaos_mesh_or_runbook_only
+    - name: region_failover
+      spec: argocd_or_kubernetes_only
+    - name: reconcile_engine
+      spec: outbox_relay_or_kafka_or_temporal_only
+    - name: audit_pipeline
+      spec: otlp_audit_only
+    - name: no_custom_dr_coordinator
+      spec: forbidden
+    - name: no_custom_region_failover
+      spec: forbidden
+    - name: no_manual_reconcile_outside_runbook
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain.
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - inline_stripe_api_key
+    - inline_license_file
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+    - skip_reconcile
+    - skip_remediation
+    - skip_signoff
+    - ad_hoc_region_failover
+    - manual_drill_only
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers.
+  values:
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/drill/DrillGuard.java
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/drill/E14DrillLimits.java
+    - runbook/disaster-recovery.md
+    - .kiro/specs/genealogy-platform/evidence/dr/cluster-loss.md
+    - .kiro/specs/genealogy-platform/evidence/dr/region-loss.md
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/disaster-recovery/drill-policy.yaml

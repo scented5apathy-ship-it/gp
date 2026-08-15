@@ -1,0 +1,289 @@
+# E14.4 — Upgrade / rollback contract.
+#
+# Source of truth: requirements.md NFR6 (upgrade SHALL có
+# migration versioned, compatibility matrix, preflight
+# và rollback plan), NFR8 (re-use platform stack — Argo
+# CD / Rollouts), design.md §13, ownership-catalog.md §3.
+#
+# Validated by scripts/lint-recovery-rollback-config.mjs and
+# enforced at runtime by:
+#   - services/operations-service/src/main/java/.../
+#     recovery/RecoveryGuard.java
+#   - platform/helm/genealogy-platform/files/disaster-recovery/
+#     recovery-rollback-policy.yaml (Helm mirror, byte-identical)
+#   - runbook/upgrade-rollback.md (operator runbook)
+#   - tools/upgrade/simulate-upgrade.sh (Flyway expand-contract
+#     + Argo Rollouts abort simulation)
+#
+# Hard invariants (E14.4 — Upgrade / rollback):
+#   * Database migration MUST be Flyway expand-contract
+#     (add column + backfill + switch, never destructive
+#     in the same release); the linter refuses any
+#     destructive operation tagged in a release window.
+#   * API / event / schema compatibility MUST be backward
+#     compatible per ADR-E0.5-08 (BACKWARD). The linter
+#     refuses any change tagged `breaking` without an
+#     explicit supersession ADR.
+#   * Platform version sequencing follows a closed-set of
+#     supported previous versions (N-1, N-2, N-3). Older
+#     versions are out of support.
+#   * Argo Rollouts MUST abort the upgrade when ANY abort
+#     rule from E13.4 fires; the linter enforces the
+#     abortOnErrorBudgetBurn wiring.
+#   * Pre / post upgrade checks MUST be declared in the
+#     contract; the runtime refuses an upgrade missing
+#     any of them.
+#   * Rollback constraint: at most 1 active rollback per
+#     tenant; cross-tenant rollback forbidden.
+#   * Upgrade test set MUST cover at least the 3 most
+#     recent supported versions; the linter enforces the
+#     coverage.
+#   * Feature flag kill switch MUST be wired for every
+#     breaking change; missing kill switch means upgrade
+#     fails lint.
+policyVersion: 1.0.0
+owner: sre-primary
+scope: upgrade-rollback
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR6
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+supportedPreviousVersions:
+  description: >
+    Closed-set of supported previous platform versions the
+    upgrade script MUST be able to handle.
+  values:
+    - "2025.10"
+    - "2025.12"
+    - "2026.02"
+    - "2026.04"
+    - "2026.06"
+
+migrationKinds:
+  description: >
+    Closed-set of Flyway migration kinds the platform
+    allows in a release window. Destructive operations
+    (drop / shrink / rename) are forbidden in the same
+    release.
+  values:
+    - expand_column_add
+    - expand_table_create
+    - expand_index_create
+    - expand_backfill
+    - expand_switch
+    - deprecated_drop_followup
+
+compatibilityKinds:
+  description: >
+    Closed-set of API / event / schema compatibility kinds
+    per ADR-E0.5-08. Breaking changes require an ADR
+    supersession before they are admitted.
+  values:
+    - BACKWARD
+    - BACKWARD_TRANSITIVE
+    - FULL
+    - NONE_BREAKING_SUPERSEDED_BY_ADR
+
+abortRuleKinds:
+  description: >
+    Closed-set of Argo Rollouts abort rule kinds the
+    upgrade MUST wire to (mirror of E13.4 canary abort
+    rules).
+  values:
+    - five_xx_ratio_exceeded
+    - p95_latency_regression
+    - error_rate_spike
+    - privacy_finding_detected
+
+preUpgradeChecks:
+  description: >
+    Mandatory pre-upgrade checks. The platform refuses to
+    start an upgrade if any of these are not declared.
+  values:
+    - flyway_no_destructive
+    - schema_compatibility_checked
+    - event_compatibility_checked
+    - rollback_plan_attached
+    - feature_flag_kill_switch_attached
+    - preflight_passed
+
+postUpgradeChecks:
+  description: >
+    Mandatory post-upgrade checks. The platform refuses
+    to mark an upgrade SUCCESS if any of these fail.
+  values:
+    - flyway_migration_applied
+    - red_metrics_under_budget
+    - workflow_completion_under_budget
+    - search_projection_fresh
+    - audit_pipeline_receiving
+    - reconcile_targets_stable
+    - signoff_attached
+
+rollbackConstraints:
+  description: >
+    Constraints on rollback. The runtime refuses any
+    rollback violating them.
+  values:
+    - maxOneRollbackPerTenant
+    - noCrossTenantRollback
+    - rollbackToSupportedPreviousVersionOnly
+    - rollbackRequiresApprovalTicket
+    - rollbackEvacuatesActiveMutations
+    - rollbackRunsFeatureFlagKillSwitch
+
+upgradeStateMatrix:
+  description: >
+    Closed-set state matrix for the upgrade lifecycle.
+    Initial = PLANNED. Terminal statuses: SUCCEEDED /
+    FAILED / ROLLED_BACK / SUPERSEDED.
+  initialStatus: PLANNED
+  statuses:
+    - status: PLANNED
+      transitions: [PRECHECK_RUNNING, CANCELLED]
+    - status: PRECHECK_RUNNING
+      transitions: [APPLYING, FAILED, CANCELLED]
+    - status: APPLYING
+      transitions: [POSTCHECK_RUNNING, FAILED]
+    - status: POSTCHECK_RUNNING
+      transitions: [SUCCEEDED, ROLLING_BACK, FAILED]
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+    - status: SUCCEEDED
+      transitions: [SUPERSEDED]
+    - status: FAILED
+      transitions: [ROLLING_BACK, CANCELLED]
+    - status: ROLLING_BACK
+      transitions: [ROLLED_BACK, FAILED]
+    - status: ROLLED_BACK
+      transitions: []
+      terminal: true
+    - status: SUPERSEDED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric bounds.
+  values:
+    - name: maxSupportedPreviousVersions
+      value: 5
+    - name: minSupportedPreviousVersions
+      value: 3
+    - name: precheckTimeoutSeconds
+      value: 1800
+    - name: applyTimeoutSeconds
+      value: 7200
+    - name: postcheckTimeoutSeconds
+      value: 3600
+    - name: rollbackTimeoutSeconds
+      value: 3600
+    - name: maxActiveRollbacksPerTenant
+      value: 1
+    - name: upgradeTestCoverageRequiredVersions
+      value: 3
+    - name: maxBackwardsCompatWindowReleases
+      value: 6
+    - name: minFeatureFlagKillSwitchLatencySeconds
+      value: 60
+    - name: destructiveMigrationWindowReleases
+      value: 0
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - flywayExpandContractMandatory
+    - backwardCompatibilityMandatory
+    - argoRolloutsAbortWiredToE13_4
+    - preUpgradeChecksAllPresent
+    - postUpgradeChecksAllPresent
+    - rollbackToSupportedPreviousVersion
+    - rollbackRequiresApprovalTicket
+    - maxOneRollbackPerTenant
+    - noCrossTenantRollback
+    - featureFlagKillSwitchAttached
+    - upgradeTestCoverageRespected
+    - noDestructiveMigrationInReleaseWindow
+    - schemaCompatibilityChecked
+    - eventCompatibilityChecked
+    - reconcileTargetsStableBeforeSuccess
+    - auditPipelineReceivingBeforeSuccess
+    - signoffFromSreAndProductOwners
+    - rawDnaBytesNeverInUpgradeBundle
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    any of these.
+  values:
+    - name: progressive_delivery
+      spec: argo_rollouts_only
+    - name: migration_engine
+      spec: flyway_only
+    - name: schema_compatibility
+      spec: apicurio_only
+    - name: feature_flag_kill_switch
+      spec: flagsmith_or_openfeature_only
+    - name: no_custom_progressive_delivery
+      spec: forbidden
+    - name: no_custom_migration_engine
+      spec: forbidden
+    - name: no_custom_kill_switch
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain.
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - inline_stripe_api_key
+    - inline_license_file
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+    - skip_precheck
+    - skip_postcheck
+    - skip_rollback_plan
+    - skip_feature_flag_kill_switch
+    - destructive_migration
+    - breaking_change_without_adr
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers.
+  values:
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/recovery/RecoveryGuard.java
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/recovery/E14RecoveryLimits.java
+    - runbook/upgrade-rollback.md
+    - tools/upgrade/simulate-upgrade.sh
+    - platform/argocd/canary/abort-rules.yaml
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/disaster-recovery/recovery-rollback-policy.yaml

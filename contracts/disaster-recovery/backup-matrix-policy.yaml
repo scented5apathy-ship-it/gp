@@ -1,0 +1,431 @@
+# E14.1 — Backup matrix contract.
+#
+# Source of truth: requirements.md NFR3 (availability + recovery),
+# NFR6 (portability, on-premise), NFR8 (re-use platform stack),
+# design.md §13 (PostgreSQL PITR / Kafka replication / object
+# versioning / Vault / Keycloak / Temporal / Flagsmith backup;
+# restore test creates evidence), ownership-catalog.md §3.
+#
+# Validated by scripts/lint-backup-matrix.mjs and enforced at
+# runtime by:
+#   - services/operations-service/src/main/java/.../backup/BackupGuard.java
+#   - platform/helm/genealogy-platform/files/disaster-recovery/
+#     (Helm values mirroring every component's backup CronJob /
+#     Velero schedule / Vault policy snippet)
+#   - runbook/backup.md (operator runbook mirroring restore drill
+#     cadence + key custody responsibilities)
+#
+# Hard invariants (E14.1 — Backup matrix):
+#   * Every platform component MUST declare a row in `components`
+#     (postgresql / kafka / object_storage / keycloak / openfga /
+#     temporal / vault / flagsmith — 8 mandatory). A component
+#     without a backup row MUST fail the linter; an untested
+#     restore MUST fail the linter.
+#   * Encryption-at-rest is mandatory for every component's
+#     backup artifact (AES-256-GCM or KMS-managed equivalent).
+#   * `restoreTested=true` is REQUIRED for every row. The
+#     platform refuses to admit a "backup" that has not been
+#     restored at least once per quarter; the linter rejects
+#     `restoreTested=false` outside the `pendingRestoreEvidence`
+#     deadline.
+#   * Restore ordering follows the dependency graph in
+#     `restoreOrder` — Vault / KMS first (key custody), then
+#     PostgreSQL, then Keycloak / OpenFGA / Kafka / Temporal /
+#     object storage, then Flagsmith. The linter enforces the
+#     topological order matches `design.md` §13.
+#   * RPO/RTO bounds declared in `rpoRtoBudget` MUST equal the
+#     bounds declared in
+#     `contracts/reliability/slo-alert-policy.yaml` (E13.2) and
+#     `scale-and-slo.yml` (E0.3).
+#   * Offsite copy is mandatory for SaaS (secondary region) and
+#     MUST be optional for on-premise (skip when storage is
+#     already replicated offsite by customer infrastructure).
+#   * Retention MUST cover at least 30 daily + 12 monthly + 7
+#     yearly snapshots; `retentionDays=0` is forbidden.
+#   * Key custody MUST declare which actor / Vault role can
+#     decrypt the backup artifact. Cross-tenant or shared
+#     custody is forbidden.
+#   * Backups MUST NOT be considered valid purely by snapshot;
+#     every snapshot MUST declare `restoreEvidence` artefact
+#     path under `.kiro/specs/genealogy-platform/evidence/backup/`.
+policyVersion: 1.0.0
+owner: sre-primary
+scope: backup-matrix
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#NFR3
+  design: .kiro/specs/genealogy-platform/design.md#13
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md
+
+components:
+  description: >
+    The closed-set of platform components the platform MUST
+    back up. Each row declares cadence, encryption, key custody,
+    retention, offsite copy target and restore-test evidence.
+  values:
+    - name: postgresql
+      description: PostgreSQL tenant databases (per-service schema).
+      cadence: continuous_archiving_wal
+      method: pg_basebackup_plus_wal_g
+      encryption: aes_256_gcm
+      keyCustody: vault_kv_v2_backup_pg
+      retentionDays: 365
+      retentionDaily: 30
+      retentionMonthly: 12
+      retentionYearly: 7
+      offsiteCopyRequired: true
+      restoreTested: true
+      restoreEvidence: .kiro/specs/genealogy-platform/evidence/backup/postgresql-restore.md
+      rpoSeconds: 7200
+      rtoSeconds: 14400
+      orderingRank: 2
+    - name: kafka
+      description: Strimzi-managed Kafka cluster incl. consumer offsets.
+      cadence: daily_snapshot
+      method: strimzi_operator_backup
+      encryption: aes_256_gcm
+      keyCustody: vault_kv_v2_backup_kafka
+      retentionDays: 365
+      retentionDaily: 30
+      retentionMonthly: 12
+      retentionYearly: 7
+      offsiteCopyRequired: true
+      restoreTested: true
+      restoreEvidence: .kiro/specs/genealogy-platform/evidence/backup/kafka-restore.md
+      rpoSeconds: 3600
+      rtoSeconds: 14400
+      orderingRank: 4
+    - name: object_storage
+      description: S3-managed (SaaS) or MinIO (on-premise) bucket/prefix set.
+      cadence: continuous_cross_region_replication
+      method: s3_cross_region_replication_or_minio_site_replication
+      encryption: aes_256_gcm
+      keyCustody: vault_kv_v2_backup_s3
+      retentionDays: 365
+      retentionDaily: 30
+      retentionMonthly: 12
+      retentionYearly: 7
+      offsiteCopyRequired: false
+      restoreTested: true
+      restoreEvidence: .kiro/specs/genealogy-platform/evidence/backup/object-storage-restore.md
+      rpoSeconds: 7200
+      rtoSeconds: 14400
+      orderingRank: 5
+    - name: keycloak
+      description: Keycloak realm + clients + flows + federation mappers.
+      cadence: daily_snapshot
+      method: keycloak_export_json
+      encryption: aes_256_gcm
+      keyCustody: vault_kv_v2_backup_keycloak
+      retentionDays: 365
+      retentionDaily: 30
+      retentionMonthly: 12
+      retentionYearly: 7
+      offsiteCopyRequired: true
+      restoreTested: true
+      restoreEvidence: .kiro/specs/genealogy-platform/evidence/backup/keycloak-restore.md
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+      orderingRank: 3
+    - name: openfga
+      description: OpenFGA authorization store + model + tuple dump.
+      cadence: daily_snapshot
+      method: openfga_store_export
+      encryption: aes_256_gcm
+      keyCustody: vault_kv_v2_backup_openfga
+      retentionDays: 365
+      retentionDaily: 30
+      retentionMonthly: 12
+      retentionYearly: 7
+      offsiteCopyRequired: true
+      restoreTested: true
+      restoreEvidence: .kiro/specs/genealogy-platform/evidence/backup/openfga-restore.md
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+      orderingRank: 4
+    - name: temporal
+      description: Temporal namespace + workflow history + visibility.
+      cadence: daily_snapshot
+      method: temporal_admin_cli_export
+      encryption: aes_256_gcm
+      keyCustody: vault_kv_v2_backup_temporal
+      retentionDays: 365
+      retentionDaily: 30
+      retentionMonthly: 12
+      retentionYearly: 7
+      offsiteCopyRequired: true
+      restoreTested: true
+      restoreEvidence: .kiro/specs/genealogy-platform/evidence/backup/temporal-restore.md
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+      orderingRank: 4
+    - name: vault
+      description: Vault KVv2 + transit + auth methods (key custody for all other components).
+      cadence: daily_snapshot
+      method: vault_raft_snapshot
+      encryption: aes_256_gcm
+      keyCustody: vault_kv_v2_backup_self
+      retentionDays: 365
+      retentionDaily: 30
+      retentionMonthly: 12
+      retentionYearly: 7
+      offsiteCopyRequired: true
+      restoreTested: true
+      restoreEvidence: .kiro/specs/genealogy-platform/evidence/backup/vault-restore.md
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+      orderingRank: 1
+    - name: flagsmith
+      description: Flagsmith environment + feature state + audit log.
+      cadence: daily_snapshot
+      method: flagsmith_admin_api_export
+      encryption: aes_256_gcm
+      keyCustody: vault_kv_v2_backup_flagsmith
+      retentionDays: 365
+      retentionDaily: 30
+      retentionMonthly: 12
+      retentionYearly: 7
+      offsiteCopyRequired: false
+      restoreTested: true
+      restoreEvidence: .kiro/specs/genealogy-platform/evidence/backup/flagsmith-restore.md
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+      orderingRank: 6
+
+restoreOrder:
+  description: >
+    Topologically ordered restore sequence. Lower rank is
+    restored first. The runtime MUST refuse to restore a higher
+    rank before its dependency has been restored.
+  values:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+
+cadenceKinds:
+  description: >
+    Closed-set of backup cadence kinds the platform supports.
+    Manual / ad-hoc cadence is forbidden.
+  values:
+    - continuous_archiving_wal
+    - continuous_cross_region_replication
+    - daily_snapshot
+    - weekly_snapshot
+    - monthly_snapshot
+
+encryptionMethods:
+  description: >
+    Closed-set of encryption methods the backup artifact
+    MUST use. Plain-text backups are forbidden.
+  values:
+    - aes_256_gcm
+    - cloud_kms_managed_envelope
+    - vault_transit_rewrap
+
+keyCustodyRoles:
+  description: >
+    Closed-set of Vault roles authorized to decrypt each
+    backup artifact. Cross-tenant custody is forbidden.
+  values:
+    - vault_kv_v2_backup_pg
+    - vault_kv_v2_backup_kafka
+    - vault_kv_v2_backup_s3
+    - vault_kv_v2_backup_keycloak
+    - vault_kv_v2_backup_openfga
+    - vault_kv_v2_backup_temporal
+    - vault_kv_v2_backup_self
+    - vault_kv_v2_backup_flagsmith
+
+rpoRtoBudget:
+  description: >
+    Hard RPO / RTO budget per component. The platform MUST
+    fire `BackupRpoBreach` / `BackupRtoBreach` alerts (E13.2)
+    when the measured value exceeds the budget.
+  values:
+    - component: postgresql
+      rpoSeconds: 7200
+      rtoSeconds: 14400
+    - component: kafka
+      rpoSeconds: 3600
+      rtoSeconds: 14400
+    - component: object_storage
+      rpoSeconds: 7200
+      rtoSeconds: 14400
+    - component: keycloak
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+    - component: openfga
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+    - component: temporal
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+    - component: vault
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+    - component: flagsmith
+      rpoSeconds: 86400
+      rtoSeconds: 14400
+
+backupStateMatrix:
+  description: >
+    Closed-set state matrix for the backup subsystem
+    lifecycle. Initial = ENROLLED. Terminal statuses:
+    SUPERSEDED / REVOKED / EXPIRED.
+  initialStatus: ENROLLED
+  statuses:
+    - status: ENROLLED
+      transitions: [SNAPSHOTTING, RESTORING, FAILED, REVOKED]
+    - status: SNAPSHOTTING
+      transitions: [RESTORED_VERIFIED, FAILED, REVOKED]
+    - status: RESTORING
+      transitions: [RESTORED_VERIFIED, FAILED, REVOKED]
+    - status: RESTORED_VERIFIED
+      transitions: [ENROLLED, SUPERSEDED, EXPIRED]
+    - status: SUPERSEDED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: [ENROLLED, REVOKED]
+    - status: REVOKED
+      transitions: []
+      terminal: true
+    - status: EXPIRED
+      transitions: []
+      terminal: true
+
+numericBounds:
+  description: >
+    Hard numeric bounds. Any deviation is rejected by the
+    linter AND by the Java guard.
+  values:
+    - name: minimumRetentionDays
+      value: 30
+    - name: retentionDailyMinimum
+      value: 30
+    - name: retentionMonthlyMinimum
+      value: 12
+    - name: retentionYearlyMinimum
+      value: 7
+    - name: saasRpoSecondsMaximum
+      value: 900
+    - name: saasRtoSecondsMaximum
+      value: 14400
+    - name: restoreDrillCadenceDays
+      value: 90
+    - name: offsiteCopyMinimumRegions
+      value: 1
+    - name: keyRotationDays
+      value: 90
+    - name: encryptionMinimumKeyBits
+      value: 256
+    - name: maxRestoreWindowMinutes
+      value: 240
+    - name: backupArtifactIntegrityCheckPeriodHours
+      value: 24
+
+invariants:
+  description: >
+    Boolean invariants the linter + runtime MUST enforce.
+  values:
+    - everyComponentHasBackupRow
+    - encryptionAtRestMandatory
+    - restoreTestedMandatory
+    - retentionDailyMonthlyYearlyAllPresent
+    - restoreOrderMatchesDependencyGraph
+    - rpoRtoBudgetMatchesSloContract
+    - offsiteCopyRequiredForSaasComponents
+    - keyCustodyNeverCrossTenant
+    - restoreEvidencePathUnderEvidenceDir
+    - manualBackupCadenceForbidden
+    - plainTextBackupForbidden
+    - restoreDrillCadenceQuarterly
+    - keyRotationQuarterly
+    - backupArtifactIntegrityCheckDaily
+    - backupSignalsRecordedToTelemetry
+    - sharedAdminPasswordForbiddenInBackup
+    - rawDnaBytesNeverInBackupArtifact
+    - rawEmailNeverInBackupArtifact
+
+capabilityBoundaries:
+  description: >
+    Capability boundaries. The runtime MUST NOT re-implement
+    any of these — the platform stack already provides them.
+  values:
+    - name: object_storage
+      spec: s3_or_minio_only
+    - name: secret_kv
+      spec: vault_only
+    - name: kms
+      spec: cloud_kms_or_vault_transit_only
+    - name: identity_backup
+      spec: keycloak_export_only
+    - name: authorization_backup
+      spec: openfga_export_only
+    - name: workflow_backup
+      spec: temporal_cli_only
+    - name: feature_flag_backup
+      spec: flagsmith_api_only
+    - name: no_custom_backup_engine
+      spec: forbidden
+    - name: no_inline_secret_in_backup
+      spec: forbidden
+    - name: no_cross_tenant_key_custody
+      spec: forbidden
+
+forbiddenKeywords:
+  description: >
+    Keyword patterns the contract MUST NEVER contain (used by
+    the linter to reject accidental leaks of secrets, PII,
+    DNA or vendor-specific terminology inside backup policy).
+  values:
+    - raw_dna_bytes
+    - raw_genotype
+    - raw_fastq
+    - raw_bam
+    - raw_vcf
+    - production_pii
+    - prod_tenant_id
+    - staging_tenant_id
+    - raw_email
+    - raw_phone
+    - raw_passport
+    - raw_ssn
+    - dev_secret
+    - shared_admin_password
+    - inline_jwt
+    - inline_access_token
+    - inline_refresh_token
+    - inline_session_cookie
+    - inline_oauth_client_secret
+    - inline_stripe_api_key
+    - inline_license_file
+    - tree_viewer_bypass
+    - bypass_authorization
+    - skip_consent
+    - skip_dna_isolation
+    - skip_audit
+    - skip_redaction
+    - skip_encryption_at_rest
+    - skip_offsite_copy
+    - skip_restore_drill
+    - manual_backup_only
+
+requiredRuntimeHelpers:
+  description: >
+    Mandatory runtime helpers the linter verifies are
+    implemented at the agreed paths.
+  values:
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/backup/BackupGuard.java
+    - services/operations-service/src/main/java/com/genealogy/platform/services/operations/backup/E14BackupLimits.java
+    - runbook/backup.md
+    - .kiro/specs/genealogy-platform/evidence/backup/postgresql-restore.md
+    - .kiro/specs/genealogy-platform/evidence/backup/vault-restore.md
+
+requiredSourceMirror:
+  description: >
+    Byte-identity mirror of this contract into the Helm chart.
+  chartPath: platform/helm/genealogy-platform/files/disaster-recovery/backup-matrix-policy.yaml
