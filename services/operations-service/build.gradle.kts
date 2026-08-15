@@ -1,11 +1,16 @@
 /*
- * `reporting-service` Gradle module. E1.1 wires the skeleton so the
- * monorepo build, lockfile and CI smoke run end-to-end. E11.3 adds
- * the report-pipeline contract-side guardrail (`ReportingGuard`)
- * plus the shared `E11ForbiddenPayloadKeys` catalogue.
+ * `operations-service` Gradle module. E1.1 wires the skeleton so
+ * the monorepo build, lockfile and CI smoke run end-to-end. E11.4
+ * + E11.5 add the entitlement / quota / billing + admin / support /
+ * operations contract-side guardrails (`EntitlementGuard`,
+ * `AdminSupportGuard`) plus the shared `E11Limits` + `E11ForbiddenPayloadKeys`
+ * catalogues.
  *
  * Per ADR-E0.5-01 the module inherits the Java 21 toolchain through
  * the convention script and is locked to keep the build reproducible.
+ * Per ADR-E0.5-12 the domain entitlement source-of-truth lives here,
+ * NOT in Kong rate-limit metrics (this is enforced by the E11.4
+ * `kongRateLimitIsNotSourceOfTruth` guard).
  */
 plugins {
     java

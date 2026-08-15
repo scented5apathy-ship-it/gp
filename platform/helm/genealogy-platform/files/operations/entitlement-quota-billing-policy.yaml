@@ -1,0 +1,370 @@
+# E11.4 — Entitlement / quota / billing adapters contract.
+#
+# Source of truth: requirements.md R1.4, R1.5, R16.1, design.md §1,
+# ownership-catalog.md §3, architecture-decisions.md §12 (ADR-E0.5-12).
+# Validated by scripts/lint-entitlements.mjs and enforced by
+# services/operations-service/.../EntitlementGuard.java.
+#
+# Hard invariants (E11.4 — Entitlement / quota / billing):
+#   * Domain entitlement source of truth lives in operations-service
+#     Postgres, NOT in Kong rate-limit metric.
+#   * Plan enforcement happens before any quota-bound mutation.
+#   * Quota warning MUST be sent via notification-service; never block
+#     legitimate reads.
+#   * SaaS billing adapter (Stripe) is the only sanctioned external
+#     billing surface for SaaS.
+#   * On-prem licensing uses an offline license file validated
+#     against tenant fingerprint.
+#   * Usage events MUST NOT include raw DNA / raw media content.
+#   * Plan / quota / feature flag configuration is tenant-scoped.
+#   * Billing webhook signature MUST be verified (HMAC-SHA256 with
+#     shared secret rotated per ADR-E0.5-12).
+#   * Metering idempotency: usage events with the same idempotency
+#     key are de-duplicated.
+
+policyVersion: 1.0.0
+owner: operations
+scope: operations-service
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R1.4
+  design: .kiro/specs/genealogy-platform/design.md#1
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#3
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md#12
+
+billingPlans:
+  description: Closed-set plan tiers. Plans are tenant-scoped; a tenant
+    has exactly one active plan at any point in time.
+  values:
+    - FREE
+    - PRO
+    - ENTERPRISE
+    - ON_PREM_COMMUNITY
+    - ON_PREM_ENTERPRISE
+    - TRIAL
+
+planQuotas:
+  description: Quota dimensions that may be enforced per plan.
+  values:
+    - TREE_COUNT
+    - PERSON_COUNT
+    - MEDIA_BYTES
+    - DNA_KIT_COUNT
+    - API_REQUESTS_PER_DAY
+    - EXPORT_JOBS_PER_DAY
+    - REPORT_JOBS_PER_DAY
+    - IMPORT_JOBS_PER_DAY
+    - WEBHOOK_DELIVERIES_PER_DAY
+    - ACTIVE_COLLABORATORS
+
+quotaEnforcementScopes:
+  description: Where quota MUST be enforced.
+  values:
+    - PRE_MUTATION
+    - PRE_JOB_SUBMIT
+    - PRE_BILLING_CHARGE
+    - PRE_EXPORT_DOWNLOAD
+
+billingProviders:
+  description: ADR-E0.5-12 sanctioned billing adapters.
+  values:
+    - STRIPE_ADAPTER_SAAS
+    - OFFLINE_LICENSE_ON_PREM
+
+usageEventCategories:
+  description: Categories of usage events emitted by services.
+  values:
+    - TREE_CREATED
+    - PERSON_CREATED
+    - MEDIA_BYTES_UPLOADED
+    - DNA_KIT_REGISTERED
+    - API_REQUEST
+    - EXPORT_JOB_SUBMITTED
+    - REPORT_JOB_SUBMITTED
+    - IMPORT_JOB_SUBMITTED
+    - WEBHOOK_DELIVERED
+    - COLLABORATOR_INVITED
+
+quotaWarningLevels:
+  description: Quota warning thresholds.
+  values:
+    - OK
+    - WARNING_50
+    - WARNING_75
+    - WARNING_90
+    - EXCEEDED_HARD
+    - EXCEEDED_SOFT
+
+entitlementDecisionLabels:
+  description: Labels returned by the entitlement decision service.
+  values:
+    - ALLOW
+    - ALLOW_WITH_WARNING
+    - DENY_HARD_QUOTA
+    - DENY_PLAN_INACTIVE
+    - DENY_TRIAL_EXPIRED
+    - DENY_FEATURE_FLAG_OFF
+    - DENY_LICENSE_INVALID
+
+billingWebhookEvents:
+  description: Billing webhook event kinds (provider-agnostic).
+  values:
+    - INVOICE_PAID
+    - INVOICE_PAYMENT_FAILED
+    - SUBSCRIPTION_CREATED
+    - SUBSCRIPTION_UPDATED
+    - SUBSCRIPTION_CANCELLED
+    - SUBSCRIPTION_TRIAL_WILL_END
+    - CUSTOMER_CREATED
+    - CUSTOMER_UPDATED
+
+entitlementAuditEvents:
+  description: Append-only audit events emitted by operations-service.
+  values:
+    - ENTITLEMENT_PLAN_ASSIGNED
+    - ENTITLEMENT_PLAN_UPGRADED
+    - ENTITLEMENT_PLAN_DOWNGRADED
+    - ENTITLEMENT_QUOTA_WARNING_EMITTED
+    - ENTITLEMENT_QUOTA_HARD_LIMIT_REACHED
+    - ENTITLEMENT_FEATURE_FLAG_OVERRIDE_APPLIED
+    - ENTITLEMENT_USAGE_EVENT_EMITTED
+    - ENTITLEMENT_USAGE_EVENT_DEDUPLICATED
+    - ENTITLEMENT_BILLING_WEBHOOK_RECEIVED
+    - ENTITLEMENT_BILLING_WEBHOOK_SIGNATURE_INVALID
+    - ENTITLEMENT_BILLING_WEBHOOK_DROPPED_DUPLICATE
+    - ENTITLEMENT_LICENSE_INSTALLED
+    - ENTITLEMENT_LICENSE_INVALID
+    - ENTITLEMENT_LICENSE_EXPIRED
+
+entitlementFailureReasons:
+  description: Closed-set failure reasons for the entitlement pipeline.
+  values:
+    - ENTITLEMENT_PLAN_INACTIVE
+    - ENTITLEMENT_QUOTA_HARD_REACHED
+    - ENTITLEMENT_TRIAL_EXPIRED
+    - ENTITLEMENT_FEATURE_FLAG_OFF
+    - ENTITLEMENT_LICENSE_INVALID
+    - ENTITLEMENT_LICENSE_EXPIRED
+    - ENTITLEMENT_BILLING_WEBHOOK_SIGNATURE_INVALID
+    - ENTITLEMENT_BILLING_WEBHOOK_DUPLICATE
+    - ENTITLEMENT_USAGE_EVENT_FORBIDDEN_KEY
+    - ENTITLEMENT_KONG_IS_NOT_SOURCE_OF_TRUTH
+    - ENTITLEMENT_TENANT_MISMATCH
+    - ENTITLEMENT_DENY_BY_ADMIN_OVERRIDE
+    - ENTITLEMENT_INTERNAL_CONSISTENCY_VIOLATION
+
+egressAllowlist:
+  description: Sandbox sidecars that operations-service may reach.
+  values:
+    - postgres-ops
+    - vault-agent-ops
+    - s3-ops
+    - openfga-ops
+    - audit-service
+    - kafka-ops
+    - temporal-frontend-ops
+    - valkey-ops
+    - flagsmith-ops
+    - billing-provider-saas
+
+temporalTaskQueues:
+  description: Temporal task queues for the operations worker pool.
+  values:
+    - ops.entitlement
+    - ops.quota
+    - ops.billingWebhook
+    - ops.licenseValidation
+
+guardRails:
+  domainEntitlementSourceOfTruthIsServiceOwned: true
+  kongRateLimitIsNotSourceOfTruth: true
+  quotaEnforcedPreMutation: true
+  quotaEnforcedPreJobSubmit: true
+  quotaEnforcedPreBillingCharge: true
+  quotaEnforcedPreExportDownload: true
+  usageEventsMustNotContainRawDna: true
+  usageEventsMustNotContainRawMedia: true
+  usageEventsMustNotContainRawSensitiveContent: true
+  usageEventsMustUseOpaqueAggregateIds: true
+  usageEventsIdempotencyKeyRequired: true
+  usageEventsDeDuplicatedByIdempotencyKey: true
+  billingWebhookSignatureRequired: true
+  billingWebhookSignatureHmacSha256: true
+  billingWebhookSecretRotatedPerAdr: true
+  billingWebhookReplayWindowSecondsFloor: 300
+  licenseFingerprintMustMatchTenant: true
+  licenseMustBeOfflineForOnPrem: true
+  licenseMustHaveGracePeriod: true
+  planUpgradeEffectiveImmediately: true
+  planDowngradeEffectiveAfterPeriodEnd: true
+  featureFlagOverrideRequiresReasonAndAudit: true
+  trialExpiryGraceDays: 7
+
+numericBounds:
+  planChangePropagationTimeoutSeconds: 30
+  quotaWarningEmissionIntervalSeconds: 300
+  billingWebhookReplayWindowSeconds: 300
+  usageEventMaxBytes: 4096
+  licenseMaxBytes: 65536
+  licenseClockSkewSeconds: 300
+  quotaResetCadenceDays: 30
+  freeTierTreeLimit: 3
+  freeTierPersonLimit: 250
+  freeTierMediaBytes: 524288000
+  proTierTreeLimit: 50
+  proTierPersonLimit: 25000
+  proTierMediaBytes: 107374182400
+  enterpriseTreeLimit: 10000
+  enterprisePersonLimit: 10000000
+  enterpriseMediaBytes: 10995116277760
+  webhookDeliveryDailyLimit: 1000000
+
+invariants:
+  - name: planChangePropagationTimeoutFasterThanQuotaWarningInterval
+    expression: planChangePropagationTimeoutSeconds <= quotaWarningEmissionIntervalSeconds
+    why: plan changes propagate before next quota warning tick
+  - name: webhookReplayWindowBelowClockSkew
+    expression: billingWebhookReplayWindowSeconds <= licenseClockSkewSeconds
+    why: webhook replay window must not exceed license clock skew tolerance
+  - name: proTierLimitsAreGreaterThanFreeTierLimits
+    expression: proTierTreeLimit > freeTierTreeLimit and proTierPersonLimit > freeTierPersonLimit and proTierMediaBytes > freeTierMediaBytes
+    why: PRO tier must be strictly greater than FREE tier
+  - name: enterpriseTierLimitsAreGreaterThanProTierLimits
+    expression: enterpriseTreeLimit > proTierTreeLimit and enterprisePersonLimit > proTierPersonLimit and enterpriseMediaBytes > proTierMediaBytes
+    why: ENTERPRISE tier must be strictly greater than PRO tier
+  - name: usageEventMaxBytesFitsWithinOutboxEnvelope
+    expression: usageEventMaxBytes <= 65536
+    why: usage events must fit within the platform outbox envelope
+
+entitlementDecisionStateMatrix:
+  doc: "Entitlement decision lifecycle."
+  initialStatus: PENDING
+  statuses:
+    - status: PENDING
+      transitions: [ALLOW, ALLOW_WITH_WARNING, DENY]
+    - status: ALLOW
+      transitions: []
+      terminal: true
+    - status: ALLOW_WITH_WARNING
+      transitions: []
+      terminal: true
+    - status: DENY
+      transitions: []
+      terminal: true
+
+billingWebhookStateMatrix:
+  doc: "Billing webhook lifecycle from receipt to apply."
+  initialStatus: RECEIVED
+  statuses:
+    - status: RECEIVED
+      transitions: [SIGNATURE_VERIFIED, INVALID]
+    - status: SIGNATURE_VERIFIED
+      transitions: [APPLIED, DUPLICATE, INVALID]
+    - status: APPLIED
+      transitions: []
+      terminal: true
+    - status: DUPLICATE
+      transitions: []
+      terminal: true
+    - status: INVALID
+      transitions: []
+      terminal: true
+
+outbox:
+  requiredFields:
+    - eventId
+    - eventType
+    - occurredAt
+    - tenantId
+    - aggregateId
+    - aggregateVersion
+    - traceId
+    - payload
+  envelopeEncryptionRequired: true
+  deadLetterTopic: gp.ops.v1.EntitlementFailed
+  primaryTopic: gp.ops.v1.EntitlementEvent
+
+forbiddenPayloadKeys:
+  description: Keys that must NEVER appear in any entitlement / quota /
+    billing payload.
+  values:
+    - rawDna
+    - rawGenotype
+    - rawFastq
+    - rawBam
+    - rawVcf
+    - rawEmail
+    - rawPhone
+    - rawAddress
+    - exifGps
+    - cameraSerial
+    - passportNumber
+    - ssn
+    - productionPii
+    - internalVaultToken
+    - internalSessionCookie
+    - rawConsentReceipt
+    - rawSignatureBlob
+    - rawIdDocument
+    - treeViewerBypass
+    - rawEventPayload
+    - rawAuditStream
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - dnaRawBucketKey
+    - dnaMatchBucketKey
+    - rawStripeApiKey
+    - rawLicenseFile
+
+capabilityBoundaries:
+  description: Capabilities the operations-service MUST NOT self-build.
+  values:
+    - payment_processor
+    - billing_engine
+    - invoice_renderer
+    - license_server
+    - dunning_engine
+    - tax_engine
+
+sandboxEgress:
+  description: NetworkPolicy + Istio sidecars.
+  allowedEgress:
+    - dns
+    - postgres-ops
+    - vault-agent-ops
+    - s3-ops
+    - openfga-ops
+    - audit-service
+    - kafka-ops
+    - temporal-frontend-ops
+    - valkey-ops
+    - flagsmith-ops
+    - billing-provider-saas
+  forbiddenEgress:
+    - internet
+    - public_metadata
+
+auditHooks:
+  description: Every auditable action routes through audit-service.
+  values:
+    - ENTITLEMENT_PLAN_ASSIGNED
+    - ENTITLEMENT_PLAN_UPGRADED
+    - ENTITLEMENT_PLAN_DOWNGRADED
+    - ENTITLEMENT_QUOTA_WARNING_EMITTED
+    - ENTITLEMENT_QUOTA_HARD_LIMIT_REACHED
+    - ENTITLEMENT_FEATURE_FLAG_OVERRIDE_APPLIED
+    - ENTITLEMENT_USAGE_EVENT_EMITTED
+    - ENTITLEMENT_USAGE_EVENT_DEDUPLICATED
+    - ENTITLEMENT_BILLING_WEBHOOK_RECEIVED
+    - ENTITLEMENT_BILLING_WEBHOOK_SIGNATURE_INVALID
+    - ENTITLEMENT_BILLING_WEBHOOK_DROPPED_DUPLICATE
+    - ENTITLEMENT_LICENSE_INSTALLED
+    - ENTITLEMENT_LICENSE_INVALID
+    - ENTITLEMENT_LICENSE_EXPIRED
+
+featureFlagDefaults:
+  - name: ops.billing.stripe.enabled
+    defaultValue: true
+    owner: ops
+  - name: ops.license.onPrem.enabled
+    defaultValue: true
+    owner: ops

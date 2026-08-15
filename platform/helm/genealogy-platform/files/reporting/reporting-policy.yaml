@@ -1,0 +1,386 @@
+# E11.3 — Reporting policy contract.
+#
+# Source of truth: requirements.md R15, design.md §11, ownership-catalog.md
+# §2.10, privacy-and-legal-gate.md §9 D-05.
+# Validated by scripts/lint-reporting.mjs and enforced by
+# services/reporting-service/.../ReportingGuard.java.
+#
+# Hard invariants (E11.3 — Reporting service):
+#   * Report templates MUST be versioned and pin their generation
+#     tool (Gotenberg) + report definition hash.
+#   * Preview + final PDF MUST be produced through Gotenberg sandbox.
+#   * Privacy preview MUST be rendered before finalization for any
+#     tree containing living or DNA data.
+#   * Projections (completeness, conflict, orphan, duplicate,
+#     demographics) MUST respect tenant boundary + privacy level.
+#   * Analytics product metrics MUST NOT collect DNA or raw sensitive
+#     content (R15.4).
+#   * Output formats ∈ {PDF, CSV, JSON}; PDF goes through Gotenberg
+#     only.
+#   * Report job SLA is enforced via Temporal activity retry + DLQ.
+#   * Deterministic report version: same inputs + same template +
+#     same tool version ⇒ identical output bytes.
+
+policyVersion: 1.0.0
+owner: reporting
+scope: reporting-service
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R15
+  design: .kiro/specs/genealogy-platform/design.md#11
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#2.10
+  privacy: .kiro/specs/genealogy-platform/privacy-and-legal-gate.md#D-05
+
+reportKinds:
+  description: Built-in report families.
+  values:
+    - COMPLETENESS_DASHBOARD
+    - CONFLICT_DASHBOARD
+    - ORPHAN_DASHBOARD
+    - DUPLICATE_DASHBOARD
+    - DEMOGRAPHICS_SUMMARY
+    - FAMILY_BOOK
+    - TIMELINE_PERSON
+    - TIMELINE_FAMILY
+    - ANNIVERSARY_LIST
+    - SOURCE_COVERAGE
+    - RELATIONSHIP_COVERAGE
+    - TENANT_HEALTH_REPORT
+
+reportOutputFormats:
+  description: Supported output formats.
+  values:
+    - PDF
+    - CSV
+    - JSON
+
+reportJobStatuses:
+  description: Report job lifecycle.
+  values:
+    - PENDING
+    - PREVIEW_RENDERED
+    - PREVIEW_APPROVED
+    - GENERATING
+    - COMPLETED
+    - FAILED
+    - CANCELLED
+    - REDACTED
+
+reportTemplates:
+  description: Built-in report templates with deterministic versions.
+  values:
+    - COMPLETENESS_V1
+    - CONFLICT_V1
+    - ORPHAN_V1
+    - DUPLICATE_V1
+    - DEMOGRAPHICS_V1
+    - FAMILY_BOOK_V1
+    - TIMELINE_PERSON_V1
+    - TIMELINE_FAMILY_V1
+    - ANNIVERSARY_LIST_V1
+    - SOURCE_COVERAGE_V1
+    - RELATIONSHIP_COVERAGE_V1
+    - TENANT_HEALTH_V1
+
+projectionSources:
+  description: Projections that feed reporting-service.
+  values:
+    - PERSON_PROJECTION
+    - RELATIONSHIP_PROJECTION
+    - EVENT_PROJECTION
+    - SOURCE_PROJECTION
+    - MEDIA_PROJECTION
+    - CONSENT_PROJECTION
+    - DNA_KIT_PROJECTION
+
+redactionLevels:
+  description: Privacy redaction levels applied to a report.
+  values:
+    - FULL
+    - LIVING_PROTECTED
+    - MINOR_PROTECTED
+    - DNA_REDACTED
+    - PUBLIC
+
+gotenbergProfiles:
+  description: Gotenberg profiles used to render PDF.
+  values:
+    - PDF_A1B
+    - PDF_A2B
+    - PDF_A3B
+    - PDF_SCREEN
+
+reportingAuditEvents:
+  description: Append-only audit events emitted by reporting-service.
+  values:
+    - REPORT_REQUESTED
+    - REPORT_PREVIEW_RENDERED
+    - REPORT_PREVIEW_APPROVED
+    - REPORT_GENERATION_STARTED
+    - REPORT_COMPLETED
+    - REPORT_FAILED
+    - REPORT_REDACTED
+    - REPORT_DOWNLOADED
+    - REPORT_SIGNED_URL_ISSUED
+    - REPORT_DOWNLOAD_SIGNED
+    - REPORT_PROJECTION_REBUILT
+    - REPORT_DETERMINISTIC_VERSION_PINNED
+    - REPORT_DNA_CONTENT_REJECTED
+    - REPORT_ANALYTICS_PAYLOAD_PII_REJECTED
+
+reportingFailureReasons:
+  description: Closed-set failure reasons for the report pipeline.
+  values:
+    - REPORT_TEMPLATE_NOT_FOUND
+    - REPORT_TEMPLATE_VERSION_STALE
+    - REPORT_PROJECTION_REBUILD_REQUIRED
+    - REPORT_GOTENBERG_TIMEOUT
+    - REPORT_GOTENBERG_SANDBOX_VIOLATION
+    - REPORT_OUTPUT_TOO_LARGE
+    - REPORT_DETERMINISTIC_HASH_MISMATCH
+    - REPORT_PRIVACY_PREVIEW_NOT_APPROVED
+    - REPORT_DNA_CONTENT_FORBIDDEN
+    - REPORT_LIVING_PROTECTION_VIOLATION
+    - REPORT_MINOR_PROTECTION_VIOLATION
+    - REPORT_TENANT_BOUNDARY_VIOLATION
+    - REPORT_ANALYTICS_RAW_PII_FORBIDDEN
+
+egressAllowlist:
+  description: Sandbox sidecars that reporting-service may reach.
+  values:
+    - postgres-report
+    - vault-agent-report
+    - s3-report
+    - openfga-report
+    - audit-service
+    - kafka-report
+    - temporal-frontend-report
+    - gotenberg-report
+    - valkey-report
+    - flagsmith-report
+
+temporalTaskQueues:
+  description: Temporal task queues for the report worker pool.
+  values:
+    - report.render
+    - report.pdf
+    - report.analytics
+    - report.projectionRebuild
+
+guardRails:
+  previewBeforeFinalizationRequired: true
+  privacyPreviewAppliesWhenTreeHasLiving: true
+  privacyPreviewAppliesWhenTreeHasDna: true
+  privacyPreviewAppliesWhenTreeHasMinor: true
+  gotenbergIsTheOnlyPdfRenderer: true
+  selfBuiltPdfRendererForbidden: true
+  templateVersionPinRequired: true
+  deterministicReportVersionRequired: true
+  # Projections / boundaries.
+  projectionTenantBoundaryEnforced: true
+  projectionPrivacyLevelEnforced: true
+  projectionLivingStatusEnforced: true
+  projectionDnaScopeEnforced: true
+  crossTenantProjectionLookupForbidden: true
+  crossTenantReportSubmissionForbidden: true
+  # Output safety.
+  pdfSandboxEgressAllowlistOnly: true
+  pdfSandboxEgressNoInternet: true
+  pdfSandboxEgressNoInternalClusterMetadata: true
+  # Privacy / DNA.
+  dnaContentForbiddenInAnalyticsProductMetrics: true
+  rawSensitiveContentForbiddenInAnalyticsProductMetrics: true
+  dnaContentForbiddenInReportOutput: true
+  rawSensitiveContentForbiddenInReportOutput: true
+  dnaAggregateIdsMayAppearOnlyWithOpaqueReference: true
+  # Output determinism.
+  outputDeterministicForSameInputs: true
+  outputHashMustMatchPinnedDefinition: true
+  # Job policy.
+  jobSubmissionRequiresStepUpAuth: true
+  jobDownloadRequiresSignedUrl: true
+  signedUrlMustBeShortLived: true
+  jobRetentionDaysByKind:
+    COMPLETENESS_DASHBOARD: 90
+    CONFLICT_DASHBOARD: 90
+    ORPHAN_DASHBOARD: 90
+    DUPLICATE_DASHBOARD: 90
+    DEMOGRAPHICS_SUMMARY: 90
+    FAMILY_BOOK: 365
+    TIMELINE_PERSON: 365
+    TIMELINE_FAMILY: 365
+    ANNIVERSARY_LIST: 365
+    SOURCE_COVERAGE: 90
+    RELATIONSHIP_COVERAGE: 90
+    TENANT_HEALTH_REPORT: 30
+
+numericBounds:
+  reportMaxInputRows: 1000000
+  reportMaxOutputBytes: 524288000
+  reportPreviewMaxBytes: 52428800
+  gotenbergRenderTimeoutSeconds: 300
+  projectionRebuildMaxRows: 5000000
+  projectionRebuildTimeoutSeconds: 1800
+  jobSubmissionTimeoutMs: 500
+  signedUrlTtlSeconds: 3600
+  deterministicDefinitionHashBytes: 32
+  redactionTokenMaxBytes: 256
+  analyticsBatchMaxEvents: 1000
+  analyticsProductMetricsScrubIntervalSeconds: 60
+
+invariants:
+  - name: signedUrlTtlFasterThanGotenbergRenderTimeout
+    expression: signedUrlTtlSeconds >= gotenbergRenderTimeoutSeconds
+    why: signed URL must remain valid until the rendering completes
+  - name: analyticsScrubIntervalFasterThanJobTimeout
+    expression: analyticsProductMetricsScrubIntervalSeconds * 1000 <= projectionRebuildTimeoutSeconds * 1000
+    why: analytics scrub must run before the longest job window
+  - name: previewOutputFitsWithinFinalOutputEnvelope
+    expression: reportPreviewMaxBytes <= reportMaxOutputBytes
+    why: preview must be a subset of the final envelope
+  - name: redactionTokenMaxBytesFitsWithinSignedUrlTtlEnvelope
+    expression: redactionTokenMaxBytes <= 4096
+    why: token must fit a typical URL envelope
+
+reportJobStateMatrix:
+  doc: "Report job lifecycle from request to download."
+  initialStatus: PENDING
+  statuses:
+    - status: PENDING
+      transitions: [PREVIEW_RENDERED, FAILED]
+    - status: PREVIEW_RENDERED
+      transitions: [PREVIEW_APPROVED, CANCELLED, REDACTED, FAILED]
+    - status: PREVIEW_APPROVED
+      transitions: [GENERATING]
+    - status: GENERATING
+      transitions: [COMPLETED, FAILED]
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+    - status: REDACTED
+      transitions: []
+      terminal: true
+
+reportProjectionRebuildStateMatrix:
+  doc: "Projection rebuild lifecycle."
+  initialStatus: ENQUEUED
+  statuses:
+    - status: ENQUEUED
+      transitions: [RUNNING]
+    - status: RUNNING
+      transitions: [COMPLETED, FAILED, CANCELLED]
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+
+outbox:
+  requiredFields:
+    - eventId
+    - eventType
+    - occurredAt
+    - tenantId
+    - aggregateId
+    - aggregateVersion
+    - traceId
+    - payload
+  envelopeEncryptionRequired: true
+  deadLetterTopic: gp.report.v1.ReportFailed
+  primaryTopic: gp.report.v1.ReportRequested
+
+forbiddenPayloadKeys:
+  description: Keys that must NEVER appear in any report payload.
+  values:
+    - rawDna
+    - rawGenotype
+    - rawFastq
+    - rawBam
+    - rawVcf
+    - rawEmail
+    - rawPhone
+    - rawAddress
+    - exifGps
+    - cameraSerial
+    - passportNumber
+    - ssn
+    - productionPii
+    - internalVaultToken
+    - internalSessionCookie
+    - rawConsentReceipt
+    - rawSignatureBlob
+    - rawIdDocument
+    - treeViewerBypass
+    - rawEventPayload
+    - rawAuditStream
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - dnaRawBucketKey
+    - dnaMatchBucketKey
+
+capabilityBoundaries:
+  description: Capabilities the reporting-service MUST NOT self-build.
+  values:
+    - pdf_renderer
+    - chart_renderer
+    - analytics_engine
+    - queue_scheduler
+    - cron_scheduler
+    - projection_engine
+    - localization_engine
+
+sandboxEgress:
+  description: Gotenberg sandbox network policy.
+  allowedEgress:
+    - dns
+    - postgres-report
+    - vault-agent-report
+    - s3-report
+    - openfga-report
+    - audit-service
+    - kafka-report
+    - temporal-frontend-report
+    - valkey-report
+    - flagsmith-report
+    - gotenberg-report
+  forbiddenEgress:
+    - internet
+    - public_metadata
+
+auditHooks:
+  description: Every auditable action routes through audit-service.
+  values:
+    - REPORT_REQUESTED
+    - REPORT_PREVIEW_RENDERED
+    - REPORT_PREVIEW_APPROVED
+    - REPORT_GENERATION_STARTED
+    - REPORT_COMPLETED
+    - REPORT_FAILED
+    - REPORT_REDACTED
+    - REPORT_DOWNLOADED
+    - REPORT_SIGNED_URL_ISSUED
+    - REPORT_DOWNLOAD_SIGNED
+    - REPORT_PROJECTION_REBUILT
+    - REPORT_DETERMINISTIC_VERSION_PINNED
+    - REPORT_DNA_CONTENT_REJECTED
+    - REPORT_ANALYTICS_PAYLOAD_PII_REJECTED
+
+featureFlagDefaults:
+  - name: report.gotenberg.enabled
+    defaultValue: true
+    owner: reporting
+  - name: report.analyticsProduct.enabled
+    defaultValue: true
+    owner: reporting
+  - name: report.analyticsRawPii.disabled
+    defaultValue: true
+    owner: privacy

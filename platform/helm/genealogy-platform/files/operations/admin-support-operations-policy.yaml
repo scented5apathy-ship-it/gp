@@ -1,0 +1,461 @@
+# E11.5 — Admin / support / operations contract.
+#
+# Source of truth: requirements.md R16, design.md §12 §13, ownership-catalog.md
+# §2.11 + §3, privacy-and-legal-gate.md §9 TM-06 + D-07.
+# Validated by scripts/lint-operations.mjs and enforced by
+# services/operations-service/.../AdminSupportGuard.java.
+#
+# Hard invariants (E11.5 — Admin/support operations):
+#   * JIT support access requires step-up auth + scoped expiry +
+#     banner + audit (R16.3).
+#   * Impersonation is disabled by default and never covers DNA,
+#     raw consent, raw match, raw export, or tenant deletion.
+#   * Tenant ops actions route through audit-service; admin/support
+#     surface is internal-only via BFF / admin shell.
+#   * DLQ replay is gated by an ADR + a check-point snapshot; no
+#     manual flush without snapshot.
+#   * Feature flag override requires reason + owner + audit; cannot
+#     toggle DNA/consent flags.
+#   * Projection rebuild views are sandboxed; cross-tenant rebuilds
+#     forbidden.
+#   * Tenant switch in the same browser session requires re-auth.
+
+policyVersion: 1.0.0
+owner: operations
+scope: operations-service
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R16
+  design: .kiro/specs/genealogy-platform/design.md#12
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#2.11
+  privacy: .kiro/specs/genealogy-platform/privacy-and-legal-gate.md#TM-06
+
+adminRoles:
+  description: Admin / support role taxonomy.
+  values:
+    - PLATFORM_ADMIN
+    - TENANT_ADMIN
+    - SUPPORT_TIER_1
+    - SUPPORT_TIER_2
+    - SUPPORT_TIER_3
+    - SECURITY_ENGINEER
+    - DPO_DELEGATE
+    - FINANCE_OPS
+    - READ_ONLY_AUDITOR
+
+supportAccessModes:
+  description: Support access modes that map to JIT windows.
+  values:
+    - READ_ONLY
+    - WRITE_FIXUP
+    - REPLAY_DLQ
+    - PROJECTION_REBUILD
+    - BILLING_RECONCILE
+    - FEATURE_FLAG_OVERRIDE
+
+adminOperations:
+  description: Closed-set admin / support operations.
+  values:
+    - TENANT_SUSPEND
+    - TENANT_REACTIVATE
+    - TENANT_DELETE_SCHEDULE
+    - TENANT_PURGE
+    - JOB_CANCEL
+    - JOB_RESTART
+    - WORKFLOW_CANCEL
+    - WORKFLOW_RESTART
+    - DLQ_REPLAY
+    - DLQ_PURGE
+    - PROJECTION_REBUILD
+    - FEATURE_FLAG_OVERRIDE_SET
+    - FEATURE_FLAG_OVERRIDE_CLEAR
+    - QUOTA_OVERRIDE_SET
+    - QUOTA_OVERRIDE_CLEAR
+    - PLAN_OVERRIDE_SET
+    - SUPPORT_JIT_GRANT
+    - SUPPORT_JIT_REVOKE
+    - IMPERSONATION_REQUEST
+    - IMPERSONATION_END
+    - AUDIT_EXPORT_ISSUE
+    - CONSENT_AUDIT_VIEW
+    - REPORT_DOWNLOAD_VIEW
+
+impermissibleScopes:
+  description: Scopes that JIT / impersonation MUST NEVER cover, even if
+    the operator explicitly requests them. Enforced by operations-service
+    AND by Kong ABAC at the edge.
+  values:
+    - DNA_RAW_DOWNLOAD
+    - DNA_MATCH_RAW_DOWNLOAD
+    - CONSENT_RAW_DOWNLOAD
+    - EXPORT_RAW_BUNDLE_DOWNLOAD
+    - TENANT_DELETION_FORCE
+    - ADMIN_GRANT_OVERRIDE_SELF
+    - IMPERSONATION_GRANT_OTHER
+
+dlqReplayModes:
+  description: DLQ replay modes supported by operations-service.
+  values:
+    - SINGLE_EVENT
+    - TIME_WINDOW
+    - AGGREGATE_ID
+    - FULL_TOPIC
+
+projectionRebuildSources:
+  description: Projections that the admin rebuild view can target.
+  values:
+    - PERSON_PROJECTION
+    - RELATIONSHIP_PROJECTION
+    - EVENT_PROJECTION
+    - SOURCE_PROJECTION
+    - MEDIA_PROJECTION
+    - CONSENT_PROJECTION
+    - DNA_KIT_PROJECTION
+    - SEARCH_PROJECTION
+    - AUDIT_PROJECTION
+
+featureFlagCategories:
+  description: Feature flag categories; certain categories MUST NEVER be
+    overridden by admin/support regardless of role.
+  values:
+    - COMMS_GENERAL
+    - COMMS_PRIVACY
+    - UI_GENERAL
+    - PERFORMANCE
+    - BILLING
+    - OPS_INTERNAL
+    - DNA_FORBIDDEN
+    - CONSENT_FORBIDDEN
+    - TENANT_ISOLATION_FORBIDDEN
+    - AUDIT_FORBIDDEN
+
+jitAccessStates:
+  description: JIT support access lifecycle.
+  values:
+    - REQUESTED
+    - PENDING_APPROVAL
+    - ACTIVE
+    - EXPIRED
+    - REVOKED
+    - DENIED
+
+operationsAuditEvents:
+  description: Append-only audit events emitted by operations-service.
+  values:
+    - OPERATIONS_TENANT_SUSPENDED
+    - OPERATIONS_TENANT_REACTIVATED
+    - OPERATIONS_TENANT_DELETION_SCHEDULED
+    - OPERATIONS_TENANT_PURGED
+    - OPERATIONS_JIT_REQUESTED
+    - OPERATIONS_JIT_APPROVED
+    - OPERATIONS_JIT_DENIED
+    - OPERATIONS_JIT_ACTIVE
+    - OPERATIONS_JIT_EXPIRED
+    - OPERATIONS_JIT_REVOKED
+    - OPERATIONS_IMPERSONATION_REQUESTED
+    - OPERATIONS_IMPERSONATION_DENIED
+    - OPERATIONS_IMPERSONATION_ENDED
+    - OPERATIONS_DLQ_REPLAY_STARTED
+    - OPERATIONS_DLQ_REPLAY_COMPLETED
+    - OPERATIONS_DLQ_REPLAY_BLOCKED_WITHOUT_SNAPSHOT
+    - OPERATIONS_PROJECTION_REBUILD_STARTED
+    - OPERATIONS_PROJECTION_REBUILD_COMPLETED
+    - OPERATIONS_PROJECTION_REBUILD_CROSS_TENANT_BLOCKED
+    - OPERATIONS_FEATURE_FLAG_OVERRIDE_SET
+    - OPERATIONS_FEATURE_FLAG_OVERRIDE_CLEAR
+    - OPERATIONS_FEATURE_FLAG_FORBIDDEN_CATEGORY_BLOCKED
+    - OPERATIONS_PLAN_OVERRIDE_SET
+    - OPERATIONS_PLAN_OVERRIDE_CLEAR
+    - OPERATIONS_QUOTA_OVERRIDE_SET
+    - OPERATIONS_QUOTA_OVERRIDE_CLEAR
+    - OPERATIONS_AUDIT_EXPORT_ISSUED
+    - OPERATIONS_TENANT_SWITCH_REAUTH_REQUIRED
+
+operationsFailureReasons:
+  description: Closed-set failure reasons for operations.
+  values:
+    - OPERATIONS_JIT_DENIED_BY_POLICY
+    - OPERATIONS_JIT_APPROVAL_TIMEOUT
+    - OPERATIONS_IMPERSONATION_DISABLED
+    - OPERATIONS_IMPERSONATION_FORBIDDEN_SCOPE
+    - OPERATIONS_DLQ_REPLAY_BLOCKED_NO_SNAPSHOT
+    - OPERATIONS_DLQ_REPLAY_FORBIDDEN_TOPIC
+    - OPERATIONS_PROJECTION_REBUILD_CROSS_TENANT_FORBIDDEN
+    - OPERATIONS_FEATURE_FLAG_FORBIDDEN_CATEGORY
+    - OPERATIONS_FEATURE_FLAG_OVERRIDE_REASON_MISSING
+    - OPERATIONS_FEATURE_FLAG_OVERRIDE_OWNER_MISSING
+    - OPERATIONS_PLAN_OVERRIDE_NOT_ALLOWED
+    - OPERATIONS_QUOTA_OVERRIDE_REASON_MISSING
+    - OPERATIONS_TENANT_SWITCH_REAUTH_REQUIRED
+    - OPERATIONS_AUDIT_EXPORT_FORBIDDEN_FIELD
+    - OPERATIONS_TENANT_BOUNDARY_VIOLATION
+
+egressAllowlist:
+  description: Sandbox sidecars that operations-service may reach.
+  values:
+    - postgres-ops
+    - vault-agent-ops
+    - s3-ops
+    - openfga-ops
+    - audit-service
+    - kafka-ops
+    - temporal-frontend-ops
+    - valkey-ops
+    - flagsmith-ops
+    - kafka-ops-dlq
+
+temporalTaskQueues:
+  description: Temporal task queues for the operations worker pool.
+  values:
+    - ops.admin
+    - ops.support
+    - ops.dlqReplay
+    - ops.projectionRebuild
+
+guardRails:
+  jitRequiresStepUpAuth: true
+  jitRequiresScopedExpiry: true
+  jitRequiresBannerVisible: true
+  jitRequiresAuditLogEntry: true
+  impersonationDisabledByDefault: true
+  impersonationNeverCoversDna: true
+  impersonationNeverCoversConsent: true
+  impersonationNeverCoversExportRawBundle: true
+  impersonationNeverCoversTenantDeletion: true
+  impersonationSelfGrantForbidden: true
+  impersonationGrantOtherForbidden: true
+  dlqReplayRequiresSnapshot: true
+  dlqReplaySnapshotMustIncludeLineageHash: true
+  dlqReplayWithoutSnapshotIsBlocked: true
+  projectionRebuildIsTenantScoped: true
+  projectionRebuildCrossTenantForbidden: true
+  featureFlagOverrideRequiresReason: true
+  featureFlagOverrideRequiresOwner: true
+  featureFlagDnaForbidden: true
+  featureFlagConsentForbidden: true
+  featureFlagTenantIsolationForbidden: true
+  featureFlagAuditForbidden: true
+  planOverrideRequiresReason: true
+  quotaOverrideRequiresReason: true
+  tenantSwitchRequiresReauth: true
+  auditExportMUSTRespectRetention: true
+  auditExportMUSTBeSignedUrl: true
+  auditExportMUSTBeOneShot: true
+  tenantOpsMustRouteThroughAudit: true
+  adminSupportSurfaceInternalOnly: true
+  adminSupportSurfaceBannerVisible: true
+
+numericBounds:
+  jitMaxDurationMinutes: 240
+  jitMaxScopeMinutes: 240
+  jitApprovalTimeoutSeconds: 900
+  impersonationMaxDurationSeconds: 0
+  dlqReplayMaxEventsPerRun: 10000
+  dlqReplayMaxWindowHours: 168
+  projectionRebuildMaxRows: 5000000
+  projectionRebuildTimeoutSeconds: 1800
+  featureFlagOverrideMaxTtlSeconds: 86400
+  planOverrideMaxTtlSeconds: 2592000
+  quotaOverrideMaxTtlSeconds: 604800
+  auditExportSignedUrlTtlSeconds: 3600
+  auditExportMaxBytes: 524288000
+  tenantSwitchReauthMaxClockSkewSeconds: 60
+
+invariants:
+  - name: jitApprovalTimeoutShorterThanJitMaxDuration
+    expression: jitApprovalTimeoutSeconds <= jitMaxDurationMinutes * 60
+    why: approval window must close before JIT expires
+  - name: jitMaxScopeDoesNotExceedJitMaxDuration
+    expression: jitMaxScopeMinutes <= jitMaxDurationMinutes
+    why: scope window cannot exceed the duration window
+  - name: impersonationMaxDurationIsZero
+    expression: impersonationMaxDurationSeconds == 0
+    why: impersonation is disabled by default; any non-zero value is a bug
+  - name: auditExportSignedUrlTtlWithinJitScope
+    expression: auditExportSignedUrlTtlSeconds <= jitMaxDurationMinutes * 60
+    why: signed URL cannot outlive the JIT window
+  - name: dlqReplayMaxWindowWithinJitMaxDuration
+    expression: dlqReplayMaxWindowHours * 3600 <= jitMaxDurationMinutes * 60
+    why: DLQ replay window must fit inside a JIT access window
+
+jitAccessStateMatrix:
+  doc: "JIT support access lifecycle."
+  initialStatus: REQUESTED
+  statuses:
+    - status: REQUESTED
+      transitions: [PENDING_APPROVAL, DENIED]
+    - status: PENDING_APPROVAL
+      transitions: [ACTIVE, DENIED]
+    - status: ACTIVE
+      transitions: [EXPIRED, REVOKED]
+    - status: EXPIRED
+      transitions: []
+      terminal: true
+    - status: REVOKED
+      transitions: []
+      terminal: true
+    - status: DENIED
+      transitions: []
+      terminal: true
+
+dlqReplayStateMatrix:
+  doc: "DLQ replay lifecycle."
+  initialStatus: REQUESTED
+  statuses:
+    - status: REQUESTED
+      transitions: [SNAPSHOT_VERIFIED, BLOCKED]
+    - status: SNAPSHOT_VERIFIED
+      transitions: [RUNNING]
+    - status: RUNNING
+      transitions: [COMPLETED, FAILED]
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: BLOCKED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+
+projectionRebuildAdminStateMatrix:
+  doc: "Projection rebuild lifecycle (admin-driven)."
+  initialStatus: REQUESTED
+  statuses:
+    - status: REQUESTED
+      transitions: [APPROVED, BLOCKED]
+    - status: APPROVED
+      transitions: [RUNNING]
+    - status: RUNNING
+      transitions: [COMPLETED, FAILED]
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: BLOCKED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+
+outbox:
+  requiredFields:
+    - eventId
+    - eventType
+    - occurredAt
+    - tenantId
+    - aggregateId
+    - aggregateVersion
+    - traceId
+    - payload
+  envelopeEncryptionRequired: true
+  deadLetterTopic: gp.ops.v1.OperationsFailed
+  primaryTopic: gp.ops.v1.OperationsEvent
+
+forbiddenPayloadKeys:
+  description: Keys that must NEVER appear in any operations payload.
+  values:
+    - rawDna
+    - rawGenotype
+    - rawFastq
+    - rawBam
+    - rawVcf
+    - rawEmail
+    - rawPhone
+    - rawAddress
+    - exifGps
+    - cameraSerial
+    - passportNumber
+    - ssn
+    - productionPii
+    - internalVaultToken
+    - internalSessionCookie
+    - rawConsentReceipt
+    - rawSignatureBlob
+    - rawIdDocument
+    - treeViewerBypass
+    - rawEventPayload
+    - rawAuditStream
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - dnaRawBucketKey
+    - dnaMatchBucketKey
+
+capabilityBoundaries:
+  description: Capabilities the operations-service MUST NOT self-build.
+  values:
+    - crdt_engine
+    - search_engine
+    - queue_scheduler
+    - cron_scheduler
+    - identity_provider
+    - payment_processor
+    - dna_engine
+    - consent_engine
+    - matching_engine
+
+sandboxEgress:
+  description: NetworkPolicy + Istio sidecars.
+  allowedEgress:
+    - dns
+    - postgres-ops
+    - vault-agent-ops
+    - s3-ops
+    - openfga-ops
+    - audit-service
+    - kafka-ops
+    - temporal-frontend-ops
+    - valkey-ops
+    - flagsmith-ops
+    - kafka-ops-dlq
+  forbiddenEgress:
+    - internet
+    - public_metadata
+
+auditHooks:
+  description: Every auditable action routes through audit-service.
+  values:
+    - OPERATIONS_TENANT_SUSPENDED
+    - OPERATIONS_TENANT_REACTIVATED
+    - OPERATIONS_TENANT_DELETION_SCHEDULED
+    - OPERATIONS_TENANT_PURGED
+    - OPERATIONS_JIT_REQUESTED
+    - OPERATIONS_JIT_APPROVED
+    - OPERATIONS_JIT_DENIED
+    - OPERATIONS_JIT_ACTIVE
+    - OPERATIONS_JIT_EXPIRED
+    - OPERATIONS_JIT_REVOKED
+    - OPERATIONS_IMPERSONATION_REQUESTED
+    - OPERATIONS_IMPERSONATION_DENIED
+    - OPERATIONS_IMPERSONATION_ENDED
+    - OPERATIONS_DLQ_REPLAY_STARTED
+    - OPERATIONS_DLQ_REPLAY_COMPLETED
+    - OPERATIONS_DLQ_REPLAY_BLOCKED_WITHOUT_SNAPSHOT
+    - OPERATIONS_PROJECTION_REBUILD_STARTED
+    - OPERATIONS_PROJECTION_REBUILD_COMPLETED
+    - OPERATIONS_PROJECTION_REBUILD_CROSS_TENANT_BLOCKED
+    - OPERATIONS_FEATURE_FLAG_OVERRIDE_SET
+    - OPERATIONS_FEATURE_FLAG_OVERRIDE_CLEAR
+    - OPERATIONS_FEATURE_FLAG_FORBIDDEN_CATEGORY_BLOCKED
+    - OPERATIONS_PLAN_OVERRIDE_SET
+    - OPERATIONS_PLAN_OVERRIDE_CLEAR
+    - OPERATIONS_QUOTA_OVERRIDE_SET
+    - OPERATIONS_QUOTA_OVERRIDE_CLEAR
+    - OPERATIONS_AUDIT_EXPORT_ISSUED
+    - OPERATIONS_TENANT_SWITCH_REAUTH_REQUIRED
+
+featureFlagDefaults:
+  - name: ops.jit.enabled
+    defaultValue: true
+    owner: ops
+  - name: ops.impersonation.enabled
+    defaultValue: false
+    owner: ops
+  - name: ops.impersonation.dnaScope.disabled
+    defaultValue: true
+    owner: privacy
+  - name: ops.impersonation.consentScope.disabled
+    defaultValue: true
+    owner: privacy
+  - name: ops.dlqReplay.snapshotRequired
+    defaultValue: true
+    owner: ops

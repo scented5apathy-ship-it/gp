@@ -1,0 +1,391 @@
+# E11.2 — Privacy-safe delivery contract.
+#
+# Source of truth: requirements.md R14.3, R14.4, R16.3, R16.4, design.md §11,
+# ownership-catalog.md §2.9, privacy-and-legal-gate.md §9 D-05.
+# Validated by scripts/lint-notification-delivery.mjs and enforced by
+# services/notification-service/.../PrivacySafeDeliveryGuard.java.
+#
+# Hard invariants (E11.2 — Privacy-safe delivery):
+#   * Re-check authorization at render and delivery time. ABAC over
+#     privacy level + DNA scope + consent + living status is REQUIRED
+#     for every dispatch decision.
+#   * Generic text MUST be used for sensitive events (DNA, raw match,
+#     consent revoke, legal hold, support JIT, guardian action).
+#   * Unsubscribe + bounce + suppression lists MUST be tenant-scoped.
+#   * Tenant branding is tenant-scoped and MUST include preference
+#     centre URL.
+#   * Third-party provider payload MUST be redacted; sensitive fields
+#     MUST be replaced with opaque-aggregate-id references.
+#   * Unsub MUST be one-click via List-Unsubscribe header AND
+#     List-Unsubscribe-Post (RFC 8058).
+#   * Provider switch requires ADR-E0.5-12 amendment.
+
+policyVersion: 1.0.0
+owner: notifications
+scope: notification-service
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R14.3
+  design: .kiro/specs/genealogy-platform/design.md#11
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#2.9
+  privacy: .kiro/specs/genealogy-platform/privacy-and-legal-gate.md#D-05
+
+sensitiveEventCategories:
+  description: Event categories whose payload MUST be replaced with generic text
+    before being sent to any third-party provider or rendered for an in-app
+    inbox when the recipient is not authorized to see the underlying subject.
+  values:
+    - DNA_KIT_REGISTERED
+    - DNA_MATCH_DISCOVERED
+    - DNA_RELATIVE_DISCOVERY
+    - CONSENT_REVOKED
+    - CONSENT_LEGAL_HOLD
+    - GUARDIAN_ACTION
+    - SUPPORT_JIT_ACCESS
+    - DELETION_REQUESTED
+    - DELETION_COMPLETED
+    - PORTABILITY_EXPORT_READY
+    - IMPERSONATION_STARTED
+    - ADMIN_TENANT_SUSPENDED
+    - TENANT_DELETION_SCHEDULED
+
+genericTextTemplates:
+  description: Canonical generic-text body that replaces sensitive payloads
+    for each sensitive category. Values are message IDs, not literals; the
+    actual template lives in the locale template catalogue.
+  values:
+    - GENERIC_DNA_EVENT
+    - GENERIC_CONSENT_EVENT
+    - GENERIC_GUARDIAN_EVENT
+    - GENERIC_SUPPORT_EVENT
+    - GENERIC_DELETION_EVENT
+    - GENERIC_PORTABILITY_EVENT
+    - GENERIC_IMPERSONATION_EVENT
+    - GENERIC_TENANT_EVENT
+
+reAuthorizationTriggers:
+  description: Server-side triggers that force re-authorization right
+    before render and delivery (per design.md §11.2 ABAC re-check).
+  values:
+    - PRIVACY_LEVEL_CHANGED
+    - LIVING_STATUS_CHANGED
+    - CONSENT_REVOKED
+    - CONSENT_EXPIRED
+    - TENANT_VISIBILITY_CHANGED
+    - RELATIONSHIP_REMOVED
+    - SCOPE_NARROWED
+    - SESSION_PRIVILEGE_DEMOTED
+
+abacDecisionLabels:
+  description: Labels for the ABAC decision log.
+  values:
+    - ALLOW
+    - ALLOW_WITH_GENERIC_TEXT
+    - DENY
+    - DENY_DUE_TO_DNA_SCOPE
+    - DENY_DUE_TO_LIVING_PROTECTION
+    - DENY_DUE_TO_CONSENT_REVOKED
+    - DENY_DUE_TO_SCOPE_NARROWED
+
+bounceReasons:
+  description: Closed-set bounce reasons for the suppression list.
+  values:
+    - BOUNCE_HARD
+    - BOUNCE_SOFT
+    - COMPLAINT
+    - SUPPRESSED_BY_USER
+    - SUPPRESSED_BY_ADMIN
+    - SUPPRESSED_BY_COMPLIANCE
+    - INVALID_ADDRESS
+
+providerHeaders:
+  description: Headers every outbound email MUST set.
+  values:
+    - List-Unsubscribe
+    - List-Unsubscribe-Post
+    - List-Id
+    - X-Entity-Ref-ID
+    - X-Genealogy-Tenant-Pseudo
+    - X-Genealogy-Delivery-Decision
+
+tenantBrandingFields:
+  description: Fields required on every tenant-branded notification.
+  values:
+    - tenantPseudoId
+    - tenantDisplayName
+    - preferenceCenterUrl
+    - contactEmail
+    - logoUrl
+    - colorScheme
+    - footerDisclosure
+    - locale
+
+privacySafeDeliveryAuditEvents:
+  description: Append-only audit events emitted by the privacy-safe
+    delivery pipeline.
+  values:
+    - PRIVACY_DELIVERY_ABAC_ALLOW
+    - PRIVACY_DELIVERY_ABAC_ALLOW_WITH_GENERIC_TEXT
+    - PRIVACY_DELIVERY_ABAC_DENY
+    - PRIVACY_DELIVERY_GENERIC_TEXT_APPLIED
+    - PRIVACY_DELIVERY_BRANDING_VALIDATED
+    - PRIVACY_DELIVERY_BRANDING_INVALID
+    - PRIVACY_DELIVERY_UNSUBSCRIBE_CLICKED
+    - PRIVACY_DELIVERY_BOUNCE_RECORDED
+    - PRIVACY_DELIVERY_COMPLAINT_RECORDED
+    - PRIVACY_DELIVERY_SUPPRESSION_LIST_HIT
+    - PRIVACY_DELIVERY_PROVIDER_SWITCH_BLOCKED_WITHOUT_ADR
+    - PRIVACY_DELIVERY_REAUTHORIZATION_TRIGGERED
+    - PRIVACY_DELIVERY_DNA_PAYLOAD_REDACTED
+    - PRIVACY_DELIVERY_CONSENT_PAYLOAD_REDACTED
+
+privacySafeDeliveryFailureReasons:
+  description: Closed-set failure reasons for the privacy-safe delivery pipeline.
+  values:
+    - PRIVACY_ABAC_DENY_DNA_SCOPE
+    - PRIVACY_ABAC_DENY_LIVING_PROTECTION
+    - PRIVACY_ABAC_DENY_CONSENT_REVOKED
+    - PRIVACY_ABAC_DENY_SCOPE_NARROWED
+    - PRIVACY_GENERIC_TEXT_MISSING
+    - PRIVACY_BRANDING_MISSING
+    - PRIVACY_BRANDING_INVALID
+    - PRIVACY_PROVIDER_SWITCH_BLOCKED
+    - PRIVACY_UNSUBSCRIBE_HEADER_MISSING
+    - PRIVACY_BODY_CONTAINS_FORBIDDEN_KEY
+    - PRIVACY_DEEP_LINK_TOKEN_EXPIRED
+    - PRIVACY_DEEP_LINK_TOKEN_REUSED
+    - PRIVACY_PII_MINIMIZATION_VIOLATED
+
+egressAllowlist:
+  description: Sandbox sidecars that the privacy-safe delivery pipeline may reach.
+  values:
+    - postgres-notify
+    - vault-agent-notify
+    - s3-notify
+    - openfga-notify
+    - audit-service
+    - kafka-notify
+    - temporal-frontend-notify
+    - valkey-notify
+    - flagsmith-notify
+
+temporalTaskQueues:
+  description: Temporal task queues for the privacy-safe delivery pipeline.
+  values:
+    - notify.dispatch
+    - notify.provider
+    - notify.digest
+    - notify.inbox
+    - notify.privacy
+
+guardRails:
+  abacRecheckAtRender: true
+  abacRecheckAtDelivery: true
+  genericTextRequiredForSensitiveEvents: true
+  rawDnaForbiddenInThirdPartyProviderPayload: true
+  rawPersonPayloadForbiddenInThirdPartyProviderPayload: true
+  deepLinkTokenMustBeSingleUse: true
+  deepLinkTokenMustBeShortLived: true
+  unsubscribeMustBeOneClick: true
+  unsubscribeMustBeListUnsubscribeHeader: true
+  unsubscribeMustBeListUnsubscribePostRfc8058: true
+  preferenceCentreUrlMustBeHttps: true
+  preferenceCentreUrlMustBeTenantBranded: true
+  bounceListIsTenantScoped: true
+  suppressionListIsTenantScoped: true
+  complaintListIsTenantScoped: true
+  tenantBrandingIsTenantScoped: true
+  globalBrandingForbidden: true
+  providerSwitchRequiresAdr: true
+  reAuthorizationTriggersMustBeEvaluated: true
+  authorizationRecheckMustBeLogged: true
+  abacDecisionMustBeAuditLogged: true
+  # Strict mode for sensitive categories — payload is opaque-aggregate-id only.
+  dnaCategoryOpaquePayloadOnly: true
+  consentCategoryOpaquePayloadOnly: true
+  guardianCategoryOpaquePayloadOnly: true
+  deletionCategoryOpaquePayloadOnly: true
+  # Cross-tenant.
+  crossTenantBrandingForbidden: true
+  crossTenantSuppressionForbidden: true
+  # Outbound content safety.
+  outboundAttachmentForbidden: true
+  outboundInlineImageRequiresSignedUrl: true
+  # Locale.
+  localeFallbackMustBeTenantDefault: true
+  localeFallbackMustBeApprovedLocale: true
+
+numericBounds:
+  deepLinkTokenTtlSeconds: 3600
+  unsubscribeClickTokenTtlSeconds: 86400
+  bounceRetentionDays: 30
+  complaintRetentionDays: 365
+  suppressionRetentionDays: 365
+  brandingRefreshIntervalSeconds: 3600
+  abacRecheckTimeoutMs: 250
+  providerSendTimeoutSeconds: 30
+  genericTextMaxBytes: 4096
+  deepLinkTokenMaxBytes: 512
+  abacDecisionCacheTtlSeconds: 60
+  privacyPayloadRedactionTimeoutMs: 100
+  outboundBodyMaxBytes: 65536
+
+invariants:
+  - name: deepLinkTokenTtlMatchesClickTokenTtlFloor
+    expression: unsubscribeClickTokenTtlSeconds >= deepLinkTokenTtlSeconds
+    why: unsubscribe click token must live at least as long as the deep link it covers
+  - name: abacRecheckTimeoutFasterThanProviderSendTimeout
+    expression: abacRecheckTimeoutMs <= providerSendTimeoutSeconds * 1000
+    why: ABAC re-check must complete before provider send
+  - name: genericTextMaxBytesFitsWithinOutboundBody
+    expression: genericTextMaxBytes <= outboundBodyMaxBytes
+    why: generic-text replacement must fit the same envelope
+  - name: abacDecisionCacheTtlBelowDeepLinkTokenTtl
+    expression: abacDecisionCacheTtlSeconds * 1000 <= deepLinkTokenTtlSeconds * 1000
+    why: ABAC cache cannot outlive the token it covers
+  - name: privacyPayloadRedactionTimeoutFastestStage
+    expression: privacyPayloadRedactionTimeoutMs <= abacRecheckTimeoutMs
+    why: redaction must complete before re-check
+
+privacySafeDeliveryStateMatrix:
+  doc: "Privacy-sensitive notification lifecycle — every status reachable from ENQUEUED unless terminal."
+  initialStatus: ENQUEUED
+  statuses:
+    - status: ENQUEUED
+      transitions: [ABAC_RECHECKED_ALLOW, ABAC_RECHECKED_ALLOW_WITH_GENERIC_TEXT, ABAC_RECHECKED_DENY]
+    - status: ABAC_RECHECKED_ALLOW
+      transitions: [RENDERED]
+    - status: ABAC_RECHECKED_ALLOW_WITH_GENERIC_TEXT
+      transitions: [RENDERED]
+    - status: ABAC_RECHECKED_DENY
+      transitions: []
+      terminal: true
+    - status: RENDERED
+      transitions: [DELIVERED, SUPPRESSED, FAILED]
+    - status: DELIVERED
+      transitions: [UNSUBSCRIBED, SUPPRESSED]
+    - status: SUPPRESSED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: UNSUBSCRIBED
+      transitions: []
+      terminal: true
+
+bounceSuppressionStateMatrix:
+  doc: "Bounce/suppression list state per address."
+  initialStatus: ACTIVE
+  statuses:
+    - status: ACTIVE
+      transitions: [SUPPRESSED_SOFT, SUPPRESSED_HARD, COMPLAINT_HOLD]
+    - status: SUPPRESSED_SOFT
+      transitions: [ACTIVE, SUPPRESSED_HARD]
+    - status: SUPPRESSED_HARD
+      transitions: [EXPIRED]
+    - status: COMPLAINT_HOLD
+      transitions: [EXPIRED]
+    - status: EXPIRED
+      transitions: []
+      terminal: true
+
+outbox:
+  requiredFields:
+    - eventId
+    - eventType
+    - occurredAt
+    - tenantId
+    - aggregateId
+    - aggregateVersion
+    - traceId
+    - payload
+  envelopeEncryptionRequired: true
+  deadLetterTopic: gp.notify.v1.NotificationFailed
+  primaryTopic: gp.notify.v1.NotificationDispatched
+
+forbiddenPayloadKeys:
+  description: Keys that must NEVER appear in any privacy-safe delivery payload.
+  values:
+    - rawDna
+    - rawGenotype
+    - rawFastq
+    - rawBam
+    - rawVcf
+    - rawEmail
+    - rawPhone
+    - rawAddress
+    - exifGps
+    - cameraSerial
+    - passportNumber
+    - ssn
+    - productionPii
+    - internalVaultToken
+    - internalSessionCookie
+    - rawConsentReceipt
+    - rawSignatureBlob
+    - rawIdDocument
+    - treeViewerBypass
+    - rawEventPayload
+    - rawAuditStream
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - dnaRawBucketKey
+    - dnaMatchBucketKey
+    - rawGuardianReason
+    - rawSupportReason
+    - rawDeletionReason
+
+capabilityBoundaries:
+  description: Capabilities the privacy-safe delivery pipeline MUST NOT self-build.
+  values:
+    - email_delivery_engine
+    - smtp_server
+    - abac_engine
+    - consent_engine
+    - spam_scanner
+    - bounce_processor
+    - template_compiler
+    - token_mint_service
+
+sandboxEgress:
+  description: NetworkPolicy + Istio sidecars.
+  allowedEgress:
+    - dns
+    - postgres-notify
+    - vault-agent-notify
+    - s3-notify
+    - openfga-notify
+    - audit-service
+    - kafka-notify
+    - temporal-frontend-notify
+    - valkey-notify
+    - flagsmith-notify
+  forbiddenEgress:
+    - internet
+    - public_metadata
+
+auditHooks:
+  description: Every auditable action routes through audit-service.
+  values:
+    - PRIVACY_DELIVERY_ABAC_ALLOW
+    - PRIVACY_DELIVERY_ABAC_ALLOW_WITH_GENERIC_TEXT
+    - PRIVACY_DELIVERY_ABAC_DENY
+    - PRIVACY_DELIVERY_GENERIC_TEXT_APPLIED
+    - PRIVACY_DELIVERY_BRANDING_VALIDATED
+    - PRIVACY_DELIVERY_BRANDING_INVALID
+    - PRIVACY_DELIVERY_UNSUBSCRIBE_CLICKED
+    - PRIVACY_DELIVERY_BOUNCE_RECORDED
+    - PRIVACY_DELIVERY_COMPLAINT_RECORDED
+    - PRIVACY_DELIVERY_SUPPRESSION_LIST_HIT
+    - PRIVACY_DELIVERY_PROVIDER_SWITCH_BLOCKED_WITHOUT_ADR
+    - PRIVACY_DELIVERY_REAUTHORIZATION_TRIGGERED
+    - PRIVACY_DELIVERY_DNA_PAYLOAD_REDACTED
+    - PRIVACY_DELIVERY_CONSENT_PAYLOAD_REDACTED
+
+featureFlagDefaults:
+  - name: comms.privacySafeDelivery.enabled
+    defaultValue: true
+    owner: privacy
+  - name: comms.genericText.required
+    defaultValue: true
+    owner: privacy

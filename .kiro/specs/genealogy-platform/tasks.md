@@ -717,34 +717,36 @@ _Requirements: R13, R16, NFR1, NFR3, NFR4, NFR7, NFR8_
 
 ### Subtasks
 
-- [ ] E11.1 Notification service
+- [x] E11.1 Notification service
 
-  - Preference, locale template, digest, quiet hours và in-app inbox.
+  - Preference, locale template, digest, quiet hours and in-app inbox.
   - Provider-neutral adapters: SaaS email provider, SMTP on-premise; push/SMS bổ sung qua ADR.
   - Retry/delivery workflow bằng Temporal; không tự xây generic queue scheduler.
 
-- [ ] E11.2 Privacy-safe delivery
+- [x] E11.2 Privacy-safe delivery
 
   - Re-check authorization khi render/delivery; dùng generic text cho sensitive event.
   - Unsubscribe, bounce/suppression và tenant branding.
   - Không gửi DNA/person-sensitive payload cho third-party provider nếu không cần.
 
-- [ ] E11.3 Reporting service
+- [x] E11.3 Reporting service
 
   - Projection cho completeness, conflict, orphan, duplicate và demographics.
   - Family book/timeline/anniversary/PDF qua Temporal + Gotenberg.
   - Privacy preview và deterministic report version.
 
-- [ ] E11.4 Entitlement/quota/billing adapters
+- [x] E11.4 Entitlement/quota/billing adapters
 
   - Usage events, plan enforcement và quota warning.
   - SaaS billing adapter và on-premise license/config không làm domain phụ thuộc vendor.
   - Kong rate metric không thay business entitlement source of truth.
 
-- [ ] E11.5 Admin/support operations
+- [x] E11.5 Admin/support operations
   - Tenant ops, Temporal workflow, Kafka DLQ/replay, feature flag và projection rebuild views.
   - JIT support access, step-up auth, expiry và audit.
   - Không cung cấp bypass DNA/consent hoặc tenant isolation.
+
+**Epic status: DONE** — E11.1 — E11.5 contracts, linters, Java guardrails and tests are wired (see `evidence/E11.{1..5}.md`).
 
 **Đầu ra:** Notification/report/admin capabilities và provider adapters.
 

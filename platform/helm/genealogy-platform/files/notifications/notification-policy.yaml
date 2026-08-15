@@ -1,0 +1,382 @@
+# E11.1 — Notification policy contract.
+#
+# Source of truth: requirements.md R14, design.md §11, ownership-catalog.md §2.9.
+# Validated by scripts/lint-notifications.mjs and enforced at runtime by
+# services/notification-service/.../NotificationGuard.java.
+#
+# Hard invariants (E11.1 — Notification service):
+#   * preferenceState ∈ {OPT_IN, OPT_OUT, QUIET, REQUIRED}; default OPT_IN
+#     for transactional notifications, OPT_OUT for marketing.
+#   * channelTypes ∈ {IN_APP, EMAIL, PUSH, SMS}; SMS only via ADR.
+#   * localeTemplates MUST declare version + bcp47 tag + body + subject.
+#   * quietHours MUST be expressed in IANA timezone, never local clock.
+#   * digestCadence ∈ {REAL_TIME, HOURLY, DAILY, WEEKLY}; never custom cron
+#     outside the enum (cron is platform-owned per ADR-E0.5-08).
+#   * provider adapter must be ADR-E0.5-12 (SES/SendGrid SaaS, SMTP on-prem);
+#     self-built SMTP is FORBIDDEN.
+#   * retry/backoff MUST be Temporal activity retry policy — never
+#     custom queue scheduler per design.md §11.
+#   * inAppInbox MUST support read/unread + acknowledgement state for
+#     compliance-critical events.
+#   * tenantBranding MUST be tenant-scoped and never global.
+
+policyVersion: 1.0.0
+owner: notifications
+scope: notification-service
+sourceOfTruth:
+  requirements: .kiro/specs/genealogy-platform/requirements.md#R14
+  design: .kiro/specs/genealogy-platform/design.md#11
+  ownership: .kiro/specs/genealogy-platform/ownership-catalog.md#2.9
+  adr: .kiro/specs/genealogy-platform/architecture-decisions.md#12
+
+preferenceStates:
+  description: Per-user preference state for a (category, channel) pair.
+  values:
+    - OPT_IN
+    - OPT_OUT
+    - QUIET
+    - REQUIRED
+
+channelTypes:
+  description: Delivery channels supported by notification-service.
+  values:
+    - IN_APP
+    - EMAIL
+    - PUSH
+    - SMS
+
+notificationCategories:
+  description: Top-level notification categories that drive policy + UI grouping.
+  values:
+    - TRANSACTIONAL_SECURITY
+    - TRANSACTIONAL_PROPOSAL
+    - TRANSACTIONAL_MENTION
+    - TRANSACTIONAL_DNA
+    - TRANSACTIONAL_CONSENT
+    - TRANSACTIONAL_IMPORT
+    - DIGEST_ACTIVITY
+    - DIGEST_ANNIVERSARY
+    - MARKETING
+
+digestCadences:
+  description: How a digest rolls up lower-priority events for a user.
+  values:
+    - REAL_TIME
+    - HOURLY
+    - DAILY
+    - WEEKLY
+
+inAppInboxStates:
+  description: Inbox message lifecycle states; REQUIRED for compliance events.
+  values:
+    - UNREAD
+    - READ
+    - ACKNOWLEDGED
+    - ARCHIVED
+    - EXPIRED
+
+notificationLocales:
+  description: BCP-47 tags supported out of the box.
+  values:
+    - en-US
+    - en-GB
+    - vi-VN
+    - fr-FR
+    - de-DE
+    - es-ES
+    - ja-JP
+    - ar-SA
+    - he-IL
+
+templateRoles:
+  description: Roles that may publish or modify locale templates.
+  values:
+    - TENANT_ADMIN
+    - PLATFORM_ADMIN
+    - COMMS_EDITOR
+    - COMMS_VIEWER
+
+notificationAuditEvents:
+  description: Append-only audit events emitted by notification-service.
+  values:
+    - NOTIFICATION_PREFERENCE_UPDATED
+    - NOTIFICATION_PREFERENCE_OPT_OUT
+    - NOTIFICATION_DISPATCH_DECISION
+    - NOTIFICATION_DISPATCHED
+    - NOTIFICATION_DELIVERED
+    - NOTIFICATION_OPENED
+    - NOTIFICATION_FAILED
+    - NOTIFICATION_BOUNCED
+    - NOTIFICATION_SUPPRESSED_QUIET_HOURS
+    - NOTIFICATION_SUPPRESSED_OPT_OUT
+    - NOTIFICATION_SUPPRESSED_BRANDING_INVALID
+    - NOTIFICATION_TEMPLATE_RENDERED
+    - NOTIFICATION_ACKNOWLEDGED
+    - NOTIFICATION_SUBSCRIPTION_UNSUBSCRIBED
+
+notificationFailureReasons:
+  description: Closed-set failure reasons for the dispatch decision log.
+  values:
+    - NOTIFICATION_PREFERENCE_OPTED_OUT
+    - NOTIFICATION_CHANNEL_DISABLED_BY_TENANT
+    - NOTIFICATION_QUIET_HOURS_ACTIVE
+    - NOTIFICATION_LOCALE_MISSING
+    - NOTIFICATION_TEMPLATE_VERSION_STALE
+    - NOTIFICATION_TEMPLATE_RENDER_FAILED
+    - NOTIFICATION_BRANDING_MISSING
+    - NOTIFICATION_BRANDING_INVALID
+    - NOTIFICATION_PAYLOAD_TOO_LARGE
+    - NOTIFICATION_PAYLOAD_FORBIDDEN_KEY
+    - NOTIFICATION_PROVIDER_RATE_LIMITED
+    - NOTIFICATION_PROVIDER_AUTH_FAILED
+    - NOTIFICATION_PROVIDER_TRANSIENT
+
+egressAllowlist:
+  description: Sandbox sidecars that notification-service may reach.
+  values:
+    - postgres-notify
+    - vault-agent-notify
+    - s3-notify
+    - openfga-notify
+    - audit-service
+    - kafka-notify
+    - temporal-frontend-notify
+    - valkey-notify
+    - flagsmith-notify
+
+providerAdapters:
+  description: ADR-E0.5-12 sanctioned delivery adapters.
+  values:
+    - SES_ADAPTER
+    - SENDGRID_ADAPTER
+    - SMTP_RELAY_ADAPTER
+    - FCM_PUSH_ADAPTER
+    - APNS_PUSH_ADAPTER
+    - SMS_ADAPTER_SCAFFOLD
+
+temporalTaskQueues:
+  description: Temporal task queues for the notification worker pool.
+  values:
+    - notify.dispatch
+    - notify.provider
+    - notify.digest
+    - notify.inbox
+
+guardRails:
+  # Provider / channel rules.
+  smsAdapterRequiresAdr: true
+  pushAdapterOptInOnly: true
+  marketingChannelRequiresDoubleOptIn: true
+  transactionalSecurityCategoryBypassQuietHours: true
+  transactionalDnaCategoryRequiresConsentReauthAtRender: true
+  transactionalConsentCategoryRequiresConsentStateEffective: true
+  transactionalImportCategoryRequiresStepUpAuthOnDownload: true
+  # Template rules.
+  localeTemplatesMustBeVersioned: true
+  localeTemplatesMustDeclareBcp47: true
+  templateRenderIsDeterministicPerVersion: true
+  templateVersionBumpRequiresApproval: true
+  # Branding.
+  tenantBrandingIsTenantScoped: true
+  globalBrandingForbidden: true
+  brandingMustIncludeHrefToPreferenceCenter: true
+  # Retry / queue rules.
+  retryBackoffOwnedByTemporalActivity: true
+  selfBuiltRetrySchedulerForbidden: true
+  selfBuiltSmtpServerForbidden: true
+  # Inbox.
+  inAppInboxAcknowledgementRequiredFor:
+    - TRANSACTIONAL_SECURITY
+    - TRANSACTIONAL_DNA
+    - TRANSACTIONAL_CONSENT
+    - TRANSACTIONAL_IMPORT
+  inAppInboxExpiryDaysByCategory:
+    TRANSACTIONAL_SECURITY: 0
+    TRANSACTIONAL_DNA: 0
+    TRANSACTIONAL_CONSENT: 0
+    TRANSACTIONAL_IMPORT: 0
+    DIGEST_ACTIVITY: 90
+    DIGEST_ANNIVERSARY: 30
+    MARKETING: 14
+  # Tenant isolation.
+  crossTenantPreferenceLookupForbidden: true
+  crossTenantTemplateLookupForbidden: true
+  crossTenantInboxLookupForbidden: true
+  # Quiet hours.
+  quietHoursTimezoneMustBeIana: true
+  quietHoursLocalClockForbidden: true
+  # Suppression list.
+  bounceListIsTenantScoped: true
+  suppressionListIsTenantScoped: true
+  globalSuppressionListIsOptInOnly: true
+
+numericBounds:
+  templateMaxBytes: 65536
+  digestMaxRecipientsPerRun: 1000
+  inAppInboxMaxPerUser: 500
+  preferenceUpdateMaxPerRequest: 16
+  renderTimeoutMs: 250
+  providerSendTimeoutSeconds: 30
+  retryPolicyMaxAttempts: 8
+  retryPolicyInitialBackoffSeconds: 30
+  retryPolicyMaxBackoffSeconds: 1800
+  rateLimitPerUserPerMinute: 60
+  rateLimitPerTenantPerMinute: 10000
+  quietHoursDefaultMinutes: 480
+  localeTemplateMaxVersionsRetained: 50
+  inboxAcknowledgementSlaHours: 168
+  deliveryWebhookSignatureMaxClockSkewSeconds: 300
+
+invariants:
+  - name: acknowledgementSlaIsUpperBoundForInboxExpiry
+    expression: inboxAcknowledgementSlaHours * 3600 >= max(inAppInboxExpiryDaysByCategory.values()) * 86400
+    why: compliance category cannot expire before the acknowledgement window closes
+  - name: rateLimitPerUserIsBelowRateLimitPerTenant
+    expression: rateLimitPerUserPerMinute <= rateLimitPerTenantPerMinute
+    why: per-user guard always ≤ per-tenant guard
+  - name: retryPolicyMaxAttemptsMatchesProviderSendTimeout
+    expression: retryPolicyMaxAttempts * providerSendTimeoutSeconds <= 86400
+    why: worst case total retry budget fits within one day
+  - name: renderTimeoutIsFasterThanProviderSendTimeout
+    expression: renderTimeoutMs <= providerSendTimeoutSeconds * 1000
+    why: rendering must complete before provider send
+
+notificationDispatchStateMatrix:
+  doc: "Notification dispatch lifecycle — every status reachable from PENDING unless terminal."
+  initialStatus: PENDING
+  statuses:
+    - status: PENDING
+      transitions: [RENDERED, SUPPRESSED, FAILED]
+    - status: RENDERED
+      transitions: [DISPATCHED, FAILED]
+    - status: DISPATCHED
+      transitions: [DELIVERED, FAILED]
+    - status: DELIVERED
+      transitions: [ACKNOWLEDGED, EXPIRED]
+    - status: SUPPRESSED
+      transitions: [EXPIRED]
+    - status: FAILED
+      transitions: [PENDING]
+    - status: ACKNOWLEDGED
+      transitions: []
+      terminal: true
+    - status: EXPIRED
+      transitions: []
+      terminal: true
+
+notificationPreferenceStateMatrix:
+  doc: "Preference lifecycle — every status reachable from OPT_IN unless terminal."
+  initialStatus: OPT_IN
+  statuses:
+    - status: OPT_IN
+      transitions: [OPT_OUT, QUIET, REQUIRED]
+    - status: OPT_OUT
+      transitions: [OPT_IN, REQUIRED]
+    - status: QUIET
+      transitions: [OPT_IN, REQUIRED]
+    - status: REQUIRED
+      transitions: [OPT_IN, OPT_OUT]
+
+outbox:
+  requiredFields:
+    - eventId
+    - eventType
+    - occurredAt
+    - tenantId
+    - aggregateId
+    - aggregateVersion
+    - traceId
+    - payload
+  envelopeEncryptionRequired: true
+  deadLetterTopic: gp.notify.v1.NotificationFailed
+  primaryTopic: gp.notify.v1.NotificationDispatched
+
+forbiddenPayloadKeys:
+  description: Keys that must NEVER appear in any notification payload sent
+    to a third-party provider or rendered for in-app inbox.
+  values:
+    - rawDna
+    - rawGenotype
+    - rawFastq
+    - rawBam
+    - rawVcf
+    - rawEmail
+    - rawPhone
+    - rawAddress
+    - exifGps
+    - cameraSerial
+    - passportNumber
+    - ssn
+    - productionPii
+    - internalVaultToken
+    - internalSessionCookie
+    - rawConsentReceipt
+    - rawSignatureBlob
+    - rawIdDocument
+    - treeViewerBypass
+    - rawEventPayload
+    - rawAuditStream
+    - rawWebhookSecret
+    - rawProviderApiKey
+    - dnaRawBucketKey
+    - dnaMatchBucketKey
+
+capabilityBoundaries:
+  description: Capabilities the service MUST NOT self-build; platform owns these.
+  values:
+    - email_delivery_engine
+    - smtp_server
+    - push_notification_gateway
+    - sms_gateway
+    - cron_scheduler
+    - queue_scheduler
+    - bounce_processor
+    - spam_scanner
+    - localization_engine
+    - template_compiler
+
+sandboxEgress:
+  description: NetworkPolicy + Istio sidecars.
+  allowedEgress:
+    - dns
+    - postgres-notify
+    - vault-agent-notify
+    - s3-notify
+    - openfga-notify
+    - audit-service
+    - kafka-notify
+    - temporal-frontend-notify
+    - valkey-notify
+    - flagsmith-notify
+  forbiddenEgress:
+    - internet
+    - public_metadata
+
+auditHooks:
+  description: Every auditable action routes through audit-service.
+  values:
+    - NOTIFICATION_PREFERENCE_UPDATED
+    - NOTIFICATION_PREFERENCE_OPT_OUT
+    - NOTIFICATION_DISPATCH_DECISION
+    - NOTIFICATION_DISPATCHED
+    - NOTIFICATION_DELIVERED
+    - NOTIFICATION_OPENED
+    - NOTIFICATION_FAILED
+    - NOTIFICATION_BOUNCED
+    - NOTIFICATION_SUPPRESSED_QUIET_HOURS
+    - NOTIFICATION_SUPPRESSED_OPT_OUT
+    - NOTIFICATION_SUPPRESSED_BRANDING_INVALID
+    - NOTIFICATION_TEMPLATE_RENDERED
+    - NOTIFICATION_ACKNOWLEDGED
+    - NOTIFICATION_SUBSCRIPTION_UNSUBSCRIBED
+
+featureFlagDefaults:
+  - name: comms.sms.enabled
+    defaultValue: false
+    owner: platform
+  - name: comms.push.enabled
+    defaultValue: false
+    owner: platform
+  - name: comms.marketing.enabled
+    defaultValue: false
+    owner: comms

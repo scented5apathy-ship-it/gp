@@ -47,6 +47,7 @@ include(
     ":services:dna-service",
     ":services:notification-service",
     ":services:reporting-service",
+    ":services:operations-service",
     ":services:audit-service",
     // infrastructure workers
     ":workers:media-worker",

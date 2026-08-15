@@ -1,12 +1,19 @@
 /*
- * Skeleton for `notification-service`. Implementation lands in later
- * epics (E3.x for tenant, E4.x for genealogy, E5.x for sharing/DNA,
- * etc.). E1.1 only wires the Gradle module so the monorepo build,
- * lockfile and CI smoke run end-to-end.
+ * `notification-service` Gradle module. E1.1 wires the skeleton so
+ * the monorepo build, lockfile and CI smoke run end-to-end. E11.1 +
+ * E11.2 add the dispatch + privacy-safe-delivery contract-side
+ * guardrails (`NotificationGuard`, `PrivacySafeDeliveryGuard`) plus
+ * the shared `E11Limits` + `E11ForbiddenPayloadKeys` catalogues.
+ *
+ * Per ADR-E0.5-01 the module inherits the Java 21 toolchain through
+ * the convention script and is locked to keep the build reproducible.
  */
 plugins {
     java
 }
+
+apply(from = "$rootDir/gradle/conventions/java-conventions.gradle.kts")
+apply(from = "$rootDir/gradle/conventions/service-conventions.gradle.kts")
 
 dependencyLocking {
     lockAllConfigurations()
