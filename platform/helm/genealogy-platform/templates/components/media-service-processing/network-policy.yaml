@@ -1,0 +1,157 @@
+{{/*
+media processing service NetworkPolicy (E7.3).
+
+Default-deny ingress + egress. Allowed egress is the
+strict E7.3 sandbox allowlist:
+
+  - apicurio (schema registry; per E2.3)
+  - vault-agent (sidecar that injects the
+    ExternalSecret resolved values; per E2.6)
+  - image-optimizer (libvips worker peer; E7.3)
+  - document-renderer (Gotenberg worker peer; E7.3)
+  - video-encoder (FFmpeg worker peer; E7.3)
+  - ocr-worker (Tesseract worker peer; E7.3)
+
+Plus DNS (kube-dns) and Istio mesh sidecar. The libvips /
+Gotenberg / FFmpeg / Tesseract workers run as separate
+pods inside the same namespace; the
+`media-service-processing` pod calls them over the in-mesh
+service mesh, never over the public internet. Per
+`design.md` §11 (Binary parser không truy cập Internet,
+chạy non-root, read-only filesystem và resource quota).
+
+Allowed ingress: the same-namespace Istio sidecar plus the
+in-mesh service mesh (the
+`gp-services:media-service-processing` peer).
+
+Per `agent-execution.md` §4.4 this template MUST NOT add
+an Istio AuthorizationPolicy; domain authorization lives in
+the application.
+*/}}
+{{- $svc := .Values.services.mediaProcessing }}
+{{- if $svc.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-service-processing
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service-processing
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: media-service-processing
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Apicurio schema registry (E2.3)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: apicurio
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Vault agent sidecar (E2.6)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+    # Image optimizer (libvips; E7.3)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: image-optimizer
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Document renderer (Gotenberg; E7.3)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: document-renderer
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Video encoder (FFmpeg; E7.3)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: video-encoder
+      ports:
+        - protocol: TCP
+          port: 8080
+    # OCR worker (Tesseract; E7.3)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: ocr-worker
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Postgres + Kafka in the data namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 9092
+{{- end }}

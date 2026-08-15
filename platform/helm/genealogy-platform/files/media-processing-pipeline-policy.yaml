@@ -1,0 +1,512 @@
+# contracts/media — Media processing pipeline policy (E7.3).
+#
+# Source of truth for the media-service processing pipeline
+# that runs AFTER the E7.2 malware/metadata pipeline has
+# finalized an asset into `READY` (see
+# `contracts/media/malware-metadata-pipeline-policy.yaml`).
+# The processing pipeline is driven by a Temporal workflow
+# per `design.md` §11 + §8.2 (worker kiểm MIME, malware,
+# metadata; tạo variant/OCR/transcode) and §13 (Temporal
+# cung cấp progress qua workflow query/signal, heartbeat,
+# cancellation và retry; output dùng deterministic/idempotent
+# object key; Binary parser không truy cập Internet, chạy
+# non-root, read-only filesystem và resource quota). The
+# Temporal worker turns a `READY` asset into one of the four
+# processing tasks required by `requirements.md` R9.3:
+#
+#   - IMAGE_TRANSCODE (libvips; ImageMagick fallback per
+#     `imageMagickFallbackPolicy`)
+#   - DOCUMENT_RENDER (Gotenberg / Chromium)
+#   - VIDEO_TRANSCODE (FFmpeg)
+#   - TEXT_OCR (Tesseract; OCR language packs per
+#     `requirements.md` R9.3)
+#
+# The processing pipeline output keys are versioned
+# (`media/<tenant>/<asset>/v<engine-version>/<task>/`) so a
+# libvips / FFmpeg / Tesseract / Gotenberg bump produces a
+# new derived artefact without overwriting historical ones.
+#
+# This contract does NOT re-implement libvips / ImageMagick /
+# FFmpeg / Tesseract / Gotenberg. It delegates to the
+# platform component binaries per `design.md` §1 / §11 +
+# ADR-E0.5-08 (Avro + Apicurio + BACKWARD evolution of
+# closed-set vocabularies). The Temporal activity that calls
+# into those components lives in the `worker` subproject;
+# this contract only pins the closed-set policy that the
+# activity MUST honour.
+#
+# The Java executor lives under
+# `services/media-service/src/main/java/com/genealogy/platform/services/media/processing/`
+# (ProcessingTask + ProcessingEngine + ProcessingOutcome +
+# ProcessingFailureReason + DerivedAssetFormat + OcrLanguage
+# + OcrOutputMode + ImagePreset + VideoPreset + ValidationCheck
+# + DerivedAssetStatus + ImageTranscodeRequest / Result +
+# DocumentRenderRequest / Result + VideoTranscodeRequest /
+# Result + OcrRequest / Result + ValidationReport +
+# DerivedAssetDecision + LibvipsOptimizerPort +
+# GotenbergRendererPort + FfmpegEncoderPort + TesseractOcrPort
+# + MediaProcessingPipeline + DerivedAssetIntegrityException).
+# The Flyway migration + S3 / MinIO adapter + Kafka producer
+# / consumer + Temporal workflow + libvips / FFmpeg /
+# Tesseract / Gotenberg HTTP clients land in the later
+# E7.x / E11.x sub-epics; this contract pins the closed-set
+# vocabulary the executor enforces so those adapters cannot
+# silently weaken the policy.
+#
+# The chart mirror (byte-identical) lives at
+# `platform/helm/genealogy-platform/files/media-processing-pipeline-policy.yaml`
+# and is enforced by
+# `scripts/lint-media-processing-pipeline.mjs`.
+#
+# Hard invariants carried from E7.2:
+#   - processingInputs=[READY]: the processing pipeline
+#     refuses anything other than a `READY` asset.
+#   - processingTerminal=[DERIVED_READY, FAILED,
+#     QUARANTINED_RETAIN]: terminal states MUST be empty in
+#     the status matrix; the only exit is the E7.4
+#     protected-delivery contract.
+#   - linkablePipelineStatuses=[READY] is still the gate from
+#     E7.2; `DERIVED_READY` is downstream-linkable, but a
+#     raw `READY` asset without derived artefacts is NOT
+#     linkable to a thumbnail / OCR / fulltext / search /
+#     tree-attachment slot.
+#   - validationCheckResults=[PASS, WARN, FAIL, SKIPPED];
+#     `FAIL` MUST NEVER transition to `DERIVED_READY`.
+#   - The Temporal activity MUST heartbeat every 30 s with
+#     multiplier 6 (180 s baseline); the linter enforces
+#     every activity timeout > 180 s.
+#   - sandboxEgressAllowlist extends the E7.2 allowlist with
+#     the four image-optimizer / document-renderer /
+#     video-encoder / ocr-worker mesh peers.
+#   - DNA bucket shield (`PIPELINE_DNA_OBJECT_REJECTED`) is
+#     still enforced; the full DNA bucket prefix enforcement
+#     lands in E7.4.
+#
+# Closed-set vocabulary:
+#   - processingTasks: IMAGE_TRANSCODE / DOCUMENT_RENDER /
+#                      VIDEO_TRANSCODE / TEXT_OCR
+#   - processingEngines: LIBVIPS / IMAGEMAGICK / FFMPEG /
+#                        TESSERACT / GOTENBERG / FALLBACK_NONE
+#   - processingOutcomes: SUCCESS / PARTIAL /
+#                         PROCESS_TIMEOUT / PROCESS_ERROR /
+#                         UNSUPPORTED_FORMAT / SANDBOX_DENIED /
+#                         OUTPUT_KEY_COLLISION /
+#                         VALIDATION_FAILED
+#   - processingFailureReasons: PROCESS_TIMEOUT / PROCESS_ERROR
+#                              / PROCESSOR_UNAVAILABLE /
+#                              SANDBOX_NETWORK_DENIED /
+#                              SANDBOX_RESOURCE_LIMIT /
+#                              OBJECT_TOO_LARGE /
+#                              INTEGRITY_CHECKSUM_MISMATCH /
+#                              VALIDATION_FAILED /
+#                              EXIF_PII_LEAKED /
+#                              CONTAINER_CORRUPT /
+#                              UNSUPPORTED_DERIVED_FORMAT /
+#                              DNA_OBJECT_REJECTED /
+#                              DERIVED_OBJECT_KEY_COLLISION
+#   - processingActivityNames: IMAGE_TRANSCODE /
+#                               DOCUMENT_RENDER / VIDEO_TRANSCODE
+#                               / TEXT_OCR / DERIVED_VALIDATION
+#                               / DERIVED_PERSIST
+#   - processingInputs: READY
+#   - processingTerminalStatuses: DERIVED_READY / FAILED /
+#                                 QUARANTINED_RETAIN
+#   - derivedAssetFormats: THUMBNAIL_WEBP / THUMBNAIL_AVIF /
+#                          THUMBNAIL_JPEG / PDF_PREVIEW /
+#                          VIDEO_360P / VIDEO_720P / VIDEO_1080P
+#                          / OCR_TEXT
+#   - ocrLanguages: EN / VI / FR / DE / ZH
+#   - ocrOutputModes: TEXT / HOCR / PDF_SEARCHABLE
+#   - imagePresets: THUMBNAIL_128 / THUMBNAIL_256 /
+#                   PREVIEW_1024 / PREVIEW_2048 / ORIGINAL
+#   - videoPresets: AUDIO_ONLY / VIDEO_360P / VIDEO_720P /
+#                   VIDEO_1080P / VIDEO_4K
+#   - validationChecks: SIGNATURE_UP_TO_DATE /
+#                        INTEGRITY_CHECKSUM / MAGIC_BYTES /
+#                        CONTAINER_INTEGRITY / EXIF_SCRUBBED /
+#                        DNA_BUCKET_ISOLATED
+#   - validationCheckResults: PASS / WARN / FAIL / SKIPPED
+#   - derivedAssetStatuses: PENDING / PROCESSING /
+#                           VALIDATING / DERIVED_READY /
+#                           FAILED / QUARANTINED_RETAIN
+#   - imageMagickFallbackPolicy: NEVER (ImageMagick is
+#                                blocked; libvips is the only
+#                                canonical image engine). A
+#                                `FALLBACK_NONE` request MUST
+#                                return `PROCESS_ERROR`.
+#   - sandboxEgressAllowlist: apicurio / vault-agent /
+#                             image-optimizer / document-renderer
+#                             / video-encoder / ocr-worker
+spec:
+  policyId: media-processing-pipeline-policy/v1
+  policyVersion: 1
+  appliesTo: media-service
+  contractOwner: genealogy/platform
+  contractMirrors:
+    - contracts/media/media-processing-pipeline-policy.yaml
+    - platform/helm/genealogy-platform/files/media-processing-pipeline-policy.yaml
+
+  # -------------------------------------------------------------------------
+  # Closed-set vocabularies (R9.3 + ADR-E0.5-08)
+  # -------------------------------------------------------------------------
+
+  processingTasks:
+    - IMAGE_TRANSCODE
+    - DOCUMENT_RENDER
+    - VIDEO_TRANSCODE
+    - TEXT_OCR
+
+  processingEngines:
+    - LIBVIPS
+    - IMAGEMAGICK
+    - FFMPEG
+    - TESSERACT
+    - GOTENBERG
+    - FALLBACK_NONE
+
+  processingOutcomes:
+    - SUCCESS
+    - PARTIAL
+    - PROCESS_TIMEOUT
+    - PROCESS_ERROR
+    - UNSUPPORTED_FORMAT
+    - SANDBOX_DENIED
+    - OUTPUT_KEY_COLLISION
+    - VALIDATION_FAILED
+
+  processingFailureReasons:
+    - PROCESS_TIMEOUT
+    - PROCESS_ERROR
+    - PROCESSOR_UNAVAILABLE
+    - SANDBOX_NETWORK_DENIED
+    - SANDBOX_RESOURCE_LIMIT
+    - OBJECT_TOO_LARGE
+    - INTEGRITY_CHECKSUM_MISMATCH
+    - VALIDATION_FAILED
+    - EXIF_PII_LEAKED
+    - CONTAINER_CORRUPT
+    - UNSUPPORTED_DERIVED_FORMAT
+    - DNA_OBJECT_REJECTED
+    - DERIVED_OBJECT_KEY_COLLISION
+
+  processingActivityNames:
+    - IMAGE_TRANSCODE
+    - DOCUMENT_RENDER
+    - VIDEO_TRANSCODE
+    - TEXT_OCR
+    - DERIVED_VALIDATION
+    - DERIVED_PERSIST
+
+  processingInputs:
+    - READY
+
+  processingTerminalStatuses:
+    - DERIVED_READY
+    - FAILED
+    - QUARANTINED_RETAIN
+
+  derivedAssetFormats:
+    - THUMBNAIL_WEBP
+    - THUMBNAIL_AVIF
+    - THUMBNAIL_JPEG
+    - PDF_PREVIEW
+    - VIDEO_360P
+    - VIDEO_720P
+    - VIDEO_1080P
+    - OCR_TEXT
+
+  ocrLanguages:
+    - EN
+    - VI
+    - FR
+    - DE
+    - ZH
+
+  ocrOutputModes:
+    - TEXT
+    - HOCR
+    - PDF_SEARCHABLE
+
+  imagePresets:
+    - THUMBNAIL_128
+    - THUMBNAIL_256
+    - PREVIEW_1024
+    - PREVIEW_2048
+    - ORIGINAL
+
+  videoPresets:
+    - AUDIO_ONLY
+    - VIDEO_360P
+    - VIDEO_720P
+    - VIDEO_1080P
+    - VIDEO_4K
+
+  validationChecks:
+    - SIGNATURE_UP_TO_DATE
+    - INTEGRITY_CHECKSUM
+    - MAGIC_BYTES
+    - CONTAINER_INTEGRITY
+    - EXIF_SCRUBBED
+    - DNA_BUCKET_ISOLATED
+
+  validationCheckResults:
+    - PASS
+    - WARN
+    - FAIL
+    - SKIPPED
+
+  derivedAssetStatuses:
+    - PENDING
+    - PROCESSING
+    - VALIDATING
+    - DERIVED_READY
+    - FAILED
+    - QUARANTINED_RETAIN
+
+  # ImageMagick fallback is BLOCKED. libvips is the canonical
+  # image engine. `IMAGEMAGICK` is reserved in the closed-set
+  # only so the executor can refuse it explicitly with
+  # `UNSUPPORTED_DERIVED_FORMAT`.
+  imageMagickFallbackPolicy: NEVER
+
+  sandboxEgressAllowlist:
+    - apicurio
+    - vault-agent
+    - image-optimizer
+    - document-renderer
+    - video-encoder
+    - ocr-worker
+
+  # -------------------------------------------------------------------------
+  # Processing status transition matrix (R9.3 + design.md §11)
+  # -------------------------------------------------------------------------
+
+  # Only `DERIVED_READY` may transition out of the pipeline
+  # into the E7.4 protected-delivery slot. The other
+  # non-terminal statuses describe the work in flight;
+  # `DERIVED_READY`, `FAILED`, `QUARANTINED_RETAIN` are
+  # terminal.
+  derivedAssetStatusMatrix:
+    PENDING:
+      - PROCESSING
+      - FAILED
+    PROCESSING:
+      - VALIDATING
+      - FAILED
+      - QUARANTINED_RETAIN
+    VALIDATING:
+      - DERIVED_READY
+      - FAILED
+      - QUARANTINED_RETAIN
+    DERIVED_READY: []
+    FAILED: []
+    QUARANTINED_RETAIN: []
+
+  # -------------------------------------------------------------------------
+  # Guard rails (R9.3 + NFR1 + NFR3 + NFR8 + R13)
+  # -------------------------------------------------------------------------
+
+  # Processing worker MUST live in the `quarantine` namespace
+  # (Istio AuthorizationPolicy + NetworkPolicy in the
+  # `media-service-processing` Helm templates).
+  sandboxOnly: true
+  sandboxReadOnlyFilesystem: true
+  sandboxNonRoot: true
+
+  # Sandbox egress is the closed-set
+  # `sandboxEgressAllowlist` above. The NetworkPolicy in the
+  # chart enforces the same allowlist at the cluster level.
+  egressDeniedToPublicInternet: true
+
+  # Asset is only `DERIVED_READY` when the input status is
+  # `READY` (E7.2 linkability carries through) AND the
+  # processing outcome is `SUCCESS` (not `PARTIAL`) AND every
+  # required validation check returns `PASS` (not `WARN` /
+  # `FAIL` / `SKIPPED`).
+  requireReadyInputForDerivedReady: true
+  requireSuccessOutcomeForDerivedReady: true
+  requireAllValidationChecksPassForDerivedReady: true
+  validationFailNeverYieldsDerivedReady: true
+
+  # `PARTIAL` outcome MUST transition to `FAILED` (terminal)
+  # — partial derived artefacts are not safe to link.
+  partialOutcomeNeverYieldsDerivedReady: true
+
+  # Output key MUST be deterministic + versioned; the engine
+  # version is part of the key so a libvips / FFmpeg /
+  # Tesseract / Gotenberg bump produces a new derived
+  # artefact without overwriting historical ones.
+  outputKeyDeterministicAndVersioned: true
+  derivedKeyCollisionFailsPipeline: true
+
+  # Idempotent processing execution: a re-run of the
+  # Temporal workflow on the same `processingId` MUST
+  # produce the same terminal state. The executor short
+  # -circuits on `processingId` reuse.
+  processingIdempotentOnProcessingId: true
+
+  # EXIF / IPTC / XMP metadata MUST be scrubbed from the
+  # derived artefact before it lands in `DERIVED_READY`.
+  # EXIF GPS coordinates + camera serial numbers are
+  # covered by `EXIF_PII_LEAKED` reason.
+  exifScrubbedRequiredForDerivedReady: true
+
+  # libvips is the ONLY canonical image engine. ImageMagick
+  # is reserved in the closed-set so the executor can
+  # refuse it explicitly with `UNSUPPORTED_DERIVED_FORMAT`.
+  # `FALLBACK_NONE` requests MUST return `PROCESS_ERROR`.
+  libvipsOnlyForImageTranscode: true
+  imageMagickBlocked: true
+
+  # Tesseract OCR language packs are pinned by `ocrLanguages`
+  # closed-set; the worker MUST pre-resolve the language pack
+  # at workflow start and refuse unknown languages.
+  ocrLanguagePacksPinned: true
+
+  # DNA bucket shield (forward-looking to E7.4). The
+  # executor MUST refuse DNA objects (`PIPELINE_DNA_OBJECT_
+  # REJECTED`); the full bucket prefix enforcement lands in
+  # the E7.4 protected-delivery contract.
+  dnaObjectRejected: true
+
+  # The processing worker MUST heartbeat to Temporal every
+  # 30 s while a processing activity is in flight; the
+  # activity timeout is 6× the heartbeat interval (180 s
+  # baseline).
+  activityHeartbeatSeconds: 30
+  activityHeartbeatMultiplier: 6
+
+  # Resource quotas enforced by the worker container
+  # (non-root, read-only fs, memory limit). Adding a
+  # larger quota requires an ADR supersession.
+  workerCpuRequestMillis: 500
+  workerCpuLimitMillis: 4000
+  workerMemoryRequestBytes: 1073741824
+  workerMemoryLimitBytes: 8589934592
+  workerEphemeralStorageLimitBytes: 2147483648
+
+  # -------------------------------------------------------------------------
+  # Numeric bounds (R9.1 + R9.3 + NFR2)
+  # -------------------------------------------------------------------------
+
+  # Per `requirements.md` R9.3 the processing activities
+  # run with bounded timeouts. Going over the bound
+  # transitions to FAILED with PROCESS_TIMEOUT. Every
+  # timeout MUST exceed `activityHeartbeatMultiplier ×
+  # activityHeartbeatSeconds` (180 s baseline) so a lost
+  # heartbeat can be detected before the activity is
+  # cancelled (Temporal schedule-to-close).
+  timeoutImageTranscodeSeconds: 480
+  timeoutDocumentRenderSeconds: 960
+  timeoutVideoTranscodeSeconds: 1800
+  timeoutTextOcrSeconds: 1800
+  timeoutValidationSeconds: 480
+  timeoutDerivedPersistSeconds: 480
+
+  # OCR bounding parameters per `requirements.md` R9.3.
+  # Pages above `maxPagesPerAsset` are aborted; per-page
+  # runtime over `maxRuntimeSeconds` aborts the page and
+  # records `PROCESS_TIMEOUT` warning.
+  ocrMinDpi: 150
+  ocrMaxDpi: 600
+  ocrMaxPagesPerAsset: 200
+  ocrMaxRuntimeSeconds: 1800
+  ocrMaxOutputBytes: 67108864
+
+  # Image transcode bounding parameters per R9.3.
+  imageMinLongestEdgePx: 128
+  imageMaxLongestEdgePx: 4096
+  imageMaxOutputBytes: 33554432
+
+  # Video transcode bounding parameters per R9.3.
+  videoMinBitrateKbps: 200
+  videoMaxBitrateKbps: 20000
+  videoMaxOutputBytes: 1073741824
+
+  # Per-tenant / per-asset caps on the number of
+  # concurrent in-flight processing runs. Going over the
+  # bound rejects the workflow start (Temporal schedule
+  # to start timeout).
+  maxConcurrentPipelinesPerTenant: 16
+  maxConcurrentPipelinesPerAsset: 1
+  maxRetriesPerActivity: 5
+  maxRetentionDaysForDerivedObject: 30
+  maxDerivedObjectsPerAsset: 16
+
+  # Pipeline key + audit attribute length caps.
+  maxProcessingIdLength: 128
+  maxActivityIdLength: 128
+  maxValidationCheckCount: 16
+  maxValidationMessageLength: 1024
+  maxDerivedObjectKeyLength: 1024
+  maxAuditExtraKeys: 16
+  maxAuditExtraKeyLength: 64
+  maxAuditExtraValueLength: 1024
+  maxAuditCorrelationReasonLength: 256
+
+  # -------------------------------------------------------------------------
+  # Required audit hooks (R9.3 + NFR5 + ADR-E0.5-08)
+  # -------------------------------------------------------------------------
+
+  auditActorKey: actorPseudoId
+  auditCorrelationKey: correlationId
+  auditRequiredKeys:
+    - actorPseudoId
+    - correlationId
+
+  auditRequiredOnProcessingStart: true
+  auditRequiredOnProcessingFinish: true
+  auditRequiredOnDerivedReady: true
+  auditRequiredOnValidationFailure: true
+  auditRequiredOnDerivedPersist: true
+
+  auditClassOnProcessingStart: media
+  auditActionOnProcessingStart: media.processing.started
+  auditClassOnProcessingFinish: media
+  auditActionOnProcessingFinish: media.processing.finished
+  auditClassOnDerivedReady: media
+  auditActionOnDerivedReady: media.derived.ready
+  auditClassOnValidationFailure: media
+  auditActionOnValidationFailure: media.validation.failed
+  auditClassOnDerivedPersist: media
+  auditActionOnDerivedPersist: media.derived.persisted
+
+  # -------------------------------------------------------------------------
+  # Invariant reason codes (R9.3 + NFR1 + ADR-E0.5-08)
+  # -------------------------------------------------------------------------
+
+  invariants:
+    - PROCESSING_SANDBOX_ONLY
+    - PROCESSING_SANDBOX_EGRESS_PUBLIC_DENIED
+    - PROCESSING_SANDBOX_NON_ROOT
+    - PROCESSING_INPUT_REQUIRES_READY
+    - PROCESSING_INTEGRITY_CHECKSUM_REQUIRED
+    - PROCESSING_VALIDATION_FAIL_NEVER_DERIVED_READY
+    - PROCESSING_PARTIAL_NEVER_DERIVED_READY
+    - PROCESSING_EXIF_PII_NEVER_DERIVED_READY
+    - PROCESSING_LIBVIPS_ONLY_FOR_IMAGE
+    - PROCESSING_IMAGEMAGICK_BLOCKED
+    - PROCESSING_OCR_LANGUAGE_PACK_PINNED
+    - PROCESSING_TIMEOUT_FAILS_NOT_RETRIES_SILENTLY
+    - PROCESSING_OUTPUT_KEY_DETERMINISTIC
+    - PROCESSING_OUTPUT_KEY_VERSIONED
+    - PROCESSING_DNA_OBJECT_REJECTED
+    - PROCESSING_DERIVED_KEY_COLLISION_FAILS
+
+  # -------------------------------------------------------------------------
+  # Forbidden payload scan (R13 DNA + NFR1 secret + R15 raw PII)
+  # -------------------------------------------------------------------------
+
+  forbiddenPayloadPatterns:
+    - credential
+    - api[_-]?key
+    - private[_-]?key
+    - authorization
+    - bearer
+    - raw[_-]?dna
+    - raw[_-]?ssn
+    - raw[_-]?passport
+    - fastq
+    - dna[_-]?raw
+    - exif[_-]?gps
+    - camera[_-]?serial

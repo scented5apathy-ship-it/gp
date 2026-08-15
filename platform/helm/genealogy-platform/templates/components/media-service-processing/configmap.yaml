@@ -1,0 +1,101 @@
+{{/*
+media processing service ConfigMap (E7.3).
+
+Spring Boot Actuator contract for the media-service-processing
+workload. The chart's `_probes.tpl` uses `/healthz/*` for
+the platform components; media-service-processing
+intentionally deviates because the Spring Boot starter owns
+the `/actuator/health/*` mapping, not the umbrella chart.
+
+The ConfigMap also pins the E7.3 processing pipeline policy
+knobs (timeouts, sandbox egress, OCR DPI / page caps, image
+/ video bounds, heartbeat, idempotency). Per
+`agent-execution.md` §4.4 the policy itself lives in
+`contracts/media/media-processing-pipeline-policy.yaml`; the
+ConfigMap only forwards the values.
+*/}}
+{{- $svc := .Values.services.mediaProcessing }}
+{{- if $svc.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: media-service-processing-config
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service-processing
+    gp.genealogy/contract-only: "true"
+data:
+  application.yml: |
+    spring:
+      application:
+        name: media-service-processing
+      datasource:
+        url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+        username: ${DB_USERNAME}
+        password: ${DB_PASSWORD}
+      flyway:
+        enabled: true
+        locations: classpath:db/migration
+    server:
+      port: 8080
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,prometheus
+      endpoint:
+        health:
+          probes:
+            enabled: true
+          group:
+            liveness:
+              include: livenessState
+            readiness:
+              include: readinessState,db
+            startup:
+              include: readinessState
+    platform:
+      media:
+        processing:
+          sandboxOnly: true
+          sandboxEgressAllowlist: apicurio,vault-agent,image-optimizer,document-renderer,video-encoder,ocr-worker
+          imageMagickFallbackPolicy: NEVER
+          libvipsOnlyForImageTranscode: true
+          imageMagickBlocked: true
+          ocrLanguagePacksPinned: true
+          exifScrubbedRequiredForDerivedReady: true
+          requireReadyInputForDerivedReady: true
+          requireSuccessOutcomeForDerivedReady: true
+          requireAllValidationChecksPassForDerivedReady: true
+          validationFailNeverYieldsDerivedReady: true
+          partialOutcomeNeverYieldsDerivedReady: true
+          outputKeyDeterministicAndVersioned: true
+          derivedKeyCollisionFailsPipeline: true
+          processingIdempotentOnProcessingId: true
+          dnaObjectRejected: true
+          timeoutImageTranscodeSeconds: {{ $svc.pipeline.timeoutImageTranscodeSeconds }}
+          timeoutDocumentRenderSeconds: {{ $svc.pipeline.timeoutDocumentRenderSeconds }}
+          timeoutVideoTranscodeSeconds: {{ $svc.pipeline.timeoutVideoTranscodeSeconds }}
+          timeoutTextOcrSeconds: {{ $svc.pipeline.timeoutTextOcrSeconds }}
+          timeoutValidationSeconds: {{ $svc.pipeline.timeoutValidationSeconds }}
+          timeoutDerivedPersistSeconds: {{ $svc.pipeline.timeoutDerivedPersistSeconds }}
+          ocrMinDpi: {{ $svc.pipeline.ocrMinDpi }}
+          ocrMaxDpi: {{ $svc.pipeline.ocrMaxDpi }}
+          ocrMaxPagesPerAsset: {{ $svc.pipeline.ocrMaxPagesPerAsset }}
+          ocrMaxRuntimeSeconds: {{ $svc.pipeline.ocrMaxRuntimeSeconds }}
+          ocrMaxOutputBytes: {{ $svc.pipeline.ocrMaxOutputBytes }}
+          imageMinLongestEdgePx: {{ $svc.pipeline.imageMinLongestEdgePx }}
+          imageMaxLongestEdgePx: {{ $svc.pipeline.imageMaxLongestEdgePx }}
+          imageMaxOutputBytes: {{ $svc.pipeline.imageMaxOutputBytes }}
+          videoMinBitrateKbps: {{ $svc.pipeline.videoMinBitrateKbps }}
+          videoMaxBitrateKbps: {{ $svc.pipeline.videoMaxBitrateKbps }}
+          videoMaxOutputBytes: {{ $svc.pipeline.videoMaxOutputBytes }}
+          maxConcurrentPipelinesPerTenant: {{ $svc.pipeline.maxConcurrentPipelinesPerTenant }}
+          maxConcurrentPipelinesPerAsset: {{ $svc.pipeline.maxConcurrentPipelinesPerAsset }}
+          maxRetriesPerActivity: {{ $svc.pipeline.maxRetriesPerActivity }}
+          maxRetentionDaysForDerivedObject: {{ $svc.pipeline.maxRetentionDaysForDerivedObject }}
+          maxDerivedObjectsPerAsset: {{ $svc.pipeline.maxDerivedObjectsPerAsset }}
+          activityHeartbeatSeconds: {{ $svc.pipeline.activityHeartbeatSeconds }}
+          activityHeartbeatMultiplier: {{ $svc.pipeline.activityHeartbeatMultiplier }}
+{{- end }}

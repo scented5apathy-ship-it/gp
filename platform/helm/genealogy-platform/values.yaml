@@ -1638,3 +1638,107 @@ services:
       signatureUpToDateRequiredBeforeScan: true
       signatureStaleFailsScan: true
       egressDeniedToPublicInternet: true
+
+  mediaProcessing:
+    enabled: true
+    replicas:
+      dev: 1
+      onprem: 2
+      saas: 3
+    image:
+      repository: genealogy/media-service-processing
+      tag: "0.1.0"
+      registry: ghcr.io
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    probes:
+      livenessPath: /actuator/health/liveness
+      readinessPath: /actuator/health/readiness
+      startupPath: /actuator/health/readiness
+      liveness:
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 15
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+      startup:
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 24
+    serviceAccount:
+      create: true
+      name: media-service-processing
+      vaultAnnotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: media-service-processing
+        vault.hashicorp.com/agent-image: hashicorp/vault:1.18.0
+    secretRefs:
+      clusterSecretStore: vault-backend
+      databaseVaultPath: secret/dev/data/media-service-processing/database
+      kafkaVaultPath: secret/dev/data/media-service-processing/kafka
+      openfgaVaultPath: secret/dev/data/media-service-processing/openfga
+      imageOptimizerVaultPath: secret/dev/data/media-service-processing/image-optimizer
+      documentRendererVaultPath: secret/dev/data/media-service-processing/document-renderer
+      videoEncoderVaultPath: secret/dev/data/media-service-processing/video-encoder
+      ocrWorkerVaultPath: secret/dev/data/media-service-processing/ocr-worker
+    # E7.3 processing pipeline numeric knobs. The chart values
+    # are the single source of truth for the Helm-rendered pod;
+    # `contracts/media/media-processing-pipeline-policy.yaml`
+    # pins the same numbers via the linter.
+    pipeline:
+      timeoutImageTranscodeSeconds: 480
+      timeoutDocumentRenderSeconds: 960
+      timeoutVideoTranscodeSeconds: 1800
+      timeoutTextOcrSeconds: 1800
+      timeoutValidationSeconds: 480
+      timeoutDerivedPersistSeconds: 480
+      ocrMinDpi: 150
+      ocrMaxDpi: 600
+      ocrMaxPagesPerAsset: 200
+      ocrMaxRuntimeSeconds: 1800
+      ocrMaxOutputBytes: 67108864
+      imageMinLongestEdgePx: 128
+      imageMaxLongestEdgePx: 4096
+      imageMaxOutputBytes: 33554432
+      videoMinBitrateKbps: 200
+      videoMaxBitrateKbps: 20000
+      videoMaxOutputBytes: 1073741824
+      maxConcurrentPipelinesPerTenant: 16
+      maxConcurrentPipelinesPerAsset: 1
+      maxRetriesPerActivity: 5
+      maxRetentionDaysForDerivedObject: 30
+      maxDerivedObjectsPerAsset: 16
+      activityHeartbeatSeconds: 30
+      activityHeartbeatMultiplier: 6
+      sandboxOnly: true
+      sandboxEgressAllowlist:
+        - apicurio
+        - vault-agent
+        - image-optimizer
+        - document-renderer
+        - video-encoder
+        - ocr-worker
+      imageMagickFallbackPolicy: NEVER
+      libvipsOnlyForImageTranscode: true
+      imageMagickBlocked: true
+      ocrLanguagePacksPinned: true
+      exifScrubbedRequiredForDerivedReady: true
+      requireReadyInputForDerivedReady: true
+      requireSuccessOutcomeForDerivedReady: true
+      requireAllValidationChecksPassForDerivedReady: true
+      validationFailNeverYieldsDerivedReady: true
+      partialOutcomeNeverYieldsDerivedReady: true
+      outputKeyDeterministicAndVersioned: true
+      derivedKeyCollisionFailsPipeline: true
+      processingIdempotentOnProcessingId: true
+      dnaObjectRejected: true
+      egressDeniedToPublicInternet: true

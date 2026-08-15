@@ -1,0 +1,143 @@
+{{/*
+media processing service Deployment (E7.3).
+
+Per `agent-execution.md` §4.4 the workload is intentionally
+explicit:
+
+  - replica count (per-env override)
+  - canonical probe paths (/actuator/health/*)
+  - Vault Agent Injector annotations
+  - serviceAccount tied to the Vault policy
+  - containerSecurityContext (non-root, read-only FS)
+  - podAntiAffinity (one pod per node)
+  - resource requests / limits aligned with the
+    E7.3 contract worker quotas (CPU/memory/
+    ephemeral-storage)
+
+Domain authorization lives in the application (OpenFGA +
+ABAC) per design.md §5 / §13; this template MUST NOT add
+an Istio AuthorizationPolicy or Kong route.
+
+The worker pool that calls libvips + Gotenberg + FFmpeg +
+Tesseract lives in the `worker/` subproject (E7.x / E11.x);
+the chart keeps the policy contract-only until that
+subproject lands.
+
+The deployment is split from the E7.2 `media-service`
+because the E7.3 worker pulls a different image (with the
+libvips / FFmpeg / Tesseract / Gotenberg binaries) and
+runs on different sandbox quota per `design.md` §11
+("Binary parser không truy cập Internet, chạy non-root,
+read-only filesystem và resource quota").
+*/}}
+{{- $svc := .Values.services.mediaProcessing }}
+{{- if $svc.enabled }}
+{{- $replicas := dig "saas" 3 $svc.replicas }}
+{{- $sa := $svc.serviceAccount }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-service-processing
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service-processing
+    app.kubernetes.io/version: {{ $svc.image.tag }}
+    gp.genealogy/contract-only: "true"
+spec:
+  replicas: {{ $replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: media-service-processing
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: genealogy-platform
+        app.kubernetes.io/component: media-service-processing
+        app.kubernetes.io/version: {{ $svc.image.tag }}
+        gp.genealogy/contract-only: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+        {{- range $k, $v := $sa.vaultAnnotations }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $sa.name }}
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: genealogy-platform
+                    app.kubernetes.io/component: media-service-processing
+      containers:
+        - name: media-service-processing
+          image: "{{ $svc.image.registry }}/{{ $svc.image.repository }}:{{ $svc.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: media-service-processing-config
+            - secretRef:
+                name: media-service-processing-secrets
+          resources:
+            requests:
+              cpu: "{{ $svc.resources.requests.cpu }}"
+              memory: "{{ $svc.resources.requests.memory }}"
+            limits:
+              cpu: "{{ $svc.resources.limits.cpu }}"
+              memory: "{{ $svc.resources.limits.memory }}"
+          livenessProbe:
+            httpGet:
+              path: {{ $svc.probes.livenessPath }}
+              port: http
+            initialDelaySeconds: {{ $svc.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $svc.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $svc.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $svc.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ $svc.probes.readinessPath }}
+              port: http
+            initialDelaySeconds: {{ $svc.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $svc.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $svc.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $svc.probes.readiness.failureThreshold }}
+          startupProbe:
+            httpGet:
+              path: {{ $svc.probes.startupPath }}
+              port: http
+            periodSeconds: {{ $svc.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ $svc.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ $svc.probes.startup.failureThreshold }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+{{- end }}

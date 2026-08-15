@@ -553,7 +553,7 @@ _Requirements: R8, R10, R14, NFR1, NFR4_
   - Chỉ asset `READY` mới được liên kết; timeout/error chuyển trạng thái rõ ràng.
   - Cập nhật signature, resource limit và malicious corpus tests.
 
-- [ ] E7.3 Derivative processing
+- [x] E7.3 Derivative processing
 
   - libvips cho ảnh; ImageMagick fallback có policy; FFmpeg cho audio/video.
   - Tesseract OCR theo language packs; Gotenberg cho PDF/preview.
