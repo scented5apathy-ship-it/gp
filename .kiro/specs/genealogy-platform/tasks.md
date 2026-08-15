@@ -565,7 +565,7 @@ _Requirements: R8, R10, R14, NFR1, NFR4_
   - Bucket/prefix/key riêng cho DNA, không dùng media preview pipeline.
   - Audit sensitive downloads và revoke access khi policy đổi.
 
-- [ ] E7.5 Albums/linking
+- [x] E7.5 Albums/linking
   - Album, tag, caption, date/place và person/event/source references.
   - Không tạo foreign key xuyên service; kiểm dangling reference qua reconciliation.
   - Soft-delete, retention, legal hold và object garbage collection.

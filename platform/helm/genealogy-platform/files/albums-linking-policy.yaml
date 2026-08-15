@@ -1,0 +1,427 @@
+# contracts/media — Album + linking policy (E7.5).
+#
+# Source of truth for the media-service album / tagging /
+# captioning / cross-domain reference aggregate that lets
+# the editor journey organise MediaAsset + MediaVariant
+# objects under one or more named Albums and bind them to
+# Person / Event / Source / Citation references living in
+# the genealogy / research services. The contract is
+# deliberately LAST in the E7 pipeline:
+#
+#   E7.1 upload lifecycle
+#     → upload session + quarantine + finalize
+#   E7.2 malware + metadata pipeline
+#     → READY (linkability gate)
+#   E7.3 derivative processing
+#     → DERIVED_READY (terminal linkable status)
+#   E7.4 protected delivery
+#     → short-lived signed URL + watermark + audit + revoke
+#   E7.5 albums + linking  ← this contract
+#     → named Albums, tags, captions, date/place, and
+#       person/event/source/citation references whose
+#       targets live in other services but are referenced
+#       from media-service as opaque external ids only
+#
+# Per `requirements.md` R9.1 ("Hệ thống SHALL hỗ trợ ảnh,
+# audio, video, PDF và tài liệu; metadata, album, tag,
+# caption, ngày, địa điểm và người liên quan") + R9.4
+# ("Hệ thống SHALL hỗ trợ crop/focal point, xoay, sắp
+# xếp, phiên bản và phát hiện file trùng") + `design.md`
+# §4 ("media-service | Upload session, object metadata,
+# album, processing, delivery | MediaAsset, MediaVariant,
+# Album") + §5.1 ("Không join xuyên service") +
+# `ownership-catalog.md` §2.5 ("media-service | Owns
+# aggregate/data | MediaAsset, MediaVariant, Album" +
+# "Events consumed | gp.genealogy.v1.*Person/Event/Claim*"
+# kept implicit via reference resolution) +
+# `privacy-and-legal-gate.md` §5 ("Khóa dữ liệu dùng
+# envelope encryption; quyền giải mã chỉ cấp cho workload
+# DNA").
+#
+# The album aggregate is the user-facing container; the
+# cross-domain references resolve via
+# `crossServiceReferences[]` of opaque ids owned by the
+# publishing service. media-service NEVER imports another
+# service's `db/` (Flyway / jOOQ) or `domain/` (entities,
+# value objects) packages — see `ServiceBoundaryTest` +
+# `scripts/check-monorepo-boundaries.mjs`. Dangling
+# references are detected by the reconciliation workflow
+# (ADR-E0.5-07 + `privacy-and-legal-gate.md` §6) using the
+# `reconciliationOutcomes` closed-set.
+#
+# Hard invariants:
+#   - albumLinkableAssetStatuses=[DERIVED_READY]: only
+#     E7.3 terminal artefacts may be added to an album;
+#     raw `READY` assets without derived thumbnails /
+#     OCR / preview are NEVER linkable to an album slot.
+#   - dnaBucketAccess=FORBIDDEN: an album slot that points
+#     to an object key starting with one of the E7.4
+#     `dnaBucketPrefixes` is refused with `DNA_BUCKET_DENIED`
+#     regardless of OpenFGA verdict. The DNA service owns
+#     its own delivery adapter per ADR-E0.5-15.
+#   - crossServiceReferences are OPAQUE ids only — no raw
+#     person name / event date / source title is stored on
+#     the album; the reconciliation workflow re-resolves
+#     references through the publishing service. Storing
+#     PII in album metadata is a privacy-leak regression.
+#   - softDeleteRetentionDays=365: a soft-deleted album is
+#     retained for the retention window so legal hold /
+#     audit replay can restore it before the object
+#     garbage collector purges its derived objects.
+#   - objectLockComplianceDays=30: any album whose
+#     visibility scope is `LEGAL_HOLD` MUST set S3 / MinIO
+#     Object Lock to `COMPLIANCE` mode for 30 days.
+#   - tagClosedSet=false: tags are user-supplied strings
+#     (max length capped) but the tag vocabulary is
+#     normalised by `tagNormalizationRule=LOWERCASE_TRIM_DASH`
+#     so a private-vs-public reconciliation can match them.
+#   - captionLanguageIetfBcp47Required=true: every caption
+#     MUST carry a BCP-47 language tag; missing tags force
+#     `CAPTION_LANGUAGE_MISSING`.
+#   - placeReferenceFormat=PLACE_PSEUDO_ID: a place
+#     reference uses an opaque `place_pseudo_id` (not the
+#     raw place name) so cross-tenant place records do not
+#     leak through the album.
+#   - dateReferenceFormat=DATE_PSEUDO_ID: a date reference
+#     uses an opaque `date_pseudo_id` (not the raw date).
+#   - maxItemsPerAlbum=4096: an album cannot exceed 4096
+#     items; the cap prevents unbounded query cost.
+#   - maxAlbumsPerTenant=8192: a tenant cannot exceed 8192
+#     albums (lifecycle + quota).
+#   - maxAlbumsPerUser=512: a single user cannot own more
+#     than 512 active albums.
+#   - maxReferencesPerItem=64: each album item can have at
+#     most 64 cross-domain references.
+#   - maxCaptionLength=4096: caption text is bounded to
+#     4096 chars (UTF-16 code units).
+#   - maxTagLength=64: tag text is bounded to 64 chars
+#     after normalisation.
+#   - maxTagsPerItem=64: each item may carry up to 64 tags.
+#   - albumVersioning+ETag: every album carries a
+#     monotonic `albumVersion` and an opaque `etag` so
+#     `If-Match` can reject stale writes.
+#   - reconciliationCadenceHours=24: the dangling-reference
+#     reconciliation workflow runs at least every 24 h per
+#     ADR-E0.5-07; it produces a `ReconciliationReport`
+#     whose `reportId` is opaque + monotonically versioned.
+#
+# Closed-set vocabulary:
+#   - albumVisibilities: PRIVATE / UNLISTED / PUBLIC /
+#                        INTERNAL_TENANT / LEGAL_HOLD
+#   - albumLifecycleStates: ACTIVE / SOFT_DELETED /
+#                           LEGAL_HOLD / PURGED / FAILED
+#   - albumMemberKinds: ASSET / VARIANT / FOLDER /
+#                       COLLECTION
+#   - albumMemberSources: USER_UPLOAD / DERIVATIVE /
+#                         OCR / THUMBNAIL / PREVIEW /
+#                         TRANSCODE
+#   - albumSortOrders: MANUAL_PIN / CAPTURED_AT_ASC /
+#                      CAPTURED_AT_DESC / TITLE_ASC /
+#                      ADDED_AT_ASC / ADDED_AT_DESC
+#   - albumReferenceKinds: PERSON / EVENT / SOURCE /
+#                          CITATION / PLACE / DATE
+#   - albumReferenceOutcomes: RESOLVED / DANGLING /
+#                             REVOKED / PUBLISHER_MISSING
+#   - albumReferenceActionModes: DIRECT_EDIT /
+#                                APPROVAL_REQUIRED
+#   - reconciliationOutcomes: HEALTHY / DANGLING_REFERENCES /
+#                             REVOKED_REFERENCES /
+#                             ORPHAN_ASSETS / QUOTA_EXCEEDED /
+#                             PURGED
+#   - albumFailureReasons: ALBUM_NOT_FOUND /
+#                          ALBUM_VERSION_MISMATCH /
+#                          ALBUM_QUOTA_EXCEEDED /
+#                          ALBUM_VISIBILITY_FORBIDDEN /
+#                          ALBUM_ITEM_NOT_FOUND /
+#                          ALBUM_REFERENCE_INVALID /
+#                          ALBUM_REFERENCE_DANGLING /
+#                          ALBUM_REFERENCE_REVOKED /
+#                          ALBUM_REFERENCE_KIND_UNKNOWN /
+#                          ALBUM_LIFECYCLE_FORBIDDEN /
+#                          ALBUM_CAPTION_LANGUAGE_MISSING /
+#                          ALBUM_TAG_TOO_LONG /
+#                          ALBUM_CAPTION_TOO_LONG /
+#                          ALBUM_TAG_TOO_MANY /
+#                          ALBUM_REFERENCES_TOO_MANY /
+#                          ALBUM_ITEMS_TOO_MANY /
+#                          ALBUM_OBJECT_KEY_TOO_LONG /
+#                          ALBUM_ACTOR_PSEUDO_ID_TOO_LONG /
+#                          ALBUM_CORRELATION_ID_TOO_LONG /
+#                          ALBUM_REFERENCE_PSEUDO_ID_TOO_LONG /
+#                          ALBUM_DERIVED_OBJECT_KEY_NOT_READY /
+#                          ALBUM_DNA_BUCKET_FORBIDDEN /
+#                          ALBUM_RECONCILIATION_FAILED
+#   - albumAuditEvents: ALBUM_CREATED / ALBUM_RENAMED /
+#                       ALBUM_ITEM_ADDED / ALBUM_ITEM_REMOVED /
+#                       ALBUM_ITEM_REORDERED / ALBUM_TAGS_SET /
+#                       ALBUM_CAPTION_SET /
+#                       ALBUM_REFERENCE_ADDED /
+#                       ALBUM_REFERENCE_REMOVED /
+#                       ALBUM_REFERENCE_RESOLVED /
+#                       ALBUM_REFERENCE_DANGLING /
+#                       ALBUM_REFERENCE_REVOKED /
+#                       ALBUM_RECONCILIATION_RUN /
+#                       ALBUM_RECONCILIATION_PURGED /
+#                       ALBUM_SOFT_DELETED / ALBUM_PURGED /
+#                       ALBUM_VISIBILITY_CHANGED /
+#                       ALBUM_DNA_BUCKET_REFUSED
+#   - dnaBucketPrefixes: dna/raw / dna/match / dna/consent
+#   - albumLinkableAssetStatuses: DERIVED_READY
+#   - crossServiceReferenceKinds: PERSON / EVENT / SOURCE /
+#                                 CITATION / PLACE / DATE
+#   - tagNormalizationRules: LOWERCASE_TRIM_DASH
+
+owner: media-service
+spec:
+  policyId: media-albums-linking-policy/v1
+
+  # -------------------------------------------------------------------------
+  # Hard invariants (R9.1 + R9.4 + design.md §4 / §5.1 +
+  # ownership-catalog.md §2.5 + ADR-E0.5-15).
+  # -------------------------------------------------------------------------
+
+  sandboxOnly: true
+  sandboxReadOnlyFilesystem: true
+  sandboxNonRoot: true
+  egressDeniedToPublicInternet: true
+  onlyDerivedReadyIsLinkable: true
+  dnaBucketAccess: FORBIDDEN
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  softDeleteRetentionRequired: true
+  objectLockComplianceRequiredForLegalHold: true
+  captionLanguageIetfBcp47Required: true
+  placeReferenceFormat: PLACE_PSEUDO_ID
+  dateReferenceFormat: DATE_PSEUDO_ID
+  tagClosedSet: false
+  tagNormalizationRule: LOWERCASE_TRIM_DASH
+  albumVersioningRequired: true
+  albumEtagRequired: true
+  albumReferencesCheckedBeforeCommit: true
+  reconciliationWorkflowRequired: true
+  reconciliationOutboxEventRequired: true
+  albumOpsOutOfBandForbidden: true
+  auditRequiredOnAlbumCreated: true
+  auditRequiredOnAlbumRenamed: true
+  auditRequiredOnAlbumItemAdded: true
+  auditRequiredOnAlbumItemRemoved: true
+  auditRequiredOnAlbumItemReordered: true
+  auditRequiredOnAlbumTagsSet: true
+  auditRequiredOnAlbumCaptionSet: true
+  auditRequiredOnAlbumReferenceAdded: true
+  auditRequiredOnAlbumReferenceRemoved: true
+  auditRequiredOnAlbumReferenceResolved: true
+  auditRequiredOnAlbumReferenceDangling: true
+  auditRequiredOnAlbumReferenceRevoked: true
+  auditRequiredOnAlbumReconciliationRun: true
+  auditRequiredOnAlbumReconciliationPurged: true
+  auditRequiredOnAlbumSoftDeleted: true
+  auditRequiredOnAlbumPurged: true
+  auditRequiredOnAlbumVisibilityChanged: true
+  auditRequiredOnAlbumDnaBucketRefused: true
+
+  # -------------------------------------------------------------------------
+  # Closed-set vocabularies (R9.1 + ADR-E0.5-08).
+  # -------------------------------------------------------------------------
+
+  albumVisibilities: [PRIVATE, UNLISTED, PUBLIC, INTERNAL_TENANT, LEGAL_HOLD]
+  albumLifecycleStates: [ACTIVE, SOFT_DELETED, LEGAL_HOLD, PURGED, FAILED]
+  albumMemberKinds: [ASSET, VARIANT, FOLDER, COLLECTION]
+  albumMemberSources: [USER_UPLOAD, DERIVATIVE, OCR, THUMBNAIL, PREVIEW, TRANSCODE]
+  albumSortOrders: [MANUAL_PIN, CAPTURED_AT_ASC, CAPTURED_AT_DESC, TITLE_ASC, ADDED_AT_ASC, ADDED_AT_DESC]
+  albumReferenceKinds: [PERSON, EVENT, SOURCE, CITATION, PLACE, DATE]
+  albumReferenceOutcomes: [RESOLVED, DANGLING, REVOKED, PUBLISHER_MISSING]
+  albumReferenceActionModes: [DIRECT_EDIT, APPROVAL_REQUIRED]
+  reconciliationOutcomes: [HEALTHY, DANGLING_REFERENCES, REVOKED_REFERENCES, ORPHAN_ASSETS, QUOTA_EXCEEDED, PURGED]
+  albumFailureReasons: [ALBUM_NOT_FOUND, ALBUM_VERSION_MISMATCH, ALBUM_QUOTA_EXCEEDED, ALBUM_VISIBILITY_FORBIDDEN, ALBUM_ITEM_NOT_FOUND, ALBUM_REFERENCE_INVALID, ALBUM_REFERENCE_DANGLING, ALBUM_REFERENCE_REVOKED, ALBUM_REFERENCE_KIND_UNKNOWN, ALBUM_LIFECYCLE_FORBIDDEN, ALBUM_CAPTION_LANGUAGE_MISSING, ALBUM_TAG_TOO_LONG, ALBUM_CAPTION_TOO_LONG, ALBUM_TAG_TOO_MANY, ALBUM_REFERENCES_TOO_MANY, ALBUM_ITEMS_TOO_MANY, ALBUM_OBJECT_KEY_TOO_LONG, ALBUM_ACTOR_PSEUDO_ID_TOO_LONG, ALBUM_CORRELATION_ID_TOO_LONG, ALBUM_REFERENCE_PSEUDO_ID_TOO_LONG, ALBUM_DERIVED_OBJECT_KEY_NOT_READY, ALBUM_DNA_BUCKET_FORBIDDEN, ALBUM_RECONCILIATION_FAILED]
+  albumAuditEvents: [ALBUM_CREATED, ALBUM_RENAMED, ALBUM_ITEM_ADDED, ALBUM_ITEM_REMOVED, ALBUM_ITEM_REORDERED, ALBUM_TAGS_SET, ALBUM_CAPTION_SET, ALBUM_REFERENCE_ADDED, ALBUM_REFERENCE_REMOVED, ALBUM_REFERENCE_RESOLVED, ALBUM_REFERENCE_DANGLING, ALBUM_REFERENCE_REVOKED, ALBUM_RECONCILIATION_RUN, ALBUM_RECONCILIATION_PURGED, ALBUM_SOFT_DELETED, ALBUM_PURGED, ALBUM_VISIBILITY_CHANGED, ALBUM_DNA_BUCKET_REFUSED]
+  dnaBucketPrefixes: [dna/raw, dna/match, dna/consent]
+  albumLinkableAssetStatuses: [DERIVED_READY]
+  crossServiceReferenceKinds: [PERSON, EVENT, SOURCE, CITATION, PLACE, DATE]
+  tagNormalizationRules: [LOWERCASE_TRIM_DASH]
+
+  # -------------------------------------------------------------------------
+  # Sandbox egress allowlist (E2.6 + E3.3 + E3.6 + E7.4 carry-through + E7.5).
+  # The album worker does NOT call into the libvips / Gotenberg /
+  # FFmpeg / Tesseract pool (those are E7.3 worker peers, not E7.5).
+  # The reconciliation worker pulls Kafka events from the genealogy /
+  # research services but NEVER directly imports their `db/` /
+  # `domain/` packages.
+  # -------------------------------------------------------------------------
+
+  sandboxEgressAllowlist: [apicurio, vault-agent, openfga, audit-service, kafka-broker, search-service]
+
+  # -------------------------------------------------------------------------
+  # Album authorization state matrix (per ADR-E0.5-06 + design.md §6).
+  # Every status is reachable from PENDING unless it is a terminal
+  # state; terminal states MUST have empty transition lists.
+  # -------------------------------------------------------------------------
+
+  albumAuthorizationMatrix:
+    PENDING: [OPENFGA_CHECKED]
+    OPENFGA_CHECKED: [ABAC_CHECKED, DENIED]
+    ABAC_CHECKED: [QUOTA_CHECKED, VISIBILITY_CHECKED, DENIED]
+    QUOTA_CHECKED: [VISIBILITY_CHECKED, DENIED]
+    VISIBILITY_CHECKED: [LINKABILITY_CHECKED, DENIED]
+    LINKABILITY_CHECKED: [REFERENCE_CHECKED, DENIED]
+    REFERENCE_CHECKED: [DECIDED, SOFT_DELETED, PURGED, DENIED]
+    DECIDED: []
+    SOFT_DELETED: [PURGED, RESTORED]
+    PURGED: []
+    RESTORED: [ACTIVE]
+    ACTIVE: []
+    DENIED: []
+
+  # -------------------------------------------------------------------------
+  # Reconciliation state matrix (per ADR-E0.5-07).
+  # Reconciliation starts at QUEUED and ends at HEALTHY /
+  # DANGLING_REFERENCES / REVOKED_REFERENCES / ORPHAN_ASSETS /
+  # QUOTA_EXCEEDED / PURGED. Purged state is terminal.
+  # -------------------------------------------------------------------------
+
+  reconciliationStateMatrix:
+    QUEUED: [SCANNING]
+    SCANNING: [CROSS_SERVICE_RESOLVING, FAILED]
+    CROSS_SERVICE_RESOLVING: [EVALUATING, FAILED]
+    EVALUATING: [HEALTHY, DANGLING_REFERENCES, REVOKED_REFERENCES, ORPHAN_ASSETS, QUOTA_EXCEEDED, PURGED, FAILED]
+    HEALTHY: []
+    DANGLING_REFERENCES: [PURGED, FAILED]
+    REVOKED_REFERENCES: [PURGED, FAILED]
+    ORPHAN_ASSETS: [PURGED, FAILED]
+    QUOTA_EXCEEDED: [PURGED, FAILED]
+    PURGED: []
+    FAILED: []
+
+  # -------------------------------------------------------------------------
+  # Numeric bounds (R9.1 + design.md §5.1 + ADR-E0.5-07).
+  # -------------------------------------------------------------------------
+
+  maxItemsPerAlbum: 4096
+  maxAlbumsPerTenant: 8192
+  maxAlbumsPerUser: 512
+  maxReferencesPerItem: 64
+  maxCaptionLength: 4096
+  maxTagLength: 64
+  maxTagsPerItem: 64
+  maxAlbumTitleLength: 256
+  maxAlbumDescriptionLength: 4096
+  softDeleteRetentionDays: 365
+  objectLockComplianceDays: 30
+  reconciliationCadenceHours: 24
+  reconciliationBatchSize: 1024
+  reconciliationLookbackHours: 168
+  reconciliationP95BudgetSeconds: 150
+  reconciliationOutboxBatchSize: 256
+  albumVersionFloor: 1
+  albumIdLength: 64
+  albumItemIdLength: 64
+  albumReferencePseudoIdLength: 64
+  albumActorPseudoIdLength: 64
+  albumCorrelationIdLength: 128
+  albumObjectKeyLength: 1024
+  albumBcp47TagLength: 64
+  albumEtagLength: 128
+  activityHeartbeatSeconds: 30
+  activityHeartbeatMultiplier: 6
+
+  # -------------------------------------------------------------------------
+  # Audit hooks (E3.6 contract).
+  # -------------------------------------------------------------------------
+
+  auditActorKey: actorPseudoId
+  auditCorrelationKey: correlationId
+  auditRequiredKeys: [actorPseudoId, correlationId, albumId]
+
+  auditClassOnAlbum: media
+  auditActionOnAlbumCreated: media.album.created
+  auditActionOnAlbumRenamed: media.album.renamed
+  auditActionOnAlbumItemAdded: media.album.item.added
+  auditActionOnAlbumItemRemoved: media.album.item.removed
+  auditActionOnAlbumItemReordered: media.album.item.reordered
+  auditActionOnAlbumTagsSet: media.album.tags.set
+  auditActionOnAlbumCaptionSet: media.album.caption.set
+  auditActionOnAlbumReferenceAdded: media.album.reference.added
+  auditActionOnAlbumReferenceRemoved: media.album.reference.removed
+  auditActionOnAlbumReferenceResolved: media.album.reference.resolved
+  auditActionOnAlbumReferenceDangling: media.album.reference.dangling
+  auditActionOnAlbumReferenceRevoked: media.album.reference.revoked
+  auditActionOnAlbumReconciliationRun: media.album.reconciliation.run
+  auditActionOnAlbumReconciliationPurged: media.album.reconciliation.purged
+  auditActionOnAlbumSoftDeleted: media.album.soft_deleted
+  auditActionOnAlbumPurged: media.album.purged
+  auditActionOnAlbumVisibilityChanged: media.album.visibility.changed
+  auditActionOnAlbumDnaBucketRefused: media.album.dna_bucket.refused
+
+  # -------------------------------------------------------------------------
+  # Invariant reason codes (R9.1 + NFR1 + ADR-E0.5-08).
+  # -------------------------------------------------------------------------
+
+  invariants: [ALBUM_BLANK_ACTOR, ALBUM_BLANK_TENANT, ALBUM_BLANK_CORRELATION, ALBUM_BLANK_ALBUM_ID, ALBUM_BLANK_TITLE, ALBUM_TITLE_TOO_LONG, ALBUM_DESCRIPTION_TOO_LONG, ALBUM_VISIBILITY_FORBIDDEN, ALBUM_LIFECYCLE_FORBIDDEN, ALBUM_QUOTA_EXCEEDED, ALBUM_ITEMS_TOO_MANY, ALBUM_VERSION_MISMATCH, ALBUM_NOT_FOUND, ALBUM_ITEM_NOT_FOUND, ALBUM_OBJECT_KEY_TOO_LONG, ALBUM_ACTOR_PSEUDO_ID_TOO_LONG, ALBUM_CORRELATION_ID_TOO_LONG, ALBUM_DERIVED_OBJECT_KEY_NOT_READY, ALBUM_DNA_BUCKET_FORBIDDEN, ALBUM_REFERENCE_PSEUDO_ID_TOO_LONG, ALBUM_REFERENCE_KIND_UNKNOWN, ALBUM_REFERENCE_DANGLING, ALBUM_REFERENCE_REVOKED, ALBUM_REFERENCES_TOO_MANY, ALBUM_CAPTION_TOO_LONG, ALBUM_CAPTION_LANGUAGE_MISSING, ALBUM_TAG_TOO_LONG, ALBUM_TAG_TOO_MANY, ALBUM_BCP47_TAG_TOO_LONG, ALBUM_RECONCILIATION_FAILED, ALBUM_RECONCILIATION_QUOTA_EXCEEDED, ALBUM_CROSS_SERVICE_RAW_LEAK, ALBUM_AUDIT_KEY_FORBIDDEN]
+
+  # -------------------------------------------------------------------------
+  # Forbidden payload scan (R9.2 + R13 DNA + NFR1 secret + R15 raw PII).
+  # Matches outside this list are linter violations.
+  # -------------------------------------------------------------------------
+
+  forbiddenPayloadPatterns: [credential, api[_-]?key, private[_-]?key, authorization, bearer, raw[_-]?dna, raw[_-]?ssn, raw[_-]?passport, fastq, dna[_-]?raw, exif[_-]?gps, camera[_-]?serial, name[_-]?on[_-]?birth, social[_-]?security]
+
+  # -------------------------------------------------------------------------
+  # Reconciliation policy (ADR-E0.5-07 + privacy-and-legal-gate.md §6).
+  # The reconciliation Temporal workflow re-resolves every
+  # cross-service reference; an UNRESOLVED reference marks the album
+  # item as DANGLING and emits a `gp.media.v1.AlbumReferenceDangling`
+  # event. After `reconciliationLookbackHours` a DANGLING reference
+  # transitions to PURGED.
+  # -------------------------------------------------------------------------
+
+  reconciliationWorkflowId: media-album-reconciliation
+  reconciliationEmitsOutboxEvent: true
+  reconciliationEmitsAuditHook: true
+  reconciliationOutboxEventName: gp.media.v1.AlbumReconciliationPurged
+  reconciliationPurgesAfterLookback: true
+  reconciliationOutboxSchemaNamespace: media.album.reconciliation.v1
+  reconciliationEventEnvelope: [eventId, eventType, occurredAt, tenantId, aggregateId, aggregateVersion, traceId, payload]
+
+  # -------------------------------------------------------------------------
+  # Cross-service reference resolution policy.
+  # media-service stores ONLY opaque ids; the publishing service
+  # is the single source of truth for the resolved entity. The
+  # reconciliation workflow uses Kafka events
+  # (gp.genealogy.v1.* / gp.research.v1.*) to invalidate stale
+  # caches. Per `design.md` §5.1 ("Không join xuyên service").
+  # -------------------------------------------------------------------------
+
+  crossServiceReferencesOpaqueOnly: true
+  crossServiceReferencesResolveThrough: [gp.genealogy.v1, gp.research.v1]
+  crossServiceReferenceCacheInvalidatedOnEvent: true
+  crossServiceReferencePublisherOwnsTruth: true
+  crossServiceReferencesRequireVersioning: true
+
+  # -------------------------------------------------------------------------
+  # Soft-delete + retention + object garbage collection.
+  # A soft-deleted album is retained for `softDeleteRetentionDays`;
+  # after that window the object garbage collector purges the
+  # derived objects via the E7.x worker. LEGAL_HOLD albums
+  # skip purge until the hold is released.
+  # -------------------------------------------------------------------------
+
+  objectGarbageCollectorPurgesSoftDeletedAfter: true
+  objectGarbageCollectorSkipsLegalHold: true
+  objectGarbageCollectorP95BudgetSeconds: 600
+  objectGarbageCollectorBatchSize: 256
+  objectGarbageCollectorEmitsOutboxEvent: true
+  objectGarbageCollectorEmitsAuditHook: true
+
+  # -------------------------------------------------------------------------
+  # IETF BCP-47 caption language policy (R9.1).
+  # -------------------------------------------------------------------------
+
+  bcp47LanguageTagPattern: ^[a-z]{2,3}(-[A-Za-z]{4})?(-[A-Z]{2}|-[0-9]{3})?$
+
+  # -------------------------------------------------------------------------
+  # Outbox envelope policy (E3.6 + design.md §7.3).
+  # -------------------------------------------------------------------------
+
+  outboxEnvelope: [eventId, eventType, occurredAt, tenantId, aggregateId, aggregateVersion, traceId, payload]
+  outboxRequiredFields: [eventId, eventType, occurredAt, tenantId, aggregateId, aggregateVersion, traceId]
+  outboxPseudonymised: true
