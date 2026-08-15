@@ -1,0 +1,31 @@
+{{/*
+media service Service (E7.2).
+
+ClusterIP service exposing the Spring Boot Actuator
+HTTP port (8080) to the rest of the platform via
+Istio mesh routing. Domain authorization lives in
+the application; this Service MUST NOT add a Kong
+route or Istio AuthorizationPolicy.
+*/}}
+{{- $svc := .Values.services.media }}
+{{- if $svc.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-service
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service
+    gp.genealogy/contract-only: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+{{- end }}

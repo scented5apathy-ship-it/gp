@@ -547,7 +547,7 @@ _Requirements: R8, R10, R14, NFR1, NFR4_
   - Object mới ở quarantine; metadata state machine là source of truth.
   - Finalize idempotent; dọn abandoned multipart bằng lifecycle/workflow.
 
-- [ ] E7.2 Malware/metadata pipeline
+- [x] E7.2 Malware/metadata pipeline
 
   - Temporal orchestration gọi ClamAV và Apache Tika trong network sandbox.
   - Chỉ asset `READY` mới được liên kết; timeout/error chuyển trạng thái rõ ràng.

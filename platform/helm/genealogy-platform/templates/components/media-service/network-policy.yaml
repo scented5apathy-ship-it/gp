@@ -1,0 +1,105 @@
+{{/*
+media service NetworkPolicy (E7.2).
+
+Default-deny ingress + egress. Allowed egress is the
+strict E7.2 sandbox allowlist:
+
+  - apicurio (schema registry; per E2.3)
+  - vault-agent (sidecar that injects the
+    ExternalSecret resolved values; per E2.6)
+
+Plus DNS (kube-dns) and Istio mesh sidecar. The
+ClamAV + Tika adapters run as separate worker pods
+inside the same namespace; the media-service pod
+calls them over the in-mesh service mesh, never
+over the public internet. Per `design.md` §11
+(Binary parser không truy cập Internet, chạy
+non-root, read-only filesystem và resource quota).
+
+Allowed ingress: the same-namespace Istio sidecar
+plus the in-mesh service mesh (the
+`gp-services:media-service` peer).
+
+Per `agent-execution.md` §4.4 this template MUST NOT
+add an Istio AuthorizationPolicy; domain
+authorization lives in the application.
+*/}}
+{{- $svc := .Values.services.media }}
+{{- if $svc.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-service
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service
+    gp.genealogy/contract-only: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: media-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Apicurio schema registry (E2.3)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: apicurio
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Vault agent sidecar (E2.6)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: genealogy-platform
+              app.kubernetes.io/component: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+    # Postgres + Kafka in the data namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gp-data
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 9092
+{{- end }}

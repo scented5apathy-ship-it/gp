@@ -1538,3 +1538,103 @@ services:
     # matches the application.yml default; per-env values
     # files can override.
     relayCron: "0/15 * * * * *"
+
+  # -------------------------------------------------------------------------
+  # Media service (E7.1 upload lifecycle + E7.2 malware/metadata
+  # pipeline). Mirrors the research-service block above: explicit
+  # replica count, Spring Boot Actuator probe contract, Vault
+  # Agent Injector annotations, NetworkPolicy default-deny with
+  # the E7.2 sandbox egress allowlist, and the
+  # E7.2 pipeline numeric knobs (ClamAV / Tika timeouts,
+  # chunked-scan threshold, heartbeat, signature freshness).
+  #
+  # Per `agent-execution.md` §4.4 the workload template is
+  # intentionally explicit (no implicit "service" template).
+  # The chart linter (`scripts/lint-helm.mjs`) checks the
+  # structural keys. The policy values mirror
+  # `contracts/media/malware-metadata-pipeline-policy.yaml`
+  # so the chart cannot drift away from the contract.
+  # -------------------------------------------------------------------------
+  media:
+    enabled: true
+    replicas:
+      dev: 1
+      onprem: 2
+      saas: 3
+    image:
+      repository: genealogy/media-service
+      tag: "0.1.0"
+      registry: ghcr.io
+    resources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    probes:
+      livenessPath: /actuator/health/liveness
+      readinessPath: /actuator/health/readiness
+      startupPath: /actuator/health/readiness
+      liveness:
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 15
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+      startup:
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 24
+    serviceAccount:
+      create: true
+      name: media-service
+      vaultAnnotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: media-service
+        vault.hashicorp.com/agent-image: hashicorp/vault:1.18.0
+    secretRefs:
+      clusterSecretStore: vault-backend
+      databaseVaultPath: secret/dev/data/media-service/database
+      kafkaVaultPath: secret/dev/data/media-service/kafka
+      openfgaVaultPath: secret/dev/data/media-service/openfga
+      scannerVaultPath: secret/dev/data/media-service/scanner
+      extractorVaultPath: secret/dev/data/media-service/extractor
+    # E7.2 pipeline numeric knobs. The chart values are the
+    # single source of truth for the Helm-rendered pod;
+    # `contracts/media/malware-metadata-pipeline-policy.yaml`
+    # pins the same numbers via the linter.
+    pipeline:
+      timeoutClamavSeconds: 240
+      timeoutTikaSeconds: 480
+      timeoutSignatureUpdateSeconds: 1800
+      timeoutMetadataPersistSeconds: 240
+      timeoutCorpusValidationSeconds: 720
+      maxInlineScanBytes: 536870912
+      chunkSizeBytes: 8388608
+      maxChunksPerObject: 128
+      maxSignatureAgeHours: 24
+      minCorpusFixturesPerRelease: 9
+      activityHeartbeatSeconds: 30
+      activityHeartbeatMultiplier: 6
+      sandboxOnly: true
+      sandboxEgressAllowlist:
+        - apicurio
+        - vault-agent
+      pipelineIdempotentOnPipelineId: true
+      outputKeyDeterministicAndVersioned: true
+      integrityChecksumRequiredBeforeScan: true
+      integrityChecksumRequiredBeforeExtract: true
+      requireCleanMalwareScanForReady: true
+      requireSuccessOrEmptyMetadataForReady: true
+      infectedRetainsInQuarantine: true
+      suspiciousRetainsInQuarantine: true
+      scannerFailureRetainsInQuarantine: true
+      extractorFailureRetainsInQuarantine: true
+      signatureUpToDateRequiredBeforeScan: true
+      signatureStaleFailsScan: true
+      egressDeniedToPublicInternet: true

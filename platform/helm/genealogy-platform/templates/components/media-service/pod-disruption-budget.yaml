@@ -1,0 +1,26 @@
+{{/*
+media service PodDisruptionBudget (E7.2).
+
+Caps the voluntary disruption of the media-service
+workload so a node drain cannot take more than
+`maxUnavailable` pods offline simultaneously.
+*/}}
+{{- $svc := .Values.services.media }}
+{{- if $svc.enabled }}
+{{- $replicas := dig "saas" 3 $svc.replicas }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: media-service
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service
+    gp.genealogy/contract-only: "true"
+spec:
+  minAvailable: {{ max 1 (sub $replicas 1) }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: genealogy-platform
+      app.kubernetes.io/component: media-service
+{{- end }}

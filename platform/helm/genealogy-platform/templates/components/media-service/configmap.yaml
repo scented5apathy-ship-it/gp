@@ -1,0 +1,87 @@
+{{/*
+media service ConfigMap (E7.2).
+
+Spring Boot Actuator contract for the media-service
+workload. The chart's `_probes.tpl` uses `/healthz/*` for
+the platform components; media-service intentionally
+deviates because the Spring Boot starter owns the
+`/actuator/health/*` mapping, not the umbrella chart.
+
+The ConfigMap also pins the E7.2 malware / metadata
+pipeline policy knobs (timeouts, sandbox egress,
+signature freshness window, chunked scan threshold,
+heartbeat). Per `agent-execution.md` §4.4 the policy
+itself lives in `contracts/media/malware-metadata-pipeline-policy.yaml`;
+the ConfigMap only forwards the values.
+*/}}
+{{- $svc := .Values.services.media }}
+{{- if $svc.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: media-service-config
+  namespace: gp-services
+  labels:
+    app.kubernetes.io/part-of: genealogy-platform
+    app.kubernetes.io/component: media-service
+    gp.genealogy/contract-only: "true"
+data:
+  application.yml: |
+    spring:
+      application:
+        name: media-service
+      datasource:
+        url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+        username: ${DB_USERNAME}
+        password: ${DB_PASSWORD}
+      flyway:
+        enabled: true
+        locations: classpath:db/migration
+    server:
+      port: 8080
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,prometheus
+      endpoint:
+        health:
+          probes:
+            enabled: true
+          group:
+            liveness:
+              include: livenessState
+            readiness:
+              include: readinessState,db
+            startup:
+              include: readinessState
+    platform:
+      media:
+        pipeline:
+          sandboxOnly: true
+          sandboxEgressAllowlist: apicurio,vault-agent
+          integrityChecksumRequiredBeforeScan: true
+          integrityChecksumRequiredBeforeExtract: true
+          requireCleanMalwareScanForReady: true
+          requireSuccessOrEmptyMetadataForReady: true
+          infectedRetainsInQuarantine: true
+          suspiciousRetainsInQuarantine: true
+          scannerFailureRetainsInQuarantine: true
+          extractorFailureRetainsInQuarantine: true
+          signatureUpToDateRequiredBeforeScan: true
+          signatureStaleFailsScan: true
+          pipelineIdempotentOnPipelineId: true
+          outputKeyDeterministicAndVersioned: true
+          timeoutClamavSeconds: {{ $svc.pipeline.timeoutClamavSeconds }}
+          timeoutTikaSeconds: {{ $svc.pipeline.timeoutTikaSeconds }}
+          timeoutSignatureUpdateSeconds: {{ $svc.pipeline.timeoutSignatureUpdateSeconds }}
+          timeoutMetadataPersistSeconds: {{ $svc.pipeline.timeoutMetadataPersistSeconds }}
+          timeoutCorpusValidationSeconds: {{ $svc.pipeline.timeoutCorpusValidationSeconds }}
+          maxInlineScanBytes: {{ $svc.pipeline.maxInlineScanBytes }}
+          chunkSizeBytes: {{ $svc.pipeline.chunkSizeBytes }}
+          maxChunksPerObject: {{ $svc.pipeline.maxChunksPerObject }}
+          maxSignatureAgeHours: {{ $svc.pipeline.maxSignatureAgeHours }}
+          minCorpusFixturesPerRelease: {{ $svc.pipeline.minCorpusFixturesPerRelease }}
+          activityHeartbeatSeconds: {{ $svc.pipeline.activityHeartbeatSeconds }}
+          activityHeartbeatMultiplier: {{ $svc.pipeline.activityHeartbeatMultiplier }}
+{{- end }}
