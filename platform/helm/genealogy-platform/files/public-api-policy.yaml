@@ -1,0 +1,339 @@
+# contracts/importexport/public-api-policy.yaml
+#
+# E9.5 — Public API on Kong contract.
+#
+# Single source of truth for the importexport-service public API
+# surface that lives behind Kong. Defines the closed-set resources,
+# idempotency-key semantics, OAuth scope mapping, quota metrics and
+# abuse-test contract. Domain authorization stays in the service
+# (OpenFGA + ABAC overlay) per ADR-E0.5-06 / ADR-E0.5-07.
+#
+# Conventions mirror the E9.1 / E9.2 / E9.3 / E9.4 contracts.
+
+policyVersion: "1.0.0"
+owner: importexport
+domain: genealogy.platform.importexport.publicapi.v1
+contract: "E9.5 Public API on Kong"
+doc: |
+  Public API on Kong contract. Compatibility policy =
+  BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+publicApiResources:
+  doc: "Closed-set resources the public API exposes."
+  values:
+    - PUBLIC_PERSON
+    - PUBLIC_EVENT
+    - PUBLIC_PLACE
+    - PUBLIC_SOURCE
+    - PUBLIC_CITATION
+    - PUBLIC_MEDIA
+    - PUBLIC_TREE
+    - PUBLIC_ALBUM
+
+publicApiMethods:
+  doc: "Closed-set HTTP methods per resource."
+  values:
+    - GET
+    - HEAD
+    - OPTIONS
+
+publicApiScopes:
+  doc: "Closed-set OAuth2 scopes the public API requires."
+  values:
+    - public.read.basic
+    - public.read.living
+    - public.read.media
+    - public.read.tree
+    - public.read.album
+    - public.write.token
+    - admin.read.abuse
+
+publicApiIdempotencyKeys:
+  doc: "Closed-set idempotency-key semantics."
+  values:
+    - REQUIRED_FOR_WRITE
+    - OPTIONAL_FOR_READ
+    - REQUIRED_FOR_TOKEN_REDEEM
+    - OPTIONAL_FOR_HEALTH
+
+publicApiQuotaBuckets:
+  doc: "Closed-set quota buckets the public API enforces."
+  values:
+    - PER_IP_PER_MINUTE
+    - PER_IP_PER_HOUR
+    - PER_OAUTH_CLIENT_PER_MINUTE
+    - PER_OAUTH_CLIENT_PER_HOUR
+    - PER_TOKEN_PER_HOUR
+
+publicApiRateLimitOutcomes:
+  doc: "Closed-set rate-limit outcomes the API emits."
+  values:
+    - ALLOW
+    - SOFT_LIMIT
+    - HARD_LIMIT
+    - QUOTA_EXHAUSTED
+    - TOKEN_REDEEMED
+    - TOKEN_REVOKED
+
+publicApiVersionStates:
+  doc: "Closed-set version states for OpenAPI compatibility."
+  values:
+    - CURRENT
+    - PREVIOUS
+    - DEPRECATED
+    - SUNSET
+    - RETIRED
+
+publicApiFailureReasons:
+  doc: "Closed-set failure reasons emitted by the public API."
+  values:
+    - PUBLIC_API_RESOURCE_UNKNOWN
+    - PUBLIC_API_METHOD_FORBIDDEN
+    - PUBLIC_API_VERSION_UNKNOWN
+    - PUBLIC_API_VERSION_DEPRECATED
+    - PUBLIC_API_VERSION_SUNSET
+    - PUBLIC_API_VERSION_RETIRED
+    - PUBLIC_API_SCOPE_MISSING
+    - PUBLIC_API_SCOPE_INSUFFICIENT
+    - PUBLIC_API_IDEMPOTENCY_KEY_MISSING
+    - PUBLIC_API_IDEMPOTENCY_KEY_REUSED_CONFLICT
+    - PUBLIC_API_IDEMPOTENCY_KEY_EXPIRED
+    - PUBLIC_API_RATE_LIMIT_EXCEEDED
+    - PUBLIC_API_QUOTA_EXCEEDED
+    - PUBLIC_API_TOKEN_INVALID
+    - PUBLIC_API_TOKEN_REVOKED
+    - PUBLIC_API_TOKEN_REDEEMED_TWICE
+    - PUBLIC_API_DNA_BUCKET_FORBIDDEN
+    - PUBLIC_API_PII_LEAK_DETECTED
+    - PUBLIC_API_TENANT_MISMATCH
+    - PUBLIC_API_ABUSE_SIGNAL_DETECTED
+
+publicApiAuditEvents:
+  doc: "Closed-set audit hooks the public API emits."
+  values:
+    - PUBLIC_API_REQUEST_RECEIVED
+    - PUBLIC_API_REQUEST_ALLOWED
+    - PUBLIC_API_REQUEST_DENIED
+    - PUBLIC_API_RATE_LIMIT_BREACHED
+    - PUBLIC_API_QUOTA_BREACHED
+    - PUBLIC_API_TOKEN_REDEEMED
+    - PUBLIC_API_TOKEN_REVOKED
+    - PUBLIC_API_VERSION_NEGOTIATED
+    - PUBLIC_API_IDEMPOTENCY_KEY_REUSED
+    - PUBLIC_API_DNA_BUCKET_REFUSED
+    - PUBLIC_API_PII_LEAK_REFUSED
+    - PUBLIC_API_ABUSE_SIGNAL_RECORDED
+
+publicApiQuotaMetrics:
+  doc: "Closed-set quota metrics exported to OTel."
+  values:
+    - REQUESTS_PER_MINUTE
+    - REQUESTS_PER_HOUR
+    - BYTES_PER_MINUTE
+    - ERRORS_PER_MINUTE
+    - TOKEN_REDEMPTIONS_PER_HOUR
+    - ABUSE_SIGNALS_PER_HOUR
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the public API sandbox."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+    - temporal-frontend
+
+# ---------------------------------------------------------------------------
+# 3. State machine
+# ---------------------------------------------------------------------------
+
+publicApiTokenStateMatrix:
+  doc: "Public API token state machine — every status reachable from ISSUED."
+  initialStatus: ISSUED
+  statuses:
+    - status: ISSUED
+      transitions: [ACTIVE, REVOKED, EXPIRED]
+    - status: ACTIVE
+      transitions: [EXPIRED, REVOKED, REDEEMED]
+    - status: REDEEMED
+      transitions: [REVOKED, EXPIRED]
+    - status: EXPIRED
+      transitions: []
+      terminal: true
+    - status: REVOKED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  kongEdgeRoutingRequired: true
+  kongEdgeAuthRequired: true
+  kongEdgeRateLimitRequired: true
+  kongEdgeCorrelationIdRequired: true
+  openapiContractRequired: true
+  idempotencyKeyRequiredForWrites: true
+  idempotencyKeyReplaySafe: true
+  oauthScopeStrictMapping: true
+  scopeMustMapToOpenFga: true
+  domainAuthorizationInService: true
+  tenantBoundaryOnEveryRepository: true
+  outboxRelaySeparated: true
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  publicProjectionOnly: true
+  abuseSignalDetectionRequired: true
+  contractCompatibilityChecked: true
+  quotaMetricsExported: true
+  adrRequiredBeforeExternalIdp: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  publicApiMaxPayloadBytes: 1048576
+  publicApiMaxHeaderBytes: 8192
+  publicApiMaxQueryBytes: 4096
+  publicApiIdempotencyKeyLength: 128
+  publicApiIdempotencyKeyTtlSeconds: 86400
+  publicApiVersionSunsetSeconds: 31536000
+  publicApiVersionRetiredSeconds: 63072000
+  publicApiPerIpRequestsPerMinute: 60
+  publicApiPerIpRequestsPerHour: 1000
+  publicApiPerClientRequestsPerMinute: 120
+  publicApiPerClientRequestsPerHour: 5000
+  publicApiPerTokenRequestsPerHour: 500
+  publicApiTokensPerClientPerHour: 100
+  publicApiHealthHeartbeatSeconds: 30
+  publicApiQuotaHeartbeatSeconds: 60
+  publicApiTokenTtlSeconds: 86400
+  publicApiTokenRevocationPropagationSeconds: 30
+  publicApiCorrelationIdLength: 128
+  publicApiActorPseudoIdLength: 64
+  publicApiTenantPseudoIdLength: 64
+  publicApiClientIdLength: 64
+  publicApiResourceMaxDepth: 8
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  publicApiPerIpRequestsPerMinute: 60
+  publicApiPerIpRequestsPerHour: 1000
+  publicApiPerIpPerHourToMinuteRatio: 16
+  publicApiPerClientRequestsPerMinute: 120
+  publicApiPerClientRequestsPerHour: 5000
+  publicApiPerClientPerHourToMinuteRatio: 41
+  publicApiPerTokenRequestsPerHour: 500
+  publicApiTokensPerClientPerHour: 100
+  publicApiTokenHeartbeatMultiplier: 30
+  publicApiQuotaHeartbeatMultiplier: 60
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the public API."
+  items:
+    - type: gp.importexport.v1.PublicApiRequestAllowed
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.importexport.v1.PublicApiQuotaBreached
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - PUBLIC_API_REQUEST_RECEIVED
+    - PUBLIC_API_REQUEST_ALLOWED
+    - PUBLIC_API_REQUEST_DENIED
+    - PUBLIC_API_RATE_LIMIT_BREACHED
+    - PUBLIC_API_QUOTA_BREACHED
+    - PUBLIC_API_TOKEN_REDEEMED
+    - PUBLIC_API_TOKEN_REVOKED
+    - PUBLIC_API_VERSION_NEGOTIATED
+    - PUBLIC_API_IDEMPOTENCY_KEY_REUSED
+    - PUBLIC_API_DNA_BUCKET_REFUSED
+    - PUBLIC_API_PII_LEAK_REFUSED
+    - PUBLIC_API_ABUSE_SIGNAL_RECORDED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - rawSocialSecurityNumber
+  - rawPassport
+  - rawDriverLicense
+  - rawTaxId
+  - rawMedicalRecord
+  - rawPaymentInstrument
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Custom OAuth/OIDC server (Keycloak per E3.1)"
+    - "Custom rate limiter (Kong per E2.2)"
+    - "Custom quota database (Kong + OTel metrics are enough)"
+    - "Custom reverse proxy / API gateway (Kong is enough)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"
+    - "Custom OpenAPI generator (re-use the platform generator)"

@@ -1,0 +1,370 @@
+# contracts/importexport/gedcom-parser-validator-policy.yaml
+#
+# E9.2 — GEDCOM 7 parser / validator with 5.5.1 mapping contract.
+#
+# Single source of truth for the importexport-service streaming
+# GEDCOM 7 parser, 5.5.1 mapper, extension/provenance preservation
+# and dry-run validator. Streaming + size/depth/count/encoding
+# limits are enforced before any domain write. The parser runs
+# inside the importexport-service sandbox (network allowlist per
+# E9.1) and never executes user-supplied code.
+#
+# Conventions mirror the E9.1 contract.
+
+policyVersion: "1.0.0"
+owner: importexport
+domain: genealogy.platform.importexport.gedcom.v1
+contract: "E9.2 GEDCOM parser + validator"
+doc: |
+  GEDCOM 7 parser + 5.5.1 mapping contract. Defines the closed-set
+  record kinds, encoding, limits, provenance preservation,
+  dry-run error catalogue and sandbox egress. Compatibility
+  policy = BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+gedcomVersions:
+  doc: "Closed-set GEDCOM versions the parser MUST accept."
+  values:
+    - "5.5.1"
+    - "7.0"
+
+gedcomEncodings:
+  doc: "Closed-set text encodings the parser MUST accept."
+  values:
+    - UTF-8
+    - UTF-16LE
+    - UTF-16BE
+    - ASCII
+
+gedcomLineEndings:
+  doc: "Closed-set line ending styles the parser MUST accept."
+  values:
+    - LF
+    - CRLF
+    - CR
+
+gedcomRecordKinds:
+  doc: "Closed-set top-level GEDCOM record kinds."
+  values:
+    - INDI
+    - FAM
+    - SOUR
+    - REPO
+    - OBJE
+    - NOTE
+    - SUBM
+    - TRLR
+
+gedcomExtensionTags:
+  doc: "Closed-set GEDCOM 7 extension tag namespaces."
+  values:
+    - "_MEDI"
+    - "_DNA"
+    - "_CUSTOM"
+    - "_SHARED"
+    - "_PROVENANCE"
+
+gedcomValidationStatuses:
+  doc: "Closed-set validation statuses emitted per record."
+  values:
+    - VALID
+    - RECOVERABLE
+    - INVALID_STRUCTURE
+    - INVALID_ENCODING
+    - INVALID_LINE_LENGTH
+    - INVALID_DEPTH
+    - INVALID_TAG
+    - INVALID_REFERENCE
+    - INVALID_DATE
+    - INVALID_NAME
+    - INVALID_PLACE
+    - INVALID_PROVENANCE
+
+gedcomDryRunSeverities:
+  doc: "Closed-set severity codes emitted by the dry-run validator."
+  values:
+    - INFO
+    - WARNING
+    - ERROR
+    - CRITICAL
+
+gedcomProvenanceKinds:
+  doc: "Closed-set provenance kinds preserved across mapping."
+  values:
+    - SOURCE_CITATION
+    - TRANSCRIBER_NAME
+    - TRANSCRIPTION_DATE
+    - CONFIDENCE_LEVEL
+    - LICENSE_REFERENCE
+    - EXTENSION_AUTHOR
+    - EXTENSION_VERSION
+
+gedcomMappingOutcomes:
+  doc: "Closed-set mapping outcomes for 5.5.1 → 7.0."
+  values:
+    - MAPPED_NATIVE
+    - MAPPED_TRANSFORMED
+    - MAPPED_WITH_NOTES
+    - MAPPED_WITH_PROVENANCE_PRESERVED
+    - DROPPED_UNSUPPORTED
+    - DROPPED_DNA_BUCKET
+    - DROPPED_PII_PAYLOAD
+    - FAILED_MAPPING
+
+gedcomFailureReasons:
+  doc: "Closed-set failure reasons emitted by the parser."
+  values:
+    - GEDCOM_PAYLOAD_TOO_LARGE
+    - GEDCOM_LINE_LENGTH_EXCEEDED
+    - GEDCOM_DEPTH_EXCEEDED
+    - GEDCOM_RECORD_COUNT_EXCEEDED
+    - GEDCOM_TAG_COUNT_EXCEEDED
+    - GEDCOM_ENCODING_INVALID
+    - GEDCOM_LINE_ENDING_INVALID
+    - GEDCOM_BOM_INVALID
+    - GEDCOM_EXTENSION_BLOCKED
+    - GEDCOM_REFERENCE_UNRESOLVED
+    - GEDCOM_DATE_INVALID
+    - GEDCOM_PLACE_INVALID
+    - GEDCOM_NAME_INVALID
+    - GEDCOM_PROVENANCE_MISSING
+    - GEDCOM_MAPPING_FAILED
+    - GEDCOM_DNA_BUCKET_FORBIDDEN
+    - GEDCOM_PII_LEAK_DETECTED
+    - GEDCOM_DRY_RUN_ONLY_OK
+    - GEDCOM_PAYLOAD_ENCRYPTED_UNSUPPORTED
+    - GEDCOM_COMPRESSION_UNSUPPORTED
+
+gedcomAuditEvents:
+  doc: "Closed-set audit hooks the parser + validator emit."
+  values:
+    - GEDCOM_PARSE_STARTED
+    - GEDCOM_PARSE_FINISHED
+    - GEDCOM_VALIDATION_FINISHED
+    - GEDCOM_DRY_RUN_FINISHED
+    - GEDCOM_MAPPING_FINISHED
+    - GEDCOM_PROVENANCE_PRESERVED
+    - GEDCOM_DNA_BUCKET_REFUSED
+    - GEDCOM_PII_LEAK_REFUSED
+    - GEDCOM_EXTENSION_DROPPED
+    - GEDCOM_LIMIT_BREACHED
+    - GEDCOM_REFERENCE_UNRESOLVED
+
+gedcomRecordClasses:
+  doc: "Closed-set classes used in JSON payload projection."
+  values:
+    - PERSON
+    - FAMILY
+    - SOURCE
+    - REPOSITORY
+    - MEDIA
+    - SUBMITTER
+    - TRAILER
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the GEDCOM parser sandbox."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+    - temporal-frontend
+
+# ---------------------------------------------------------------------------
+# 3. State matrix
+# ---------------------------------------------------------------------------
+
+gedcomParseStateMatrix:
+  doc: "GEDCOM parse state machine — every status reachable from QUEUED."
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [STREAMING, FAILED, BLOCKED]
+    - status: STREAMING
+      transitions: [VALIDATING, FAILED]
+    - status: VALIDATING
+      transitions: [MAPPING, FAILED]
+    - status: MAPPING
+      transitions: [PROVENANCE_PRESERVED, FAILED]
+    - status: PROVENANCE_PRESERVED
+      transitions: [FINALIZED, FAILED]
+    - status: FINALIZED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: BLOCKED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  streamingParserRequired: true
+  boundedMemoryFootprint: true
+  noFullFileLoad: true
+  userCodeExecutionForbidden: true
+  extensionTagSandboxEnforced: true
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  dnaBucketAccess: FORBIDDEN
+  provenancePreservationRequired: true
+  mappingReproducible: true
+  dryRunDefaultBeforeCommit: true
+  domainWriteForbiddenDuringDryRun: true
+  outboxRelaySeparated: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  rawPayloadInEventForbidden: true
+  secretInPayloadForbidden: true
+  tenantBoundaryOnEveryRepository: true
+  adrRequiredBeforeExternalParser: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  gedcomMaxPayloadBytes: 52428800
+  gedcomMaxLineLength: 4096
+  gedcomMaxDepth: 32
+  gedcomMaxRecordCount: 5000000
+  gedcomMaxTagCount: 25000000
+  gedcomMaxExtensionTagBytes: 1024
+  gedcomMaxReferenceCount: 1000000
+  gedcomStreamingChunkBytes: 65536
+  gedcomValidationTimeoutSeconds: 600
+  gedcomValidationHeartbeatSeconds: 30
+  gedcomMappingTimeoutSeconds: 900
+  gedcomMappingHeartbeatSeconds: 60
+  gedcomBatchInsertSize: 1000
+  gedcomBatchInsertTimeoutSeconds: 300
+  gedcomMaxProvenanceLinesPerRecord: 256
+  gedcomNameMaxLength: 256
+  gedcomPlaceMaxLength: 512
+  gedcomDateMaxLength: 128
+  gedcomNoteMaxLength: 4096
+  gedcomSourceCitationMaxLength: 1024
+  gedcomProvenanceAuthorMaxLength: 256
+  gedcomProvenanceVersionMaxLength: 64
+  gedcomActorPseudoIdLength: 64
+  gedcomTenantPseudoIdLength: 64
+  gedcomCorrelationIdLength: 128
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  gedcomValidationTimeoutSeconds: 600
+  gedcomValidationHeartbeatSeconds: 30
+  gedcomValidationHeartbeatMultiplier: 20
+  gedcomMappingTimeoutSeconds: 900
+  gedcomMappingHeartbeatSeconds: 60
+  gedcomMappingHeartbeatMultiplier: 15
+  gedcomBatchInsertTimeoutSeconds: 300
+  gedcomBatchInsertSize: 1000
+  gedcomBatchInsertPerRecordBudgetMultiplier: 0
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the GEDCOM parser."
+  items:
+    - type: gp.importexport.v1.GedcomParsed
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.importexport.v1.GedcomValidationFinished
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - GEDCOM_PARSE_STARTED
+    - GEDCOM_PARSE_FINISHED
+    - GEDCOM_VALIDATION_FINISHED
+    - GEDCOM_DRY_RUN_FINISHED
+    - GEDCOM_MAPPING_FINISHED
+    - GEDCOM_PROVENANCE_PRESERVED
+    - GEDCOM_DNA_BUCKET_REFUSED
+    - GEDCOM_PII_LEAK_REFUSED
+    - GEDCOM_EXTENSION_DROPPED
+    - GEDCOM_LIMIT_BREACHED
+    - GEDCOM_REFERENCE_UNRESOLVED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - rawSocialSecurityNumber
+  - rawPassport
+  - rawDriverLicense
+  - rawTaxId
+  - rawMedicalRecord
+  - rawPaymentInstrument
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Custom GEDCOM parser (re-use the platform streaming parser)"
+    - "Generic streaming worker (Temporal activity is enough)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom XML parser (GEDCOM is line-based, not XML)"
+    - "External conversion service (mapping is local + versioned)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"

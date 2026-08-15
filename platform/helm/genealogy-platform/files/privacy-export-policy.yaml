@@ -1,0 +1,383 @@
+# contracts/importexport/privacy-export-policy.yaml
+#
+# E9.4 — Privacy-aware export contract.
+#
+# Single source of truth for the importexport-service export bundle
+# generator. Defines the closed-set export scopes, formats, redaction
+# modes, DNA default-off behaviour, signed download lifecycle, and
+# sandbox egress. The export MUST go through preview redaction and
+# consent (DNA) before producing a bundle; the bundle is signed and
+# expires; audit + retention cleanup are mandatory.
+#
+# Conventions mirror the E9.1 / E9.2 / E9.3 contracts.
+
+policyVersion: "1.0.0"
+owner: importexport
+domain: genealogy.platform.importexport.export.v1
+contract: "E9.4 Privacy-aware export"
+doc: |
+  Privacy-aware export contract. Compatibility policy =
+  BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+exportScopes:
+  doc: "Closed-set export scopes the service supports."
+  values:
+    - FULL_TREE
+    - BRANCH_SUBGRAPH
+    - PERSON_CENTRIC
+    - ANCESTORS_ONLY
+    - DESCENDANTS_ONLY
+    - FAMILY_UNIT
+
+exportFormats:
+  doc: "Closed-set output formats the service produces."
+  values:
+    - GEDCOM_7
+    - GEDCOM_5_5_1
+    - CSV
+    - JSON
+    - PDF
+    - MEDIA_BUNDLE_ZIP
+    - MEDIA_BUNDLE_TAR
+
+exportBundleComponents:
+  doc: "Closed-set components that MAY appear in a bundle."
+  values:
+    - GEDCOM_PAYLOAD
+    - CSV_PAYLOAD
+    - JSON_PAYLOAD
+    - PDF_PAYLOAD
+    - MEDIA_PAYLOAD
+    - CHECKSUM_MANIFEST
+    - SIGNATURE_PAYLOAD
+    - CONSENT_RECEIPT
+    - REDACTION_LOG
+
+exportRedactionLevels:
+  doc: "Closed-set redaction levels the service may apply."
+  values:
+    - NONE
+    - LIVING_ONLY
+    - MINOR_ONLY
+    - LIVING_AND_MINOR
+    - SENSITIVE_FULL
+    - DNA_DEFAULT_OFF
+    - CONSENT_REQUIRED
+
+exportRedactionOutcomes:
+  doc: "Closed-set redaction outcomes emitted per record."
+  values:
+    - KEPT_AS_IS
+    - REDACTED_LIVING
+    - REDACTED_MINOR
+    - REDACTED_DNA
+    - REDACTED_CONSENT
+    - OMITTED_ENTIRELY
+    - DROPPED_PII_PAYLOAD
+
+exportConsentReceipts:
+  doc: "Closed-set consent receipt types the export accepts."
+  values:
+    - DNA_PURPOSE_OWN
+    - DNA_PURPOSE_FAMILY_MATCH
+    - DNA_PURPOSE_RESEARCH
+    - FULL_TREE_LIVING_MINOR
+    - FULL_TREE_PUBLIC_RELEASE
+    - MEDIA_PUBLIC_RELEASE
+
+exportSignLifecycleStatuses:
+  doc: "Closed-set lifecycle statuses of a signed download URL."
+  values:
+    - PENDING
+    - SIGNED
+    - ACTIVE
+    - EXPIRED
+    - REVOKED
+    - DOWNLOADED
+    - CLEANED_UP
+
+exportRetentionPolicies:
+  doc: "Closed-set retention policies the cleanup scheduler applies."
+  values:
+    - DELETE_AFTER_EXPIRY
+    - DELETE_AFTER_DOWNLOAD
+    - DELETE_AFTER_REVOCATION
+    - DELETE_AFTER_LEGAL_HOLD_RELEASED
+
+exportFailureReasons:
+  doc: "Closed-set failure reasons emitted by the export pipeline."
+  values:
+    - EXPORT_SCOPE_UNKNOWN
+    - EXPORT_FORMAT_UNKNOWN
+    - EXPORT_BUNDLE_COMPONENT_MISSING
+    - EXPORT_REDACTION_LEVEL_FORBIDDEN
+    - EXPORT_DNA_DEFAULT_OFF_VIOLATION
+    - EXPORT_CONSENT_RECEIPT_MISSING
+    - EXPORT_CONSENT_RECEIPT_EXPIRED
+    - EXPORT_CONSENT_RECEIPT_REVOKED
+    - EXPORT_SIGN_FAILED
+    - EXPORT_SIGN_URL_GENERATION_FAILED
+    - EXPORT_SIGN_URL_EXPIRED
+    - EXPORT_DOWNLOAD_QUOTA_EXCEEDED
+    - EXPORT_REDACTION_PREVIEW_DENIED
+    - EXPORT_BUNDLE_TOO_LARGE
+    - EXPORT_CHECKSUM_MISMATCH
+    - EXPORT_PII_LEAK_DETECTED
+    - EXPORT_DNA_BUCKET_FORBIDDEN
+    - EXPORT_TENANT_MISMATCH
+    - EXPORT_RETENTION_CLEANUP_FAILED
+    - EXPORT_USER_PROVIDED_PAYLOAD_TOO_LARGE
+
+exportAuditEvents:
+  doc: "Closed-set audit hooks the export pipeline emits."
+  values:
+    - EXPORT_PREVIEW_QUEUED
+    - EXPORT_REDACTION_PREVIEW_READY
+    - EXPORT_DNA_DEFAULT_OFF_APPLIED
+    - EXPORT_CONSENT_VERIFIED
+    - EXPORT_BUNDLE_GENERATED
+    - EXPORT_BUNDLE_SIGNED
+    - EXPORT_SIGN_URL_ISSUED
+    - EXPORT_DOWNLOAD_STARTED
+    - EXPORT_DOWNLOAD_FINISHED
+    - EXPORT_DOWNLOAD_REVOKED
+    - EXPORT_DOWNLOAD_EXPIRED
+    - EXPORT_RETENTION_CLEANED_UP
+    - EXPORT_DNA_BUCKET_REFUSED
+    - EXPORT_PII_LEAK_REFUSED
+    - EXPORT_FAILED
+
+exportScopesToRedactionFloor:
+  doc: "Mapping export scope → minimum redaction level."
+  pairs:
+    FULL_TREE: LIVING_AND_MINOR
+    BRANCH_SUBGRAPH: LIVING_ONLY
+    PERSON_CENTRIC: LIVING_ONLY
+    ANCESTORS_ONLY: LIVING_ONLY
+    DESCENDANTS_ONLY: LIVING_ONLY
+    FAMILY_UNIT: LIVING_ONLY
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the export sandbox."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+    - temporal-frontend
+
+# ---------------------------------------------------------------------------
+# 3. State machine
+# ---------------------------------------------------------------------------
+
+exportBundleStateMatrix:
+  doc: "Export bundle state machine — every status reachable from PENDING."
+  initialStatus: PENDING
+  statuses:
+    - status: PENDING
+      transitions: [SIGNED, FAILED, BLOCKED]
+    - status: SIGNED
+      transitions: [ACTIVE, REVOKED, FAILED]
+    - status: ACTIVE
+      transitions: [DOWNLOADED, EXPIRED, REVOKED]
+    - status: DOWNLOADED
+      transitions: [CLEANED_UP, REVOKED]
+    - status: EXPIRED
+      transitions: [CLEANED_UP]
+    - status: REVOKED
+      transitions: [CLEANED_UP]
+    - status: CLEANED_UP
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: BLOCKED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  privacyFirstByDefault: true
+  dnaDefaultOff: true
+  dnaRequiresExplicitConsent: true
+  livingRedactedByDefault: true
+  minorRedactedByDefault: true
+  redactionPreviewBeforeCommit: true
+  signedUrlShortLived: true
+  signedUrlRevocable: true
+  checksumManifestRequired: true
+  auditOnEveryDownload: true
+  retentionSchedulerRequired: true
+  outboxRelaySeparated: true
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  tenantBoundaryOnEveryRepository: true
+  secretInBundleForbidden: true
+  adrRequiredBeforeExternalRedactor: true
+  legalHoldRespected: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  exportPreviewMaxRecords: 1000000
+  exportPreviewExpirySeconds: 604800
+  exportBundleMaxBytes: 524288000
+  exportBundleMediaMaxBytes: 1073741824
+  exportBundleMaxFiles: 100000
+  exportSignUrlTtlSeconds: 3600
+  exportSignUrlRevocationPropagationSeconds: 30
+  exportDownloadMaxConcurrent: 4
+  exportDownloadHeartbeatSeconds: 30
+  exportRetentionCleanupIntervalSeconds: 3600
+  exportRetentionHeartbeatSeconds: 60
+  exportChecksumAlgorithm: SHA-256
+  exportBundleTimeoutSeconds: 900
+  exportBundleHeartbeatSeconds: 60
+  exportNameMaxLength: 256
+  exportPlaceMaxLength: 512
+  exportNoteMaxLength: 4096
+  exportIdLength: 64
+  exportActorPseudoIdLength: 64
+  exportTenantPseudoIdLength: 64
+  exportCorrelationIdLength: 128
+  exportUserPayloadMaxBytes: 52428800
+  exportDnaDefaultOffFloor: 0
+  exportConsentReceiptMaxLength: 4096
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  exportBundleTimeoutSeconds: 900
+  exportBundleHeartbeatSeconds: 60
+  exportBundleHeartbeatMultiplier: 15
+  exportRetentionHeartbeatMultiplier: 60
+  exportSignUrlTtlSeconds: 3600
+  exportSignUrlRevocationPropagationSeconds: 30
+  exportSignUrlTtlMultiplier: 120
+  exportDnaDefaultOffFloor: 0
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the export pipeline."
+  items:
+    - type: gp.importexport.v1.ExportBundleSigned
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.importexport.v1.ExportDownloadRevoked
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.importexport.v1.ExportRetentionCleanedUp
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - EXPORT_PREVIEW_QUEUED
+    - EXPORT_REDACTION_PREVIEW_READY
+    - EXPORT_DNA_DEFAULT_OFF_APPLIED
+    - EXPORT_CONSENT_VERIFIED
+    - EXPORT_BUNDLE_GENERATED
+    - EXPORT_BUNDLE_SIGNED
+    - EXPORT_SIGN_URL_ISSUED
+    - EXPORT_DOWNLOAD_STARTED
+    - EXPORT_DOWNLOAD_FINISHED
+    - EXPORT_DOWNLOAD_REVOKED
+    - EXPORT_DOWNLOAD_EXPIRED
+    - EXPORT_RETENTION_CLEANED_UP
+    - EXPORT_DNA_BUCKET_REFUSED
+    - EXPORT_PII_LEAK_REFUSED
+    - EXPORT_FAILED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - rawSocialSecurityNumber
+  - rawPassport
+  - rawDriverLicense
+  - rawTaxId
+  - rawMedicalRecord
+  - rawPaymentInstrument
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Custom redactor (use the platform-wide redactor)"
+    - "Custom signing service (Vault transit is enough)"
+    - "Custom retention scheduler (Temporal schedule is enough)"
+    - "Distributed transaction (outbox relay + signed URL is enough)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"
+    - "Custom PII / DNA detector (use the platform-wide redactor)"

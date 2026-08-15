@@ -182,3 +182,104 @@ export function asArray(value) {
   if (typeof value === "object") return Object.values(value);
   return [value];
 }
+
+/**
+ * Validate that the actual array exactly equals the expected closed
+ * set (order-independent, no duplicates). Reports via the supplied
+ * ok / fail callbacks so the caller owns the violations list.
+ */
+export function assertClosedSet(name, expected, actual, label, ok, fail) {
+  const expectedSorted = [...expected].sort().join(",");
+  const actualSorted = [...actual].sort().join(",");
+  if (expectedSorted !== actualSorted) {
+    fail(
+      `${label || name}: closed-set mismatch.\n     expected: ${expectedSorted}\n     actual:   ${actualSorted}`,
+    );
+    return;
+  }
+  if (expected.length === 0) {
+    fail(`${label || name}: empty closed-set is forbidden`);
+    return;
+  }
+  ok(`${label || name} (${actual.length} values)`);
+}
+
+/**
+ * Validate a state machine block:
+ *  - terminal statuses MUST have empty transitions;
+ *  - non-terminal statuses MUST have at least one transition;
+ *  - every status declared in the matrix MUST appear in expectedStatuses;
+ *  - no status outside expectedStatuses may exist;
+ *  - every status must be reachable from initialStatus via BFS
+ *    (terminal + initial are excluded from reachability scan);
+ *  - initialStatus MUST match the supplied initial parameter.
+ */
+export function assertStateMatrix(label, matrix, expectedStatuses, initialStatus, ok, fail) {
+  if (!matrix || typeof matrix !== "object") {
+    fail(`${label}: state matrix missing`);
+    return;
+  }
+  const statuses = asArray(matrix.statuses);
+  if (statuses.length === 0) {
+    fail(`${label}: state matrix is empty`);
+    return;
+  }
+  const seen = new Set();
+  const reachable = new Set([initialStatus]);
+  const frontier = [initialStatus];
+  for (const entry of statuses) {
+    if (!entry || typeof entry !== "object") {
+      fail(`${label}: invalid status entry ${JSON.stringify(entry)}`);
+      continue;
+    }
+    const status = entry.status;
+    if (!status) {
+      fail(`${label}: status entry missing 'status' field`);
+      continue;
+    }
+    seen.add(status);
+    const transitions = asArray(entry.transitions);
+    if (!Array.isArray(transitions)) {
+      fail(`${label}: ${status}.transitions must be an array`);
+      continue;
+    }
+    if (entry.terminal === true) {
+      if (transitions.length !== 0) {
+        fail(`${label}: terminal status ${status} MUST have empty transitions (got ${JSON.stringify(transitions)})`);
+      } else {
+        ok(`${label}: terminal status ${status} has empty transitions`);
+      }
+    } else {
+      if (transitions.length === 0) {
+        fail(`${label}: non-terminal status ${status} MUST declare at least one transition`);
+      }
+    }
+    for (const t of transitions) {
+      if (typeof t !== "string") {
+        fail(`${label}: ${status} transition ${JSON.stringify(t)} is not a string`);
+      }
+    }
+    if (entry.terminal !== true) {
+      for (const t of transitions) reachable.add(t);
+    }
+  }
+  if (matrix.initialStatus !== initialStatus) {
+    fail(`${label}: initialStatus MUST equal ${initialStatus} (got ${matrix.initialStatus})`);
+  }
+  for (const s of expectedStatuses) {
+    if (!seen.has(s)) {
+      fail(`${label}: expected status ${s} missing`);
+    }
+  }
+  for (const s of seen) {
+    if (!expectedStatuses.includes(s)) {
+      fail(`${label}: unexpected status ${s} in matrix`);
+    }
+  }
+  for (const s of seen) {
+    if (!reachable.has(s) && s !== initialStatus) {
+      fail(`${label}: status ${s} is unreachable from ${initialStatus}`);
+    }
+  }
+  ok(`${label}: ${seen.size} statuses, ${expectedStatuses.length - seen.size} missing`);
+}

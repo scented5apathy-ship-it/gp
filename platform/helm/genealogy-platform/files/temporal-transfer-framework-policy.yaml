@@ -1,0 +1,486 @@
+# contracts/importexport/temporal-transfer-framework-policy.yaml
+#
+# E9.1 — Temporal transfer framework contract.
+#
+# Single source of truth for the importexport-service Temporal
+# workflows and activities used by E9.1–E9.6. Defines the durable
+# workflow envelope, signal/query vocabulary, activity idempotency
+# rules, heartbeat / progress / checkpoint / compensation contract,
+# and the closed-set state machines for import / export / public-api /
+# webhook runs. The platform-provided Temporal service (per
+# `design.md` §11 + ADR-E0.5-07) is the only scheduler / retry store;
+# `importexport-service` MUST NOT introduce a generic job-state or
+# retry database.
+#
+# Conventions mirror the E8 search contracts (closed-set vocabularies,
+# boolean guards, numeric bounds, invariants, state machines,
+# forbidden payload patterns, sandbox egress allowlist, audit hook
+# catalogue, outbox envelope). Sandbox egress allowlist reflects the
+# E9 sandbox: postgres + apicurio + vault-agent + openfga + audit-service
+# + kafka-broker + temporal-frontend (Temporal task list MUST go through
+# the namespace's dedicated temporal-frontend sidecar).
+
+policyVersion: "1.0.0"
+owner: importexport
+domain: genealogy.platform.importexport.transfer.v1
+contract: "E9.1 Temporal transfer framework"
+doc: |
+  Temporal transfer framework. Defines the durable workflow
+  envelope, signals, queries, activity idempotency rules and
+  closed-set status machines that govern every import / export
+  / public-api / webhook transfer run. Compatibility policy =
+  BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+transferWorkflowKinds:
+  doc: "Closed-set workflow kinds the framework supports."
+  values:
+    - IMPORT_GEDCOM
+    - IMPORT_PREVIEW
+    - IMPORT_DEDUP
+    - IMPORT_CONFIRM
+    - IMPORT_CHUNK
+    - IMPORT_RECONCILE
+    - EXPORT_BRANCH
+    - EXPORT_FULL
+    - EXPORT_REDACTED_PREVIEW
+    - PUBLIC_API_REQUEST
+    - WEBHOOK_DISPATCH
+
+transferSignals:
+  doc: "Closed-set signals workflows accept."
+  values:
+    - CANCEL
+    - PROGRESS_QUERY
+    - CHECKPOINT_FLUSH
+    - COMPENSATE
+    - RESUME
+    - FINALIZE
+    - PRIORITY_CHANGE
+
+transferQueries:
+  doc: "Closed-set read-only queries workflows expose."
+  values:
+    - STATUS
+    - PROGRESS_PERCENT
+    - CHECKPOINT_STATE
+    - COMPENSATION_LOG
+    - HEARTBEAT_LAST_SEEN
+    - FINAL_REPORT
+
+transferPhases:
+  doc: "Closed-set phases a transfer run traverses."
+  values:
+    - VALIDATING
+    - PREVIEWING
+    - MAPPING
+    - DEDUPING
+    - CONFIRMING
+    - CHUNKING
+    - COMMITTING
+    - COMPENSATING
+    - CANCELLED
+    - FINALIZED
+
+transferStatuses:
+  doc: "Closed-set run statuses emitted to callers and audit."
+  values:
+    - QUEUED
+    - RUNNING
+    - AWAITING_INPUT
+    - AWAITING_CONFIRMATION
+    - CANCELLED
+    - COMPENSATING
+    - COMPENSATED
+    - COMPLETED
+    - FAILED
+    - BLOCKED
+
+transferCheckpointStates:
+  doc: "Closed-set checkpoint states persisted across resumes."
+  values:
+    - NONE
+    - CAPTURED
+    - FLUSHING
+    - PERSISTED
+    - RECOVERED
+    - INVALIDATED
+
+transferActivityKinds:
+  doc: "Closed-set activity kinds that MUST be idempotent."
+  values:
+    - PARSE_RECORD
+    - MAP_RECORD
+    - NORMALIZE_RECORD
+    - DEDUP_RECORD
+    - VALIDATE_RECORD
+    - COMMIT_CHUNK
+    - EMIT_OUTBOX
+    - DECRYPT_PAYLOAD
+    - GENERATE_PDF
+    - GENERATE_GEDCOM
+    - GENERATE_CSV
+    - GENERATE_JSON
+    - GENERATE_MEDIA_BUNDLE
+    - COMPUTE_CHECKSUM
+    - SIGN_DOWNLOAD
+    - SIGN_WEBHOOK_PAYLOAD
+    - PUBLISH_PUBLIC_API_RESPONSE
+    - BUILD_SITEMAP_ENTRY
+    - PURGE_PUBLIC_PROJECTION
+
+transferCompensationActions:
+  doc: "Closed-set compensation actions a run may invoke on rollback."
+  values:
+    - DELETE_IMPORTED_CHUNK
+    - UNDO_DEDUP_MERGE
+    - REVOKE_TEMP_CREDENTIAL
+    - DELETE_GENERATED_BUNDLE
+    - REVOKE_SIGNED_URL
+    - DELETE_WEBHOOK_DELIVERY
+    - DELETE_PUBLIC_PROJECTION
+
+transferFailureReasons:
+  doc: "Closed-set failure reasons emitted by transfer workflows."
+  values:
+    - TRANSFER_NOT_FOUND
+    - TRANSFER_TENANT_MISMATCH
+    - TRANSFER_KIND_UNKNOWN
+    - TRANSFER_SIGNAL_UNKNOWN
+    - TRANSFER_QUERY_UNKNOWN
+    - TRANSFER_PHASE_UNKNOWN
+    - TRANSFER_STATUS_INVALID_TRANSITION
+    - TRANSFER_ACTIVITY_NOT_IDEMPOTENT
+    - TRANSFER_ACTIVITY_HEARTBEAT_TIMEOUT
+    - TRANSFER_ACTIVITY_TIMEOUT
+    - TRANSFER_ACTIVITY_NON_DETERMINISTIC
+    - TRANSFER_CHECKPOINT_INVALID
+    - TRANSFER_CHECKPOINT_VERSION_DRIFT
+    - TRANSFER_COMPENSATION_FAILED
+    - TRANSFER_DUPLICATE_RUN_REJECTED
+    - TRANSFER_TEMPORAL_NAMESPACE_BLOCKED
+    - TRANSFER_DNA_BUCKET_FORBIDDEN
+    - TRANSFER_PII_LEAK_DETECTED
+    - TRANSFER_SECRETS_IN_PAYLOAD
+    - TRANSFER_USER_PROVIDED_PAYLOAD_TOO_LARGE
+    - TRANSFER_USER_PROVIDED_PAYLOAD_ENCODING_INVALID
+    - TRANSFER_USER_PROVIDED_PAYLOAD_DEPTH_EXCEEDED
+    - TRANSFER_USER_PROVIDED_PAYLOAD_COUNT_EXCEEDED
+
+transferAuditEvents:
+  doc: "Closed-set audit hooks the framework emits."
+  values:
+    - TRANSFER_QUEUED
+    - TRANSFER_STARTED
+    - TRANSFER_SIGNAL_RECEIVED
+    - TRANSFER_QUERY_SERVED
+    - TRANSFER_PHASE_ADVANCED
+    - TRANSFER_CHECKPOINT_CAPTURED
+    - TRANSFER_CHECKPOINT_PERSISTED
+    - TRANSFER_CHECKPOINT_RECOVERED
+    - TRANSFER_COMPENSATION_TRIGGERED
+    - TRANSFER_COMPENSATION_COMPLETED
+    - TRANSFER_ACTIVITY_HEARTBEAT
+    - TRANSFER_ACTIVITY_TIMEOUT
+    - TRANSFER_ACTIVITY_DUPLICATE_DROPPED
+    - TRANSFER_DNA_BUCKET_REFUSED
+    - TRANSFER_PII_LEAK_REFUSED
+    - TRANSFER_SECRET_REFUSED
+    - TRANSFER_FINALIZED
+    - TRANSFER_FAILED
+
+transferActivityStatuses:
+  doc: "Closed-set activity statuses the framework emits per attempt."
+  values:
+    - SCHEDULED
+    - STARTED
+    - HEARTBEAT_RECEIVED
+    - COMPLETED
+    - FAILED_RETRYABLE
+    - FAILED_NON_RETRYABLE
+    - DUPLICATE_DROPPED
+    - CANCELLED
+
+transferIdempotencyOutcomes:
+  doc: "Closed-set outcomes of an idempotency-key lookup."
+  values:
+    - NEW
+    - IN_PROGRESS_REPLAY
+    - COMPLETED_REPLAY
+    - CONFLICT_REJECTED
+    - EXPIRED
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the importexport-service sandbox."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+    - temporal-frontend
+
+# ---------------------------------------------------------------------------
+# 3. State matrices
+# ---------------------------------------------------------------------------
+
+transferRunStateMatrix:
+  doc: "Transfer run state machine — every status reachable from QUEUED unless terminal."
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [RUNNING, CANCELLED, FAILED, BLOCKED]
+    - status: RUNNING
+      transitions: [AWAITING_INPUT, AWAITING_CONFIRMATION, CANCELLED, COMPENSATING, COMPLETED, FAILED]
+    - status: AWAITING_INPUT
+      transitions: [RUNNING, CANCELLED, COMPENSATING, FAILED]
+    - status: AWAITING_CONFIRMATION
+      transitions: [RUNNING, CANCELLED, COMPENSATING, FAILED]
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+    - status: COMPENSATING
+      transitions: [COMPENSATED, FAILED]
+    - status: COMPENSATED
+      transitions: []
+      terminal: true
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+    - status: BLOCKED
+      transitions: []
+      terminal: true
+
+transferCheckpointStateMatrix:
+  doc: "Checkpoint state machine — every state reachable from NONE."
+  initialStatus: NONE
+  statuses:
+    - status: NONE
+      transitions: [CAPTURED, INVALIDATED]
+    - status: CAPTURED
+      transitions: [FLUSHING, INVALIDATED]
+    - status: FLUSHING
+      transitions: [PERSISTED, INVALIDATED]
+    - status: PERSISTED
+      transitions: [RECOVERED, INVALIDATED]
+    - status: RECOVERED
+      transitions: [CAPTURED, INVALIDATED]
+    - status: INVALIDATED
+      transitions: []
+      terminal: true
+
+transferActivityStateMatrix:
+  doc: "Activity state machine — every status reachable from SCHEDULED."
+  initialStatus: SCHEDULED
+  statuses:
+    - status: SCHEDULED
+      transitions: [STARTED, DUPLICATE_DROPPED, CANCELLED]
+    - status: STARTED
+      transitions: [HEARTBEAT_RECEIVED, COMPLETED, FAILED_RETRYABLE, FAILED_NON_RETRYABLE, CANCELLED]
+    - status: HEARTBEAT_RECEIVED
+      transitions: [COMPLETED, FAILED_RETRYABLE, FAILED_NON_RETRYABLE, CANCELLED]
+    - status: COMPLETED
+      transitions: []
+      terminal: true
+    - status: FAILED_RETRYABLE
+      transitions: [STARTED, FAILED_NON_RETRYABLE, CANCELLED]
+    - status: FAILED_NON_RETRYABLE
+      transitions: []
+      terminal: true
+    - status: DUPLICATE_DROPPED
+      transitions: []
+      terminal: true
+    - status: CANCELLED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  temporalIsOnlyScheduler: true
+  customJobStateDatabaseForbidden: true
+  customRetryDatabaseForbidden: true
+  workflowDeterministicRequired: true
+  workflowIdempotencyKeyRequired: true
+  activityIdempotencyRequired: true
+  activityHeartbeatRequired: true
+  activityTimeoutConfigured: true
+  activityCancellationPropagated: true
+  signalCancellationHonored: true
+  checkpointVersioned: true
+  checkpointEncrypted: true
+  compensationReversible: true
+  compensationIdempotent: true
+  duplicateDetectionOnActivity: true
+  duplicateDetectionOnRun: true
+  outboxRelaySeparated: true
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  rawPayloadInWorkflowInputForbidden: true
+  rawPayloadInEventForbidden: true
+  secretInWorkflowInputForbidden: true
+  secretInEventForbidden: true
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  tenantBoundaryOnEveryRepository: true
+  auditHookOnEveryPhaseAdvance: true
+  auditHookOnEveryCompensation: true
+  adrRequiredBeforeExternalScheduler: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  workflowMaxSignalsPerSecond: 10
+  workflowMaxQueriesPerSecond: 50
+  workflowMaxActivityAttempts: 8
+  workflowMaxConcurrentActivities: 16
+  workflowMaxHistoryLengthEvents: 50000
+  workflowMaxExecutionDurationSeconds: 86400
+  workflowMaxContinueAsNewHistoryEvents: 10000
+  workflowMaxCheckpointBytes: 1048576
+  workflowMaxCompensationLogEntries: 1024
+  activityScheduleToCloseTimeoutSeconds: 600
+  activityStartToCloseTimeoutSeconds: 310
+  activityHeartbeatIntervalSeconds: 30
+  activityHeartbeatTimeoutMultiplier: 3
+  activityRetryBackoffCoefficient: 2
+  activityRetryInitialIntervalSeconds: 5
+  activityRetryMaximumIntervalSeconds: 60
+  activityRetryMaximumAttempts: 8
+  workflowIdempotencyKeyLength: 128
+  workflowIdempotencyKeyTtlSeconds: 604800
+  transferRunIdLength: 64
+  transferCorrelationIdLength: 128
+  transferTenantPseudoIdLength: 64
+  transferActorPseudoIdLength: 64
+  transferSecretMaximumBytes: 0
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  activityStartToCloseBudgetSeconds: 300
+  activityHeartbeatIntervalSeconds: 30
+  activityHeartbeatTimeoutMultiplier: 3
+  activityStartToCloseToHeartbeatMultiplier: 10
+  workflowRetryBackoffInitialSeconds: 5
+  workflowRetryBackoffCoefficient: 2
+  workflowRetryMaximumAttempts: 8
+  workflowRetryBackoffMultiplier: 12
+  workflowCheckpointHeartbeatMultiplier: 2
+  workflowExecutionToHeartbeatMultiplier: 2880
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the transfer framework."
+  items:
+    - type: gp.importexport.v1.TransferQueued
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.importexport.v1.TransferFinalized
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - TRANSFER_QUEUED
+    - TRANSFER_STARTED
+    - TRANSFER_SIGNAL_RECEIVED
+    - TRANSFER_QUERY_SERVED
+    - TRANSFER_PHASE_ADVANCED
+    - TRANSFER_CHECKPOINT_CAPTURED
+    - TRANSFER_CHECKPOINT_PERSISTED
+    - TRANSFER_CHECKPOINT_RECOVERED
+    - TRANSFER_COMPENSATION_TRIGGERED
+    - TRANSFER_COMPENSATION_COMPLETED
+    - TRANSFER_ACTIVITY_HEARTBEAT
+    - TRANSFER_ACTIVITY_TIMEOUT
+    - TRANSFER_ACTIVITY_DUPLICATE_DROPPED
+    - TRANSFER_DNA_BUCKET_REFUSED
+    - TRANSFER_PII_LEAK_REFUSED
+    - TRANSFER_SECRET_REFUSED
+    - TRANSFER_FINALIZED
+    - TRANSFER_FAILED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - rawSocialSecurityNumber
+  - rawPassport
+  - rawDriverLicense
+  - rawTaxId
+  - rawMedicalRecord
+  - rawPaymentInstrument
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Generic job-state / retry scheduler (use Temporal per ADR-E0.5-07)"
+    - "Distributed transaction (outbox relay is enough)"
+    - "Custom durable queue (Temporal namespace + task queue is enough)"
+    - "Custom cron scheduler (Temporal schedule is enough)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"
+    - "Custom workflow replay tool (Temporal already provides)"

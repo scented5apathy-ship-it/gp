@@ -621,37 +621,37 @@ _Requirements: R3, R11, R13, NFR1, NFR2, NFR4_
 
 ### Subtasks
 
-- [ ] E9.1 Temporal transfer framework
+- [x] E9.1 Temporal transfer framework
 
   - Workflow durable cho progress, signal, cancellation, checkpoint và compensation.
   - Activity idempotent với heartbeat; domain service vẫn là source of truth.
   - Không tự xây generic scheduler/retry database.
 
-- [ ] E9.2 GEDCOM parser/validator
+- [x] E9.2 GEDCOM parser/validator
 
   - Streaming GEDCOM 7 và mapping 5.5.1; giữ extension/provenance.
   - Enforce size/depth/count/encoding limits và sandbox parser.
   - Dry-run trả lỗi theo record/line mà không ghi domain data.
 
-- [ ] E9.3 Mapping/dedup/import saga
+- [x] E9.3 Mapping/dedup/import saga
 
   - Preview mapping, duplicate candidates và user confirmation.
   - Chunk commands với checkpoint/compensation; không giữ transaction dài.
   - Reconcile events/search và tạo final report.
 
-- [ ] E9.4 Privacy-aware export
+- [x] E9.4 Privacy-aware export
 
   - Full/branch GEDCOM/CSV/JSON/PDF, media bundle và checksum manifest.
   - Preview redaction; DNA bị loại mặc định và yêu cầu consent riêng.
   - Signed download, expiry, audit và cleanup theo retention.
 
-- [ ] E9.5 Public API trên Kong
+- [x] E9.5 Public API trên Kong
 
   - Public API app định nghĩa resource/OpenAPI/idempotency; Kong xử lý routing/auth/rate limit.
   - OAuth scopes ánh xạ membership/OpenFGA; domain service kiểm quyền cuối.
   - Contract compatibility, quota metrics và abuse tests.
 
-- [ ] E9.6 Webhooks
+- [x] E9.6 Webhooks
   - Subscription authorization, signed payload, secret rotation và event minimization.
   - Temporal/Kafka retry, dead-letter và audited replay.
   - Disable/revoke endpoint khi tenant/user mất quyền.
@@ -659,6 +659,8 @@ _Requirements: R3, R11, R13, NFR1, NFR2, NFR4_
 **Đầu ra:** Transfer workflows, GEDCOM support, exports, partner API và webhooks.
 
 **Kiểm thử/DoD:** Malicious/large import, resume/cancel, duplicate idempotency, redaction và Kong policy tests pass.
+
+**Epic status: DONE**
 
 _Requirements: R4, R8, R12, R13, R16, NFR1, NFR3, NFR4, NFR8_
 

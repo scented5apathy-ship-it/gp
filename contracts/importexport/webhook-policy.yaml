@@ -1,0 +1,379 @@
+# contracts/importexport/webhook-policy.yaml
+#
+# E9.6 — Webhooks contract.
+#
+# Single source of truth for the importexport-service webhook
+# subscriptions, signed payload dispatch, retry / dead-letter /
+# replay lifecycle, and revoke / disable flow. Defines the
+# closed-set subscription kinds, event filters, secret rotation
+# vocabulary, retry / dead-letter outcomes and sandbox egress.
+#
+# Conventions mirror the E9.1 / E9.2 / E9.3 / E9.4 / E9.5
+# contracts.
+
+policyVersion: "1.0.0"
+owner: importexport
+domain: genealogy.platform.importexport.webhook.v1
+contract: "E9.6 Webhooks"
+doc: |
+  Webhooks contract. Compatibility policy =
+  BACKWARD per ADR-E0.5-08.
+
+# ---------------------------------------------------------------------------
+# 1. Closed-set vocabularies
+# ---------------------------------------------------------------------------
+
+webhookSubscriptionKinds:
+  doc: "Closed-set subscription kinds the webhook service supports."
+  values:
+    - TREE_EVENTS
+    - MEDIA_EVENTS
+    - ALBUM_EVENTS
+    - COLLABORATION_EVENTS
+    - RESEARCH_EVENTS
+    - SEARCH_ALERTS
+    - IMPORT_FINALIZED
+    - EXPORT_FINALIZED
+
+webhookDeliveryStatuses:
+  doc: "Closed-set delivery statuses emitted per attempt."
+  values:
+    - QUEUED
+    - DISPATCHING
+    - SIGNED
+    - DELIVERED
+    - RETRY_SCHEDULED
+    - DEAD_LETTERED
+    - REVOKED
+    - DISABLED
+
+webhookSecretStates:
+  doc: "Closed-set secret rotation states."
+  values:
+    - ACTIVE
+    - ROTATING
+    - RETIRED
+    - REVOKED
+
+webhookSignatureAlgorithms:
+  doc: "Closed-set signing algorithms the webhook supports."
+  values:
+    - HMAC_SHA_256
+    - HMAC_SHA_512
+    - ED25519
+
+webhookRetryPolicies:
+  doc: "Closed-set retry policies the dispatcher applies."
+  values:
+    - EXPONENTIAL_BACKOFF
+    - EXPONENTIAL_BACKOFF_JITTER
+    - LINEAR_BACKOFF
+
+webhookDeadLetterOutcomes:
+  doc: "Closed-set dead-letter outcomes emitted after retries."
+  values:
+    - PARKED
+    - AUDITED_REPLAY_QUEUED
+    - AUDITED_REPLAY_FINISHED
+    - AUDITED_REPLAY_FAILED
+    - DISCARDED_BY_TENANT
+
+webhookFailureReasons:
+  doc: "Closed-set failure reasons emitted by the webhook pipeline."
+  values:
+    - WEBHOOK_SUBSCRIPTION_NOT_FOUND
+    - WEBHOOK_SUBSCRIPTION_KIND_UNKNOWN
+    - WEBHOOK_SUBSCRIPTION_DISABLED
+    - WEBHOOK_SUBSCRIPTION_REVOKED
+    - WEBHOOK_TARGET_URL_INVALID
+    - WEBHOOK_TARGET_UNREACHABLE
+    - WEBHOOK_TARGET_TLS_INVALID
+    - WEBHOOK_TARGET_RESPONSE_INVALID
+    - WEBHOOK_SIGNATURE_FAILED
+    - WEBHOOK_SECRET_ROTATION_FAILED
+    - WEBHOOK_RETRY_EXHAUSTED
+    - WEBHOOK_REPLAY_NOT_ALLOWED
+    - WEBHOOK_REPLAY_AUDIT_MISSING
+    - WEBHOOK_PAYLOAD_TOO_LARGE
+    - WEBHOOK_PAYLOAD_ENCRYPTION_FAILED
+    - WEBHOOK_DNA_BUCKET_FORBIDDEN
+    - WEBHOOK_PII_LEAK_DETECTED
+    - WEBHOOK_TENANT_MISMATCH
+    - WEBHOOK_RATE_LIMIT_BREACHED
+    - WEBHOOK_IDEMPOTENCY_KEY_REUSED_CONFLICT
+
+webhookAuditEvents:
+  doc: "Closed-set audit hooks the webhook pipeline emits."
+  values:
+    - WEBHOOK_SUBSCRIPTION_CREATED
+    - WEBHOOK_SUBSCRIPTION_UPDATED
+    - WEBHOOK_SUBSCRIPTION_DISABLED
+    - WEBHOOK_SUBSCRIPTION_REVOKED
+    - WEBHOOK_SECRET_ROTATED
+    - WEBHOOK_DELIVERY_QUEUED
+    - WEBHOOK_DELIVERY_DISPATCHED
+    - WEBHOOK_DELIVERY_FAILED
+    - WEBHOOK_DELIVERY_RETRIED
+    - WEBHOOK_DELIVERY_DLQ
+    - WEBHOOK_DELIVERY_REPLAYED
+    - WEBHOOK_DNA_BUCKET_REFUSED
+    - WEBHOOK_PII_LEAK_REFUSED
+
+webhookEventMinimizationModes:
+  doc: "Closed-set event minimization modes."
+  values:
+    - INCLUDE_OPAQUE_REFERENCE
+    - INCLUDE_FULL_PAYLOAD
+    - INCLUDE_REDACTED_PAYLOAD
+    - INCLUDE_METADATA_ONLY
+
+webhookDisabledReasons:
+  doc: "Closed-set reasons a subscription may be auto-disabled."
+  values:
+    - TENANT_REVOKED
+    - USER_REVOKED
+    - CONSENT_REVOKED
+    - TARGET_REPEATED_FAILURE
+    - RATE_LIMIT_REPEATED_BREACH
+    - SECRET_ROTATION_FAILED
+    - ABUSE_SIGNAL_DETECTED
+    - ADMIN_ACTION
+
+# ---------------------------------------------------------------------------
+# 2. Sandbox egress allowlist
+# ---------------------------------------------------------------------------
+
+sandboxEgressAllowlist:
+  doc: "Network egress allowlist for the webhook dispatcher sandbox."
+  values:
+    - postgres
+    - apicurio
+    - vault-agent
+    - openfga
+    - audit-service
+    - kafka-broker
+    - temporal-frontend
+
+# ---------------------------------------------------------------------------
+# 3. State machine
+# ---------------------------------------------------------------------------
+
+webhookDeliveryStateMatrix:
+  doc: "Webhook delivery state machine — every status reachable from QUEUED."
+  initialStatus: QUEUED
+  statuses:
+    - status: QUEUED
+      transitions: [DISPATCHING, REVOKED, DISABLED, FAILED]
+    - status: DISPATCHING
+      transitions: [SIGNED, REVOKED, DISABLED, FAILED]
+    - status: SIGNED
+      transitions: [DELIVERED, RETRY_SCHEDULED, REVOKED, DISABLED, FAILED]
+    - status: DELIVERED
+      transitions: []
+      terminal: true
+    - status: RETRY_SCHEDULED
+      transitions: [DISPATCHING, DEAD_LETTERED, REVOKED, DISABLED]
+    - status: DEAD_LETTERED
+      transitions: []
+      terminal: true
+    - status: REVOKED
+      transitions: []
+      terminal: true
+    - status: DISABLED
+      transitions: []
+      terminal: true
+    - status: FAILED
+      transitions: []
+      terminal: true
+
+webhookSecretStateMatrix:
+  doc: "Webhook secret state machine — every status reachable from ACTIVE."
+  initialStatus: ACTIVE
+  statuses:
+    - status: ACTIVE
+      transitions: [ROTATING, REVOKED]
+    - status: ROTATING
+      transitions: [RETIRED, REVOKED]
+    - status: RETIRED
+      transitions: []
+      terminal: true
+    - status: REVOKED
+      transitions: []
+      terminal: true
+
+# ---------------------------------------------------------------------------
+# 4. Boolean guard rails
+# ---------------------------------------------------------------------------
+
+guardRails:
+  subscriptionAuthorizationRequired: true
+  signedPayloadMandatory: true
+  signedPayloadVerifiableInReceiver: true
+  eventMinimizationByDefault: true
+  secretRotationRequired: true
+  secretRotationAudited: true
+  retryIdempotent: true
+  deadLetterAudited: true
+  replayRequiresAudit: true
+  tenantBoundaryOnEveryRepository: true
+  outboxRelaySeparated: true
+  dnaBucketAccess: FORBIDDEN
+  dnaBucketPrefixes:
+    - dna/raw
+    - dna/match
+    - dna/consent
+  crossServiceReferencesAreOpaque: true
+  crossServiceReferencesRequirePublisherResolution: true
+  revokeOnTenantRevocation: true
+  disableOnRepeatedAbuse: true
+  secretInPlainPayloadForbidden: true
+  adrRequiredBeforeExternalDispatcher: true
+
+# ---------------------------------------------------------------------------
+# 5. Numeric bounds
+# ---------------------------------------------------------------------------
+
+numericBounds:
+  webhookMaxPayloadBytes: 1048576
+  webhookMaxHeaderBytes: 8192
+  webhookMaxDeliveryAttempts: 8
+  webhookInitialBackoffSeconds: 5
+  webhookMaxBackoffSeconds: 3600
+  webhookBackoffCoefficient: 2
+  webhookJitterSeconds: 30
+  webhookTargetResponseTimeoutSeconds: 30
+  webhookTargetConnectionTimeoutSeconds: 10
+  webhookSecretRotationGraceSeconds: 604800
+  webhookReplayMaxAgeSeconds: 604800
+  webhookReplayHeartbeatSeconds: 30
+  webhookDispatcherHeartbeatSeconds: 30
+  webhookDispatcherTimeoutSeconds: 600
+  webhookSubscriptionIdLength: 64
+  webhookSecretLength: 64
+  webhookSignatureLength: 128
+  webhookActorPseudoIdLength: 64
+  webhookTenantPseudoIdLength: 64
+  webhookCorrelationIdLength: 128
+  webhookIdempotencyKeyLength: 128
+  webhookMaxSubscribersPerTenant: 100
+  webhookMaxEndpointsPerSubscription: 10
+
+# ---------------------------------------------------------------------------
+# 6. Reconciled invariants (numeric)
+# ---------------------------------------------------------------------------
+
+reconciliationInvariants:
+  webhookMaxDeliveryAttempts: 8
+  webhookInitialBackoffSeconds: 5
+  webhookBackoffCoefficient: 2
+  webhookMaxBackoffSeconds: 3600
+  webhookBackoffMultiplier: 720
+  webhookTargetResponseTimeoutSeconds: 30
+  webhookDispatcherHeartbeatSeconds: 30
+  webhookTargetTimeoutMultiplier: 1
+  webhookDispatcherTimeoutSeconds: 600
+  webhookDispatcherTimeoutMultiplier: 20
+  webhookSecretRotationGraceSeconds: 604800
+  webhookReplayMaxAgeSeconds: 604800
+  webhookReplayGraceMultiplier: 1
+
+# ---------------------------------------------------------------------------
+# 7. Outbox event envelope
+# ---------------------------------------------------------------------------
+
+outboxEvents:
+  doc: "Outbox events emitted by the webhook pipeline."
+  items:
+    - type: gp.importexport.v1.WebhookDeliveryQueued
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.importexport.v1.WebhookDeliveryDeadLettered
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+    - type: gp.importexport.v1.WebhookSubscriptionRevoked
+      envelopeFields:
+        - eventId
+        - eventType
+        - occurredAt
+        - tenantId
+        - aggregateId
+        - aggregateVersion
+        - traceId
+        - payload
+
+# ---------------------------------------------------------------------------
+# 8. Audit hook requirements
+# ---------------------------------------------------------------------------
+
+auditHooks:
+  auditRequired:
+    - WEBHOOK_SUBSCRIPTION_CREATED
+    - WEBHOOK_SUBSCRIPTION_UPDATED
+    - WEBHOOK_SUBSCRIPTION_DISABLED
+    - WEBHOOK_SUBSCRIPTION_REVOKED
+    - WEBHOOK_SECRET_ROTATED
+    - WEBHOOK_DELIVERY_QUEUED
+    - WEBHOOK_DELIVERY_DISPATCHED
+    - WEBHOOK_DELIVERY_FAILED
+    - WEBHOOK_DELIVERY_RETRIED
+    - WEBHOOK_DELIVERY_DLQ
+    - WEBHOOK_DELIVERY_REPLAYED
+    - WEBHOOK_DNA_BUCKET_REFUSED
+    - WEBHOOK_PII_LEAK_REFUSED
+
+# ---------------------------------------------------------------------------
+# 9. Forbidden payload patterns
+# ---------------------------------------------------------------------------
+
+forbiddenPayloadPatterns:
+  - rawDnaSequence
+  - rawFastq
+  - rawBam
+  - rawVcf
+  - exifGps
+  - cameraSerial
+  - passportNumber
+  - socialSecurityNumber
+  - nameOnBirth
+  - rawEmail
+  - rawPhone
+  - rawAddress
+  - biometricTemplate
+  - rawFacialEmbedding
+  - rawLivingStatus
+  - rawMinorStatus
+  - rawConsentDocument
+  - rawSocialSecurityNumber
+  - rawPassport
+  - rawDriverLicense
+  - rawTaxId
+  - rawMedicalRecord
+  - rawPaymentInstrument
+  - productionPii
+
+# ---------------------------------------------------------------------------
+# 10. Capability boundaries
+# ---------------------------------------------------------------------------
+
+capabilityBoundaries:
+  forbiddenSelfBuilt:
+    - "Custom HTTP dispatcher (use Temporal activities + Kafka)"
+    - "Custom secret store (Vault transit is enough)"
+    - "Custom retry database (Temporal schedule is enough)"
+    - "Custom dead-letter queue (Kafka DLQ topic is enough)"
+    - "Cross-service aggregation (use Kafka events + publisher resolution)"
+    - "Custom webhook subscription UI (re-use platform components)"
